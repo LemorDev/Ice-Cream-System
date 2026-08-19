@@ -1,0 +1,21 @@
+# Android / Gradle
+.gradle/
+**/build/
+**/local.properties
+*.iml
+.idea/
+
+# Node / Vite
+**/node_modules/
+**/dist/
+.pnpm-store/
+*.tsbuildinfo
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Operating system files
+.DS_Store
+Thumbs.db

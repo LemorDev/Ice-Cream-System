@@ -1,0 +1,9 @@
+{
+  "name": "ice-cream-system",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter ice-cream-ims dev",
+    "build": "pnpm --filter ice-cream-ims build",
+    "test": "pnpm --filter ice-cream-ims test"
+  }
+}

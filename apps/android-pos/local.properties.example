@@ -1,0 +1,8 @@
+# Copy these keys into local.properties for local development.
+# local.properties is ignored by Git.
+sdk.dir=C\\:\\Users\\YourName\\AppData\\Local\\Android\\Sdk
+
+supabase.dev.url=https://your-project.supabase.co
+supabase.dev.anonKey=your-dev-anon-key
+supabase.production.url=https://your-project.supabase.co
+supabase.production.anonKey=your-production-anon-key

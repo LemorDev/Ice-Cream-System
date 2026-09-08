@@ -7,7 +7,7 @@ This folder contains the project architecture, data model, synchronization proto
 Open PowerShell in the project root:
 
 ```powershell
-cd "C:\Users\Admin\OneDrive\RBB BSIT File Compilation\Ice cream system"
+cd "C:\Desktop Apps and Files\Ice cream system"
 pnpm install
 pnpm dev
 ```
@@ -15,6 +15,8 @@ pnpm dev
 Open the URL shown in the terminal, normally [http://localhost:5173](http://localhost:5173).
 
 Before signing in, create `apps/web-ims/.env.local` from `apps/web-ims/.env.example` and enter the Supabase project URL and anon key.
+
+Owners can install the deployed dashboard on an iPhone from Safari using **Share → Add to Home Screen**. See [RBAC.md](RBAC.md) for roles, account setup, stall assignment, POS activation, and operating-day rules.
 
 Useful IMS commands:
 
@@ -29,7 +31,7 @@ pnpm --dir apps/web-ims lint
 Open PowerShell in the Android project:
 
 ```powershell
-cd "C:\Users\Admin\OneDrive\RBB BSIT File Compilation\Ice cream system\apps\android-pos"
+cd "C:\Desktop Apps and Files\Ice cream system\apps\android-pos"
 Copy-Item local.properties.example local.properties
 ```
 
@@ -38,30 +40,30 @@ Open `local.properties` in VS Code and update the Android SDK path plus the Supa
 ## Build the POS development APK
 
 ```powershell
-cd "C:\Users\Admin\OneDrive\RBB BSIT File Compilation\Ice cream system\apps\android-pos"
+cd "C:\Desktop Apps and Files\Ice cream system\apps\android-pos"
 .\gradlew.bat :app:assembleDevDebug
 ```
 
-Because this project is inside OneDrive, generated Gradle output is redirected to Windows Temp to avoid OneDrive file-lock and reparse-point errors. The development APK is created here:
+The development APK is created here:
 
 ```text
-%TEMP%\coolerz-pos-build\outputs\apk\dev\debug\app-dev-debug.apk
+C:\Desktop Apps and Files\Ice cream system\apps\android-pos\app\build\outputs\apk\dev\debug\app-dev-debug.apk
 ```
 
 ## Build the POS production release APK
 
 ```powershell
-cd "C:\Users\Admin\OneDrive\RBB BSIT File Compilation\Ice cream system\apps\android-pos"
+cd "C:\Desktop Apps and Files\Ice cream system\apps\android-pos"
 .\gradlew.bat :app:assembleProductionRelease
 ```
 
 The current project does not yet have release signing configured, so this produces an **unsigned** release APK:
 
 ```text
-%TEMP%\coolerz-pos-build\outputs\apk\production\release\app-production-release-unsigned.apk
+app\build\outputs\apk\production\release\app-production-release-unsigned.apk
 ```
 
-It can be used for archive/testing purposes. Before distributing it to real devices, configure a signing key and release signing configuration, then rebuild this same variant.
+An unsigned APK cannot be installed as-is. Before distributing it to real devices, configure a signing key and release signing configuration, then rebuild this same variant.
 
 ## Connect an Android phone with USB debugging
 
@@ -92,8 +94,14 @@ adb devices
 ## Install and run the POS development app on the phone
 
 ```powershell
-cd "C:\Users\Admin\OneDrive\RBB BSIT File Compilation\Ice cream system\apps\android-pos"
+cd "C:\Desktop Apps and Files\Ice cream system\apps\android-pos"
 .\gradlew.bat :app:installDevDebug
+adb shell am start -n com.icecreampost.pos.dev/com.icecreampost.pos.MainActivity
+```
+
+The explicit `am start` command launches the known main activity. Monkey is an optional alternative:
+
+```powershell
 adb shell monkey -p com.icecreampost.pos.dev 1
 ```
 
@@ -103,18 +111,14 @@ adb shell monkey -p com.icecreampost.pos.dev 1
 adb logcat -s CoolerzPOS
 adb uninstall com.icecreampost.pos.dev
 ```
-## Path/Directory of generated apk file
-The APK is located here:
-C:\Users\Admin\AppData\Local\Temp\coolerz-pos-build\outputs\apk\dev\debug\app-dev-debug.apk
-You can open its folder with:
-explorer "C:\Users\Admin\AppData\Local\Temp\coolerz-pos-build\outputs\apk\dev\debug"
+Build output normally lives in `apps/android-pos/app/build`. Only checkouts whose path contains `OneDrive` redirect app build output to `%TEMP%\coolerz-pos-build`.
 
 ## Apply the Android sync contract
 
-Run this migration once in the Supabase SQL Editor after the existing migrations:
+Apply every pending migration in filename order, following [the database setup guide](../supabase/README.md). The original Android endpoint was introduced by:
 
 ```text
 supabase/migrations/202608140001_android_sync_contract.sql
 ```
 
-It creates the idempotent `push_pos_transaction(jsonb)` RPC used by Android. The full endpoint, payload, header, cursor, retry, and recovery rules are documented in [ANDROID_SYNC_CONTRACT.md](ANDROID_SYNC_CONTRACT.md).
+It creates the idempotent `push_pos_transaction(jsonb)` RPC used by Android; later migrations include necessary corrections. The endpoint, payload, header, cursor, retry, and recovery rules are documented in [ANDROID_SYNC_CONTRACT.md](ANDROID_SYNC_CONTRACT.md). See [PROJECT_REVIEW.md](PROJECT_REVIEW.md) for remaining gaps between the intended contract and current behavior.

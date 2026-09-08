@@ -3,7 +3,7 @@ import type { AppRole } from './types'
 
 const storageKey = 'ice-cream-ims-session-token'
 
-export type ManagerSession = {
+export type AppSession = {
   token: string
   userId: string
   stallId: string
@@ -21,7 +21,7 @@ type LoginRow = {
   expires_at: string
 }
 
-export async function signIn(email: string, password: string): Promise<ManagerSession> {
+export async function signIn(email: string, password: string): Promise<AppSession> {
   let data
   let error
 
@@ -64,17 +64,18 @@ export async function signIn(email: string, password: string): Promise<ManagerSe
   return session
 }
 
-export function getStoredSession(): ManagerSession | null {
+export function getStoredSession(): AppSession | null {
   const stored = sessionStorage.getItem(storageKey)
   if (!stored) return null
 
   try {
-    const session = JSON.parse(stored) as Partial<ManagerSession>
-    if (!session.token || !session.expiresAt || !session.displayName) {
+    const session = JSON.parse(stored) as Partial<AppSession>
+    if (!session.token || !session.expiresAt || !session.displayName || !['system_admin', 'owner', 'cashier'].includes(session.role ?? '')) {
       sessionStorage.removeItem(storageKey)
       return null
     }
-    if (new Date(session.expiresAt) <= new Date()) {
+    const expiresAt = Date.parse(session.expiresAt)
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
       sessionStorage.removeItem(storageKey)
       return null
     }
@@ -83,7 +84,7 @@ export function getStoredSession(): ManagerSession | null {
       userId: session.userId ?? '',
       stallId: session.stallId ?? '',
       displayName: session.displayName,
-      role: session.role ?? 'manager',
+      role: session.role as AppRole,
       expiresAt: session.expiresAt,
     }
   } catch {

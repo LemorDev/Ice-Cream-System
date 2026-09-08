@@ -18,3 +18,15 @@ data class LoginResponse(
     val role: String,
     @SerialName("expires_at") val expiresAt: String,
 )
+
+@Serializable
+data class ActivateDeviceRequest(
+    @SerialName("p_activation_code") val activationCode: String,
+    @SerialName("p_hardware_id") val hardwareId: String,
+)
+
+@Serializable
+data class ActivateDeviceResponse(
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("stall_id") val stallId: String,
+)

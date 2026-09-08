@@ -21,6 +21,9 @@ interface TransactionDao {
     @Query("SELECT * FROM transaction_items WHERE transactionId = :transactionId AND deletedAt IS NULL")
     suspend fun getItems(transactionId: String): List<TransactionItemEntity>
 
+    @Query("SELECT COALESCE(SUM(totalCents), 0) FROM transactions WHERE stallId = :stallId AND status = 'completed' AND occurredAt >= :openedAt AND occurredAt <= :closedAt")
+    suspend fun getCompletedTotalBetween(stallId: String, openedAt: String, closedAt: String): Long
+
     @Upsert
     suspend fun upsert(transaction: TransactionEntity)
 

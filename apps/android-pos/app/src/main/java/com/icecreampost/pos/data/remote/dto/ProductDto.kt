@@ -8,6 +8,7 @@ data class ProductDto(
     val id: String,
     @SerialName("stall_id") val stallId: String,
     @SerialName("category_id") val categoryId: String? = null,
+    @SerialName("category_name") val categoryName: String = "Uncategorized",
     val sku: String = "",
     val name: String,
     val unit: String = "scoop",

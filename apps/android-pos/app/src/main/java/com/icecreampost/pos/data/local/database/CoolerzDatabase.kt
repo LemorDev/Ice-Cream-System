@@ -18,6 +18,8 @@ import com.icecreampost.pos.data.local.entity.TransactionItemEntity
 import com.icecreampost.pos.data.local.entity.SyncStateEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
 import com.icecreampost.pos.data.local.entity.AppSessionEntity
+import com.icecreampost.pos.data.local.entity.BusinessDayEntity
+import com.icecreampost.pos.data.local.dao.BusinessDayDao
 
 @Database(
     entities = [
@@ -29,8 +31,9 @@ import com.icecreampost.pos.data.local.entity.AppSessionEntity
         TransactionItemEntity::class,
         SyncStateEntity::class,
         AppSessionEntity::class,
+        BusinessDayEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class CoolerzDatabase : RoomDatabase() {
@@ -40,6 +43,7 @@ abstract class CoolerzDatabase : RoomDatabase() {
     abstract fun transactionDao(): TransactionDao
     abstract fun syncStateDao(): SyncStateDao
     abstract fun sessionDao(): SessionDao
+    abstract fun businessDayDao(): BusinessDayDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -76,6 +80,16 @@ abstract class CoolerzDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE sync_state ADD COLUMN lastSyncAt TEXT")
                 db.execSQL("ALTER TABLE sync_state ADD COLUMN status TEXT NOT NULL DEFAULT 'idle'")
                 db.execSQL("ALTER TABLE sync_state ADD COLUMN errorMessage TEXT")
+            }
+        }
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE app_session ADD COLUMN deviceId TEXT")
+                // Version 2 activation was local-only. Require one verified
+                // server activation after upgrade so the device ID is trusted.
+                db.execSQL("UPDATE app_session SET isActivated = 0")
+                db.execSQL("CREATE TABLE IF NOT EXISTS business_days (id TEXT NOT NULL PRIMARY KEY, stallId TEXT NOT NULL, deviceId TEXT NOT NULL, cashierId TEXT NOT NULL, businessDate TEXT NOT NULL, openedAt TEXT NOT NULL, openingNotes TEXT, closedAt TEXT, closingCashCents INTEGER, closingNotes TEXT, updatedAt TEXT NOT NULL, isSynced INTEGER NOT NULL DEFAULT 0, syncError TEXT)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_business_days_stallId_businessDate ON business_days (stallId, businessDate)")
             }
         }
     }

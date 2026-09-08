@@ -6,18 +6,19 @@ This document is the full start-to-finish task list for building the offline And
 
 ### 1.1 Confirmed first-release scope
 
-- [ ] Build one offline-first Android POS per stall, designed for a phone form factor.
-- [ ] Limit each stall to one active POS device at a time; a device must be assigned to its stall during activation.
-- [ ] Build a web-based Inventory Management System (IMS) for administration, inventory, catalog maintenance, and profit reporting.
+- [x] Build one offline-first Android POS per stall, designed for a phone form factor.
+- [x] Limit each stall to one active POS device at a time; a device must be assigned to its stall during activation.
+- [x] Build a web-based Inventory Management System (IMS) for administration, inventory, catalog maintenance, and profit reporting.
 - [ ] Support physical cash payments only. Do not implement card, e-wallet, online payment, receipts, receipt printing, or digital receipts in v1.
 - [ ] Require a successful online login and device activation to download the first catalog. After activation, sales and day closing must work offline.
 - [ ] Support one continuous cashier/operator role for an entire operating day; do not implement multiple shifts in v1.
 
 ### 1.2 Confirm user roles and permissions
 
-- [ ] Configure the **Cashier / POS Operator** role to use the activated Android POS, create cash sales, cancel carts, void or refund same-day transactions, view low-stock and sync status, and close the day.
-- [ ] Configure the **System Administrator** role to use the web IMS, manage products and recipes, receive stock, adjust stock, manage prices and costs, review sales, and view profit reports.
-- [ ] Ensure the POS role cannot access another stall's records, catalog, or inventory.
+- [x] Configure the **Cashier / POS Operator** role to use the activated Android POS, create cash sales, cancel carts, view low-stock and sync status, and open or close the day. Same-day void/refund remains separate work.
+- [x] Configure the **Owner** role to use the web IMS for assigned stalls, including dashboards, revenue, profit, staff, inventory, prices, costs, and overhead.
+- [x] Configure the **System Administrator** role to use the web IMS across all stalls, manage stalls and Owner assignments, and perform Owner operations.
+- [x] Ensure the POS role cannot access another stall's records, catalog, costs, or inventory.
 - [ ] Decide whether cashier login is required at every app launch, and whether a PIN or biometric re-entry is required after the device has already been activated.
 
 ### 1.3 Record the product catalog and pricing
@@ -129,7 +130,7 @@ This document is the full start-to-finish task list for building the offline And
 
 1. [x] Scaffold the React + Vite app.
   2. [x] Add Tailwind styling.
-3. [x] Build the custom manager password sign-in flow.
+3. [x] Build the custom Owner and System admin password sign-in flow.
   4. [x] Build the stall management screens.
   5. [x] Build the product management screens.
   6. [x] Build stock receiving screens.
@@ -274,7 +275,7 @@ This document is the full start-to-finish task list for building the offline And
 ## 15. Run Pilot Deployment
 
 1. Choose one stall for pilot testing.
-2. Assign one manager and one device.
+2. Assign one Owner, one Cashier, and one device.
 3. Load initial products and inventory.
 4. Test offline sales during the pilot.
 5. Test reconnect and sync after offline use.
@@ -300,7 +301,7 @@ This document is the full start-to-finish task list for building the offline And
 
 The project is complete when all of the following are true:
 
-1. Managers can manage products, pricing, and stock in the web dashboard.
+1. Owners can manage products, pricing, costs, overhead, staff, and stock for assigned stalls in the web dashboard.
 2. Android devices can operate fully offline.
 3. Sales are saved locally immediately.
 4. Inventory is updated locally at checkout.

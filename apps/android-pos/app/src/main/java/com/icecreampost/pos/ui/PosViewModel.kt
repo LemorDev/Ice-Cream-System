@@ -11,6 +11,9 @@ import com.icecreampost.pos.data.repository.CheckoutReceipt
 import com.icecreampost.pos.data.repository.CheckoutRepository
 import com.icecreampost.pos.data.repository.ProductRepository
 import com.icecreampost.pos.data.repository.SessionRepository
+import com.icecreampost.pos.data.repository.SyncRepository
+import com.icecreampost.pos.data.repository.BusinessDayRepository
+import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.domain.model.CartLine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -27,7 +30,9 @@ class PosViewModel @Inject constructor(
     private val productRepository: ProductRepository,
     private val checkoutRepository: CheckoutRepository,
     private val sessionRepository: SessionRepository,
+    private val syncRepository: SyncRepository,
     private val syncStateDao: SyncStateDao,
+    private val businessDayRepository: BusinessDayRepository,
 ) : ViewModel() {
     val session: StateFlow<AppSessionEntity?> = sessionRepository.observeSession()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -41,18 +46,35 @@ class PosViewModel @Inject constructor(
     val syncState: StateFlow<SyncStateEntity?> = syncStateDao.observe("sync")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    val businessDay: StateFlow<BusinessDayEntity?> = businessDayRepository.observeLatest()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     private val searchQuery = MutableStateFlow("")
     private val selectedCategory = MutableStateFlow<String?>(null)
     private val cart = MutableStateFlow<Map<String, Int>>(emptyMap())
     private val _busy = MutableStateFlow(false)
     private val _error = MutableStateFlow<String?>(null)
     private val _receipt = MutableStateFlow<CheckoutReceipt?>(null)
+    private val _syncMessage = MutableStateFlow<String?>(null)
+    private val _sessionReady = MutableStateFlow(false)
 
     val isBusy = _busy.asStateFlow()
     val error = _error.asStateFlow()
     val receipt = _receipt.asStateFlow()
+    val syncMessage = _syncMessage.asStateFlow()
+    val sessionReady = _sessionReady.asStateFlow()
     val query: StateFlow<String> = searchQuery.asStateFlow()
     val category: StateFlow<String?> = selectedCategory.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            try {
+                sessionRepository.restoreStoredSession()
+            } finally {
+                _sessionReady.value = true
+            }
+        }
+    }
 
     val filteredProducts: StateFlow<List<ProductEntity>> = combine(
         products,
@@ -96,12 +118,18 @@ class PosViewModel @Inject constructor(
 
     fun clearCart() { cart.value = emptyMap() }
 
+    fun openDay(notes: String = "") { runAction { businessDayRepository.openDay(notes) } }
+    fun closeDay(notes: String = "") { runAction { businessDayRepository.closeDay(notes) } }
+
     fun signIn(email: String, password: String, onSuccess: () -> Unit) {
         runAction(onSuccess) { sessionRepository.signIn(email, password) }
     }
 
     fun activate(deviceCode: String, onSuccess: () -> Unit) {
-        runAction(onSuccess) { sessionRepository.activate(deviceCode) }
+        runAction(onSuccess) {
+            sessionRepository.activate(deviceCode)
+            syncRepository.sync()
+        }
     }
 
     fun signOut(onComplete: () -> Unit) {
@@ -118,8 +146,20 @@ class PosViewModel @Inject constructor(
     fun dismissError() { _error.value = null }
     fun dismissReceipt() { _receipt.value = null }
 
-    fun refreshProducts() {
-        runAction { productRepository.refreshFromCloud() }
+    fun syncToIms() {
+        runAction {
+            _syncMessage.value = null
+            val report = syncRepository.sync()
+            _syncMessage.value = if (report.permanentFailures == 0) {
+                val uploads = buildList {
+                    if (report.pushed > 0) add(if (report.pushed == 1) "1 sale" else "${report.pushed} sales")
+                    if (report.businessDaysSynced > 0) add(if (report.businessDaysSynced == 1) "1 operating-day update" else "${report.businessDaysSynced} operating-day updates")
+                }
+                "${uploads.joinToString(" and ").ifBlank { "No queued changes" }} uploaded. Catalog and inventory updated."
+            } else {
+                "${report.pushed} sales uploaded; ${report.permanentFailures} queued records need attention. Catalog and inventory updated."
+            }
+        }
     }
 
     private fun runAction(onSuccess: () -> Unit = {}, action: suspend () -> Unit) {

@@ -1,0 +1,88 @@
+package com.icecreampost.pos.data.repository
+
+import com.icecreampost.pos.data.local.dao.SessionDao
+import com.icecreampost.pos.data.local.entity.AppSessionEntity
+import com.icecreampost.pos.data.remote.SupabaseApi
+import com.icecreampost.pos.data.remote.dto.ActivateDeviceResponse
+import com.icecreampost.pos.data.remote.dto.LoginResponse
+import com.icecreampost.pos.data.remote.interceptor.DeviceIdentity
+import com.icecreampost.pos.data.remote.interceptor.SessionTokenStore
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
+import org.junit.Before
+import org.junit.Test
+
+class SessionRepositoryTest {
+    private val sessionDao = mockk<SessionDao>(relaxed = true)
+    private val api = mockk<SupabaseApi>()
+    private val tokenStore = SessionTokenStore()
+    private val deviceIdentity = mockk<DeviceIdentity>()
+    private lateinit var repository: SessionRepository
+
+    @Before
+    fun setUp() {
+        every { deviceIdentity.id } returns "hardware-1"
+        repository = SessionRepository(sessionDao, api, tokenStore, deviceIdentity)
+    }
+
+    @Test
+    fun `owner accounts are rejected by the Android POS`() {
+        coEvery { api.login(any()) } returns listOf(login(role = "owner"))
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runTest { repository.signIn("owner@example.com", "password") }
+        }
+
+        assertEquals(null, tokenStore.token)
+        coVerify(exactly = 0) { sessionDao.save(any()) }
+    }
+
+    @Test
+    fun `cashier login stores the cloud identity and token`() = runTest {
+        coEvery { api.login(any()) } returns listOf(login(role = "cashier"))
+        val saved = slot<AppSessionEntity>()
+        coEvery { sessionDao.save(capture(saved)) } returns Unit
+
+        repository.signIn("cashier@example.com", "password")
+
+        assertEquals("token-1", tokenStore.token)
+        assertEquals("cashier", saved.captured.role)
+        assertEquals("stall-1", saved.captured.stallId)
+        assertEquals(false, saved.captured.isActivated)
+    }
+
+    @Test
+    fun `activation is verified by the backend and stores the assigned device`() = runTest {
+        val current = AppSessionEntity(
+            userId = "cashier-1", stallId = "stall-1", displayName = "Cashier",
+            role = "cashier", sessionToken = "token-1",
+        )
+        coEvery { sessionDao.getCurrent() } returns current
+        coEvery { api.activateDevice(any()) } returns ActivateDeviceResponse("device-1", "stall-1")
+        val saved = slot<AppSessionEntity>()
+        coEvery { sessionDao.save(capture(saved)) } returns Unit
+
+        repository.activate(" ABC123 ")
+
+        coVerify(exactly = 1) {
+            api.activateDevice(match { it.activationCode == "ABC123" && it.hardwareId == "hardware-1" })
+        }
+        assertEquals("device-1", saved.captured.deviceId)
+        assertEquals(true, saved.captured.isActivated)
+    }
+
+    private fun login(role: String) = LoginResponse(
+        sessionToken = "token-1",
+        userId = "user-1",
+        stallId = "stall-1",
+        displayName = "Test user",
+        role = role,
+        expiresAt = "2026-09-08T12:00:00Z",
+    )
+}

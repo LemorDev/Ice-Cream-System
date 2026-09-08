@@ -1,0 +1,17 @@
+{
+  "name": "Coolerz Owner Dashboard",
+  "short_name": "Coolerz IMS",
+  "description": "Stall revenue, profit, inventory, staff, and operating-day management.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fffdf8",
+  "theme_color": "#220046",
+  "icons": [
+    {
+      "src": "/branding/coolerz-icecream-logo.png",
+      "sizes": "1254x1254",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

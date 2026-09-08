@@ -23,6 +23,8 @@ import com.icecreampost.pos.ui.component.SyncStatusCard
 fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit, onSignedOut: () -> Unit) {
     val session by viewModel.session.collectAsStateWithLifecycle()
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
+    val syncMessage by viewModel.syncMessage.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
     Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         OutlinedButton(onClick = onBack) { Text("Back") }
@@ -33,9 +35,15 @@ fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit, onSignedOut: () 
         Text("Build: ${BuildConfig.VERSION_NAME}")
         Text("Signed in as: ${session?.displayName ?: "Not signed in"}")
         Text("Role: ${session?.role ?: "-"}")
-        Button(onClick = viewModel::refreshProducts, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-            Text("Sync catalog now")
+        Button(
+            onClick = viewModel::syncToIms,
+            enabled = !busy && session?.sessionToken?.isNotBlank() == true,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (busy) "Syncing…" else "Sync to IMS")
         }
+        syncMessage?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+        error?.let { Text("Sync failed: $it", color = MaterialTheme.colorScheme.error) }
         OutlinedButton(onClick = { viewModel.signOut(onSignedOut) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
             Text("Sign out")
         }

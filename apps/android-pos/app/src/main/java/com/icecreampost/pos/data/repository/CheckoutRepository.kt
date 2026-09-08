@@ -6,6 +6,7 @@ import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
 import com.icecreampost.pos.data.local.dao.ProductDao
 import com.icecreampost.pos.data.local.dao.TransactionDao
 import com.icecreampost.pos.data.local.dao.SessionDao
+import com.icecreampost.pos.data.local.dao.BusinessDayDao
 import com.icecreampost.pos.data.local.database.CoolerzDatabase
 import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
@@ -33,6 +34,7 @@ class CheckoutRepository @Inject constructor(
     private val transactionDao: TransactionDao,
     private val inventoryLedgerDao: InventoryLedgerDao,
     private val sessionDao: SessionDao,
+    private val businessDayDao: BusinessDayDao,
     private val syncTrigger: SyncTrigger,
     private val logger: AppLogger,
 ) {
@@ -49,8 +51,11 @@ class CheckoutRepository @Inject constructor(
 
         val activeSession = sessionDao.getCurrent()
         val resolvedStallId = stallId.ifBlank { activeSession?.stallId.orEmpty() }
+        require(activeSession?.role == "cashier" && activeSession.isActivated) { "An activated Cashier account is required." }
+        val resolvedDeviceId = deviceId ?: activeSession.deviceId
         val resolvedCashierId = cashierId ?: activeSession?.userId
         require(resolvedStallId.isNotBlank()) { "This device is not assigned to a stall." }
+        require(!resolvedDeviceId.isNullOrBlank()) { "This POS has not been activated." }
         val now = Instant.now().toString()
         val transactionId = UUID.randomUUID().toString()
         val receiptNumber = "LOCAL-${now.replace("[^0-9]".toRegex(), "").takeLast(12)}"
@@ -58,6 +63,7 @@ class CheckoutRepository @Inject constructor(
         require(cashReceivedCents >= subtotalCents) { "Cash received is less than the total." }
 
         database.withTransaction {
+            require(businessDayDao.findOpen(resolvedStallId) != null) { "Open the operating day before starting a sale." }
             lines.forEach { line ->
                 val current = productDao.findById(line.product.id)
                     ?: error("${line.product.name} is no longer available locally.")
@@ -65,13 +71,18 @@ class CheckoutRepository @Inject constructor(
                 require(current.unitsInStock >= line.quantity) {
                     "Not enough stock for ${current.name}. Available: ${current.unitsInStock}."
                 }
+                productDao.updateStock(
+                    id = current.id,
+                    stock = current.unitsInStock - line.quantity,
+                    updatedAt = now,
+                )
             }
 
             transactionDao.upsert(
                 TransactionEntity(
                     id = transactionId,
                     stallId = resolvedStallId,
-                    deviceId = deviceId,
+                    deviceId = resolvedDeviceId,
                     cashierId = resolvedCashierId,
                     receiptNumber = receiptNumber,
                     status = "completed",
@@ -113,13 +124,6 @@ class CheckoutRepository @Inject constructor(
                 )
             })
 
-            lines.forEach { line ->
-                productDao.updateStock(
-                    id = line.product.id,
-                    stock = line.product.unitsInStock - line.quantity,
-                    updatedAt = now,
-                )
-            }
         }
 
         logger.info("Offline sale saved locally: $receiptNumber")

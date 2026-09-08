@@ -8,6 +8,7 @@ data class AppSessionEntity(
     @PrimaryKey val id: String = "current",
     val userId: String? = null,
     val stallId: String? = null,
+    val deviceId: String? = null,
     val displayName: String,
     val role: String,
     val sessionToken: String? = null,

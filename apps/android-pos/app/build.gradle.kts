@@ -99,6 +99,10 @@ dependencies {
     ksp(libs.androidx.hilt.compiler)
 
     debugImplementation(libs.androidx.ui.tooling)
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("io.mockk:mockk:1.13.16")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
 }
 
 ksp {

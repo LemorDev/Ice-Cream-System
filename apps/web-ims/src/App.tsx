@@ -1,41 +1,46 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { loadWorkspace } from './lib/api'
-import { getStoredSession, signIn, signOut, type ManagerSession } from './lib/session'
+import { listAccessibleStalls, loadWorkspace } from './lib/api'
+import { startWorkspaceAutoRefresh } from './lib/live-sync'
+import { getStoredSession, signIn, signOut, type AppSession } from './lib/session'
 import { createSupabaseClient } from './lib/supabase'
-import type { WorkspaceData } from './lib/types'
-import { Button, LoadingState, Notice } from './components/ui'
+import type { Stall, WorkspaceData } from './lib/types'
+import { Button, LoadingState, Notice, Select } from './components/ui'
 import {
   AdjustmentsScreen,
+  OperatingDaysScreen,
   OverviewScreen,
   ProductsScreen,
   PricingScreen,
   ReceivingScreen,
   ReportsScreen,
   StallScreen,
+  StaffScreen,
   TransactionsScreen,
 } from './screens'
 import './styles.css'
 
-type View = 'overview' | 'stall' | 'products' | 'receiving' | 'adjustments' | 'pricing' | 'transactions' | 'reports'
+type View = 'overview' | 'stall' | 'staff' | 'products' | 'receiving' | 'adjustments' | 'pricing' | 'transactions' | 'reports' | 'days'
 
 const brandLogo = '/branding/coolerz-icecream-logo.png'
 
 const viewLabels: Record<View, string> = {
   overview: 'Overview',
   stall: 'Stall settings',
+  staff: 'Staff & devices',
   products: 'Products',
   receiving: 'Receive stock',
   adjustments: 'Adjust inventory',
   pricing: 'Prices & conversions',
   transactions: 'Transactions',
   reports: 'Sales reports',
+  days: 'Operating days',
 }
 
 const navGroups: Array<{ label: string; items: View[] }> = [
-  { label: 'Workspace', items: ['overview', 'stall'] },
+  { label: 'Workspace', items: ['overview', 'stall', 'staff'] },
   { label: 'Inventory', items: ['products', 'receiving', 'adjustments', 'pricing'] },
-  { label: 'Sales', items: ['transactions', 'reports'] },
+  { label: 'Sales', items: ['transactions', 'reports', 'days'] },
 ]
 
 function BrandMark({ compact = false }: { compact?: boolean }) {
@@ -54,7 +59,7 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
   )
 }
 
-function LoginScreen({ onSignedIn }: { onSignedIn: (session: ManagerSession) => void }) {
+function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -89,9 +94,9 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (session: ManagerSession) => 
             <BrandMark />
             <div className="mt-16 max-w-sm">
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-[#f5deff]">The calm center of your stall</p>
-              <h1 className="mt-5 text-4xl font-black leading-tight text-[#fff8ea]">Manage stock, prices, and sales with your shop's look and feel.</h1>
+              <h1 className="mt-5 text-4xl font-black leading-tight text-[#fff8ea]">Run every stall from one clear workspace.</h1>
               <p className="mt-5 text-base leading-7 text-[#f6ebff]">
-                A clean manager workspace built around the Coolerz Ice Cream brand.
+                A clear owner workspace built around the Coolerz Ice Cream brand.
               </p>
             </div>
             <div className="mt-14 rounded-3xl border border-white/15 bg-white/10 p-4 shadow-2xl shadow-black/10">
@@ -109,8 +114,8 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (session: ManagerSession) => 
             <BrandMark compact />
           </div>
           <p className="mt-6 text-sm font-semibold uppercase tracking-[0.2em] text-[#5a1bb0] md:hidden">Coolerz IMS</p>
-          <h2 className="mt-3 text-3xl font-black tracking-tight text-[#220046]">Manager sign in</h2>
-          <p className="mt-2 max-w-md text-slate-500">Use the custom manager email and password configured in Supabase.</p>
+          <h2 className="mt-3 text-3xl font-black tracking-tight text-[#220046]">Owner sign in</h2>
+          <p className="mt-2 max-w-md text-slate-500">Owners and system administrators can use this dashboard.</p>
 
           <label className="mt-7 block text-sm font-medium text-[#39235f]">
             Email
@@ -163,7 +168,7 @@ function MenuIcon({ open = false }: { open?: boolean }) {
   )
 }
 
-function Sidebar({ activeView, onNavigate, onSignOut, session, open, onClose }: { activeView: View; onNavigate: (view: View) => void; onSignOut: () => void; session: ManagerSession; open: boolean; onClose: () => void }) {
+function Sidebar({ activeView, onNavigate, onSignOut, session, open, onClose }: { activeView: View; onNavigate: (view: View) => void; onSignOut: () => void; session: AppSession; open: boolean; onClose: () => void }) {
   return (
     <>
       <button
@@ -207,7 +212,7 @@ function Sidebar({ activeView, onNavigate, onSignOut, session, open, onClose }: 
       <div className="border-t border-white/10 p-4">
         <p className="truncate text-sm font-medium">{session.displayName}</p>
         <p className="mt-1 text-xs text-[#d9c2ff]">
-          {session.role} · {session.stallId ? 'stall assigned' : 'stall not assigned'}
+          {session.role === 'system_admin' ? 'System admin' : 'Owner'}
         </p>
         <button className="mt-4 text-sm font-semibold text-[#f5d68c] hover:text-white" onClick={onSignOut} type="button">
           Sign out
@@ -218,29 +223,61 @@ function Sidebar({ activeView, onNavigate, onSignOut, session, open, onClose }: 
   )
 }
 
-function Workspace({ session, onSignOut }: { session: ManagerSession; onSignOut: () => void }) {
+function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () => void }) {
   const [view, setView] = useState<View>('overview')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [data, setData] = useState<WorkspaceData | null>(null)
+  const [stalls, setStalls] = useState<Stall[]>([])
+  const [selectedStallId, setSelectedStallId] = useState(session.stallId)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
+  const refreshInFlight = useRef<Promise<void> | null>(null)
   const client = useMemo(() => createSupabaseClient(session.token), [session.token])
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      setData(await loadWorkspace(client))
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to load dashboard data.')
-    } finally {
-      setLoading(false)
+  const refreshWorkspace = useCallback((silent = false): Promise<void> => {
+    if (refreshInFlight.current) return refreshInFlight.current
+
+    if (!silent) {
+      setLoading(true)
+      setError('')
     }
-  }, [client])
+
+    const request = (async () => {
+      try {
+        const accessibleStalls = await listAccessibleStalls(client)
+        if (accessibleStalls.length === 0) throw new Error('No stall is assigned to this account.')
+        setStalls(accessibleStalls)
+        const targetStallId = accessibleStalls.some((stall) => stall.id === selectedStallId)
+          ? selectedStallId
+          : accessibleStalls[0].id
+        if (targetStallId !== selectedStallId) setSelectedStallId(targetStallId)
+        setData(await loadWorkspace(client, targetStallId))
+        setLastUpdatedAt(new Date())
+        setError('')
+      } catch (caughtError) {
+        setError(caughtError instanceof Error ? caughtError.message : 'Unable to load dashboard data.')
+      } finally {
+        if (!silent) setLoading(false)
+      }
+    })()
+
+    refreshInFlight.current = request
+    void request.finally(() => {
+      if (refreshInFlight.current === request) refreshInFlight.current = null
+    })
+    return request
+  }, [client, selectedStallId])
+
+  const refresh = useCallback(() => refreshWorkspace(false), [refreshWorkspace])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    return startWorkspaceAutoRefresh(() => refreshWorkspace(true))
+  }, [refreshWorkspace])
 
   useEffect(() => {
     if (!sidebarOpen) return
@@ -268,18 +305,23 @@ function Workspace({ session, onSignOut }: { session: ManagerSession; onSignOut:
       <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_#fff8ea,_#f2e7ff)] p-6">
         <div className="w-full max-w-lg space-y-4">
           <Notice>{error || 'Unable to load the workspace.'}</Notice>
-          <Button onClick={() => void refresh()}>Try again</Button>
+          <div className="flex gap-3">
+            <Button onClick={() => void refresh()}>Try again</Button>
+            <Button variant="ghost" onClick={onSignOut}>Sign out</Button>
+          </div>
         </div>
       </main>
     )
   }
 
-  const screenProps = { client, data, onRefresh: refresh, onError: setError }
+  const screenProps = { client, data, onRefresh: refresh, onError: setError, role: session.role, stalls }
   const screen =
     view === 'overview' ? (
       <OverviewScreen {...screenProps} onNavigate={(nextView) => setView(nextView as View)} />
     ) : view === 'stall' ? (
       <StallScreen {...screenProps} />
+    ) : view === 'staff' ? (
+      <StaffScreen {...screenProps} />
     ) : view === 'products' ? (
       <ProductsScreen {...screenProps} />
     ) : view === 'receiving' ? (
@@ -290,6 +332,8 @@ function Workspace({ session, onSignOut }: { session: ManagerSession; onSignOut:
       <PricingScreen {...screenProps} />
     ) : view === 'transactions' ? (
       <TransactionsScreen {...screenProps} />
+    ) : view === 'days' ? (
+      <OperatingDaysScreen {...screenProps} />
     ) : (
       <ReportsScreen {...screenProps} />
     )
@@ -297,7 +341,7 @@ function Workspace({ session, onSignOut }: { session: ManagerSession; onSignOut:
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,_#fbf6ff_0%,_#fffdf8_100%)] text-slate-900 lg:flex">
       <Sidebar activeView={view} onNavigate={setView} onSignOut={onSignOut} session={session} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-      <main className="min-w-0 flex-1">
+      <main className="min-w-0 flex-1 overflow-x-hidden">
         <header className="border-b border-[#eadcff] bg-white/85 px-4 py-4 backdrop-blur sm:px-8 sm:py-6">
           <div className="mx-auto max-w-7xl">
             <div className="flex items-start gap-3">
@@ -316,14 +360,21 @@ function Workspace({ session, onSignOut }: { session: ManagerSession; onSignOut:
                 </p>
                 <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
                   <h1 className="text-2xl font-black tracking-tight text-[#220046] sm:text-3xl">{viewLabels[view]}</h1>
-                  <p className="hidden text-sm text-slate-500 sm:block">Changes sync through Supabase when saved.</p>
+                  {stalls.length > 1 && (
+                    <Select aria-label="Active stall" className="mt-0 min-w-48" value={selectedStallId} onChange={(event) => setSelectedStallId(event.target.value)}>
+                      {stalls.map((stall) => <option key={stall.id} value={stall.id}>{stall.name}</option>)}
+                    </Select>
+                  )}
+                  <p className="hidden text-sm text-slate-500 sm:block">
+                    Live updates on{lastUpdatedAt ? ` · updated ${lastUpdatedAt.toLocaleTimeString()}` : ''}
+                  </p>
                 </div>
               </div>
             </div>
           </div>
         </header>
 
-        <div className="mx-auto max-w-7xl space-y-4 p-4 sm:p-8">
+        <div className="mx-auto w-full max-w-7xl space-y-4 p-4 sm:p-8">
           {error && (
             <div className="flex items-start justify-between gap-3">
               <Notice>{error}</Notice>
@@ -341,19 +392,30 @@ function Workspace({ session, onSignOut }: { session: ManagerSession; onSignOut:
 }
 
 export function App() {
-  const [session, setSession] = useState<ManagerSession | null>(() => getStoredSession())
+  const [session, setSession] = useState<AppSession | null>(() => getStoredSession())
+
+  useEffect(() => {
+    if (!session) return
+
+    const timeoutId = window.setTimeout(() => {
+      signOut()
+      setSession(null)
+    }, Math.max(0, Date.parse(session.expiresAt) - Date.now()))
+
+    return () => window.clearTimeout(timeoutId)
+  }, [session])
 
   if (!session) {
     return <LoginScreen onSignedIn={setSession} />
   }
 
-  if (session.role !== 'manager') {
+  if (session.role === 'cashier') {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_#fff8ea,_#f2e7ff)] p-6">
         <div className="max-w-md space-y-4 rounded-3xl border border-[#eadcff] bg-white p-8 text-center shadow-lg">
           <img alt="Coolerz Ice Cream logo" className="mx-auto h-20 w-20 rounded-2xl object-cover shadow-md" src={brandLogo} />
-          <h1 className="text-2xl font-black text-[#220046]">Manager access required</h1>
-          <p className="text-slate-600">This dashboard is restricted to manager accounts. Cashiers should use the Android POS.</p>
+          <h1 className="text-2xl font-black text-[#220046]">Owner access required</h1>
+          <p className="text-slate-600">Cashiers use the activated Android POS. This dashboard is for Owners and System admins.</p>
           <Button onClick={() => { signOut(); setSession(null) }}>Sign out</Button>
         </div>
       </main>

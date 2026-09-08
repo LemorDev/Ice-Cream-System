@@ -1,14 +1,16 @@
 package com.icecreampost.pos.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.icecreampost.pos.ui.PosViewModel
 import com.icecreampost.pos.ui.screen.activation.ActivationScreen
 import com.icecreampost.pos.ui.screen.catalog.ProductCatalogScreen
-import com.icecreampost.pos.ui.screen.checkout.CartScreen
-import com.icecreampost.pos.ui.screen.checkout.PaymentScreen
 import com.icecreampost.pos.ui.screen.history.TransactionHistoryScreen
 import com.icecreampost.pos.ui.screen.home.HomeScreen
 import com.icecreampost.pos.ui.screen.login.LoginScreen
@@ -18,6 +20,21 @@ import com.icecreampost.pos.ui.screen.settings.SettingsScreen
 @Composable
 fun AppNavHost(viewModel: PosViewModel) {
     val navController = rememberNavController()
+    val session by viewModel.session.collectAsStateWithLifecycle()
+    val sessionReady by viewModel.sessionReady.collectAsStateWithLifecycle()
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = backStackEntry?.destination?.route
+
+    LaunchedEffect(sessionReady, session, currentRoute) {
+        if (sessionReady && currentRoute == Routes.LOGIN && session != null) {
+            val destination = if (session?.isActivated == true) Routes.HOME else Routes.ACTIVATION
+            navController.navigate(destination) {
+                popUpTo(Routes.LOGIN) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
     NavHost(navController = navController, startDestination = Routes.LOGIN) {
         composable(Routes.LOGIN) {
             LoginScreen(viewModel = viewModel, onSuccess = { navController.navigate(Routes.ACTIVATION) })
@@ -38,21 +55,7 @@ fun AppNavHost(viewModel: PosViewModel) {
         composable(Routes.CATALOG) {
             ProductCatalogScreen(
                 viewModel = viewModel,
-                onCart = { navController.navigate(Routes.CART) },
-                onBack = { navController.popBackStack() },
-            )
-        }
-        composable(Routes.CART) {
-            CartScreen(
-                viewModel = viewModel,
-                onPayment = { navController.navigate(Routes.PAYMENT) },
-                onBack = { navController.popBackStack() },
-            )
-        }
-        composable(Routes.PAYMENT) {
-            PaymentScreen(
-                viewModel = viewModel,
-                onSuccess = { navController.navigate(Routes.RECEIPT) },
+                onSaleComplete = { navController.navigate(Routes.RECEIPT) },
                 onBack = { navController.popBackStack() },
             )
         }

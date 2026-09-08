@@ -1,10 +1,10 @@
-# Coolerz Android POS API and Sync Contract
+# Coolerz Android POS API and sync contract
 
-This document defines the contract used by the offline Android POS. Supabase PostgREST is the API gateway; the Android app uses Retrofit and the Supabase anon key.
+Supabase PostgREST is the API gateway. The Android app uses the Supabase anon key, a custom application session, and a stable Android device identifier.
 
-## Base URL and headers
+## Headers
 
-The base URL is the Supabase project URL with a trailing slash. Every request sends:
+Every request sends:
 
 ```http
 apikey: <SUPABASE_ANON_KEY>
@@ -14,79 +14,105 @@ X-Session-Token: <custom session token>
 X-Device-Id: <stable Android device identifier>
 ```
 
-The service-role key is never shipped to Android. The custom `X-Session-Token` is returned by `login_with_password` and is evaluated by the database RLS functions.
+The service-role key is never shipped to Android. `login_with_password` returns the short-lived token. Android accepts only a `cashier` login. Device-protected RPCs also require `X-Device-Id` to match the active device row for that Cashier's stall.
 
 ## Endpoints
 
 | Purpose | Method | Path |
 |---|---:|---|
 | Login | POST | `/rest/v1/rpc/login_with_password` |
+| Redeem the one-time POS code | POST | `/rest/v1/rpc/activate_pos_device` |
+| Push an opening or closing record | POST | `/rest/v1/rpc/push_business_day` |
 | Push one local sale | POST | `/rest/v1/rpc/push_pos_transaction` |
-| Pull product changes | GET | `/rest/v1/products?updated_at=gt.<cursor>&select=...` |
-| Pull inventory changes | GET | `/rest/v1/inventory_ledger?updated_at=gt.<cursor>&select=...` |
+| Pull cost-free POS product changes | POST | `/rest/v1/rpc/get_pos_products` |
+| Pull inventory ledger changes | GET | `/rest/v1/inventory_ledger?updated_at=gt.<cursor>&select=...` |
 
-The first pull omits the `updated_at` filter. Later pulls use the last successfully persisted cursor. Soft-deleted rows remain eligible for pulls so Room can hide them locally.
+Product and inventory pulls use separate successfully persisted cursors (`catalog-products` and `catalog-ledger`). Existing installations initially fall back to the legacy `catalog` cursor. Soft-deleted rows remain eligible for pulls so Room can hide them locally. The POS product RPC excludes `cost_price`.
 
-## Push payload
+## Device activation
+
+The Owner creates a one-time code in **Staff & devices**. Android redeems the code with its hardware identifier and stores the returned cloud `device_id` in Room. Successful redemption deactivates the previous POS for that stall, so an interrupted replacement does not lock out the working device. A used, foreign-stall, or replaced code is rejected.
+
+## Operating days
+
+Opening and closing use the same local record and idempotency key:
 
 ```json
 {
-  "id": "local-transaction-uuid",
-  "stall_id": "stall-uuid",
-  "device_id": null,
-  "receipt_number": "LOCAL-202608140001",
-  "status": "completed",
-  "subtotal": 100.00,
-  "total_amount": 100.00,
-  "cash_received": 200.00,
-  "change_amount": 100.00,
-  "occurred_at": "2026-08-14T10:00:00Z",
-  "items": [
-    {
-      "id": "local-item-uuid",
-      "product_id": "product-uuid",
-      "product_name": "Vanilla",
-      "quantity": 2,
-      "unit_price": 50.00,
-      "line_total": 100.00
-    }
-  ]
+  "p_day": {
+    "id": "business-day-uuid",
+    "stall_id": "stall-uuid",
+    "device_id": "device-uuid",
+    "business_date": "2026-09-08",
+    "opened_at": "2026-09-08T01:00:00Z",
+    "opening_notes": null,
+    "closed_at": "2026-09-08T10:00:00Z",
+    "closing_cash_total": 1250.00,
+    "closing_notes": "Counted"
+  }
 }
 ```
 
-The server validates the stall session, item quantities, and available stock. It inserts the transaction, transaction items, and sale inventory ledger in one database transaction.
+Opening is required before checkout. Room permits only one record per stall and Manila business date. Closing records the completed local sales total between the opening and closing timestamps. Android pushes unsynced operating-day records before sales. The cloud sale RPC accepts a sale only when its timestamp falls inside the synced day window for the active device.
+
+## Sale payload
+
+```json
+{
+  "p_transaction": {
+    "id": "local-transaction-uuid",
+    "stall_id": "stall-uuid",
+    "device_id": "device-uuid",
+    "receipt_number": "LOCAL-202609080001",
+    "status": "completed",
+    "subtotal": 100.00,
+    "total_amount": 100.00,
+    "cash_received": 200.00,
+    "change_amount": 100.00,
+    "occurred_at": "2026-09-08T02:00:00Z",
+    "items": [
+      {
+        "id": "local-item-uuid",
+        "product_id": "product-uuid",
+        "product_name": "Vanilla",
+        "quantity": 2,
+        "unit_price": 50.00,
+        "line_total": 100.00
+      }
+    ]
+  }
+}
+```
+
+The server validates the Cashier role, stall, activated device, operating day, item values, products, and available stock. It groups repeated products, locks their rows to serialize competing sales, then inserts the transaction, items, and inventory ledger in one database transaction.
 
 ## Idempotency
 
-The local transaction UUID (`id`) is the idempotency key. The Android app generates it before writing the local checkout. Retrying the same payload is safe:
+The local transaction UUID is the sale idempotency key. Retrying the same payload is safe:
 
-- `accepted`: the server inserted the sale.
-- `duplicate`: the server already has the same transaction and total; Android marks the local row synced.
-- `IDEMPOTENCY_CONFLICT`: the same UUID or receipt number was reused with a different total; Android keeps the row failed for operator review.
+- `accepted`: the server inserted the record.
+- `duplicate`: the server already has the same identity and total; Android marks the local row synced.
+- `IDEMPOTENCY_CONFLICT`: the UUID or receipt number was reused with different data; Android keeps the row failed for review.
 
-## Pull response
-
-Product rows use the cloud schema fields `sale_price`, `cost_price`, `low_stock_threshold`, `pack_size`, and `conversion_rate`. Inventory rows use `quantity_delta`. Android calculates local stock as the ledger sum and stores the latest `updated_at` value as the catalog cursor.
+Operating-day pushes similarly accept the first open, merge the first close into that record, and safely acknowledge a retry.
 
 ## Response and retry rules
 
-| Response or error | Meaning | Android action |
-|---|---|---|
-| 200 | Pull or RPC succeeded | Commit local changes/cursor |
-| 400 / validation error | Invalid payload, insufficient stock, malformed UUID | Mark transaction permanent failure; do not retry automatically |
-| 401 / 403 | Expired session, missing session, or revoked device | Stop sync and require sign-in/activation |
-| 409 / idempotency conflict | Same key has different data | Mark permanent failure and surface it |
-| 408 / 425 / 429 | Timeout, temporary availability, or rate limit | Retry with WorkManager backoff |
-| 5xx | Server failure | Retry with WorkManager backoff |
-| Network/DNS/SSL exception | Device cannot reach Supabase | Retry when connected |
+| Response or error | Android action |
+|---|---|
+| 200 | Commit the local acknowledgement or pulled changes and cursor |
+| 400 / validation error | Retain the row with a permanent sync error |
+| 401 / 403 | Surface the expired session or revoked-device error and require sign-in or activation |
+| 409 / idempotency conflict | Retain the row for operator review |
+| 408 / 425 / 429, 5xx, or network failure | Retry with WorkManager backoff |
 
-Push always runs before pull. A permanent push failure for one transaction does not discard other queued transactions; each row keeps its own `syncError`. A failed pull does not advance the cursor.
+Operating-day push runs before sale push, followed by product and inventory pull. A permanent failure stays in Room with its `syncError`; a failed pull does not advance its cursor.
 
-## Recovery guarantees
+## Recovery properties
 
-- Power loss during checkout is safe because the transaction header, items, ledger entry, and local stock update use one Room transaction.
-- Network loss before push leaves `isSynced = false`.
-- Network loss after a successful server write is safe because the transaction UUID makes the retry a duplicate.
-- Remote price changes affect new local carts after the next successful pull; an already-created local transaction retains its original price.
-- Remote inventory changes are applied through ledger deltas and never overwrite a pending local sale.
-- App upgrades use Room migrations; failed sync rows remain in the local database for recovery.
+- Checkout writes the transaction, items, sale ledger, and local stock inside one Room transaction.
+- Network loss leaves local rows unsynced, and server-side UUID idempotency makes a retry safe after an uncertain response.
+- Remote inventory deltas are applied through ledger entries instead of overwriting pending local sales.
+- App upgrades use explicit Room migrations, including the device assignment and operating-day table added in database version 3.
+
+These properties still require real-device and development-backend acceptance testing before production. See [PROJECT_REVIEW.md](PROJECT_REVIEW.md) for the remaining release work.

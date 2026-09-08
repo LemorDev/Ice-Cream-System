@@ -1,19 +1,114 @@
 package com.icecreampost.pos.ui.component
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.icecreampost.pos.data.local.entity.SyncStateEntity
 
 fun formatMoney(cents: Long): String = "₱${cents / 100}.${(cents % 100).toString().padStart(2, '0')}"
+
+@Composable
+fun ScreenHeader(
+    title: String,
+    subtitle: String? = null,
+    onBack: (() -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (onBack != null) {
+            Surface(
+                onClick = onBack,
+                modifier = Modifier.size(44.dp).semantics {
+                    role = Role.Button
+                    contentDescription = "Go back"
+                },
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceVariant,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("‹", style = MaterialTheme.typography.headlineSmall)
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            subtitle?.let {
+                Spacer(Modifier.height(2.dp))
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        trailing?.invoke()
+    }
+}
+
+@Composable
+fun QuantityStepper(
+    quantity: Int,
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit,
+    modifier: Modifier = Modifier,
+    canIncrease: Boolean = true,
+) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+            modifier = Modifier.size(38.dp),
+            onClick = onDecrease,
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text("−", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { contentDescription = "Decrease quantity" })
+            }
+        }
+        Text(
+            quantity.toString(),
+            modifier = Modifier.width(36.dp),
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        Surface(
+            modifier = Modifier.size(38.dp),
+            onClick = onIncrease,
+            enabled = canIncrease,
+            shape = CircleShape,
+            color = if (canIncrease) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    "+",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (canIncrease) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.semantics { contentDescription = "Increase quantity" },
+                )
+            }
+        }
+    }
+}
 
 @Composable
 fun SyncStatusCard(syncState: SyncStateEntity? = null) {
@@ -27,15 +122,21 @@ fun SyncStatusCard(syncState: SyncStateEntity? = null) {
     }
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.secondaryContainer,
+        color = when (status) {
+            "success" -> MaterialTheme.colorScheme.secondaryContainer
+            "error" -> MaterialTheme.colorScheme.errorContainer
+            else -> MaterialTheme.colorScheme.surfaceVariant
+        },
         shape = MaterialTheme.shapes.medium,
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(detail)
-            Text(status, style = MaterialTheme.typography.labelMedium)
+            Text(detail, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(12.dp))
+            Text(status.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelMedium)
         }
     }
 }

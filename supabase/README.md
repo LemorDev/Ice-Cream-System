@@ -1,37 +1,43 @@
 # Supabase
 
-## Apply the initial database schema
+## Apply the database schema
 
 1. Create a Supabase project and open **SQL Editor**.
-2. Open `migrations/202608040001_initial_schema.sql` from this folder, copy its contents, and run it once.
-3. After running the migration, uncomment the `create_initial_manager` command at the bottom, change its email and password, and run that command. Use a strong password.
-4. In **Project Settings → API**, copy the Project URL and the **anon/publishable** key into `apps/web-ims/.env.local`. Never use the `service_role` key in a browser app.
-5. Start the web application with `pnpm --filter ice-cream-ims dev`, then sign in using the manager credentials created in step 3.
+2. For a fresh database, apply every SQL file in `migrations/` once, in filename order. For an existing database, apply only migrations that have not already been applied.
+3. Create the first System admin and active stall by running the following as the database owner with your own values:
 
-## Custom password security
+   ```sql
+   select public.create_initial_system_admin(
+     'Main Ice Cream Stall',
+     'MAIN-001',
+     'admin@example.com',
+     'CHANGE-THIS-TO-A-STRONG-PASSWORD',
+     'System Administrator'
+   );
+   ```
 
-This project does not use Supabase Auth providers. The `login_with_password` database function verifies a bcrypt-hashed password and returns a random, short-lived session token. The dashboard stores that token in browser session storage, not the password. Each Supabase request sends the token in an `X-Session-Token` header. RLS validates it, then limits data to the signed-in user's assigned stall.
+   Client roles cannot execute this bootstrap helper. From the web dashboard, the System admin can then create the regular Owner and Cashier accounts.
+4. In **Project Settings → API**, copy the Project URL and **anon/publishable** key into `apps/web-ims/.env.local` and the Android `local.properties`. Never ship the `service_role` key to either client.
+5. Start the web application with `pnpm --filter ice-cream-ims dev`, then sign in with the System admin account.
 
-## Role-based access rules
+For an existing database, the role migration automatically renames every `manager` account to `owner` and gives it access to its existing stall. Promote one chosen account to System admin after applying all migrations.
 
-These are the access rules the schema and RLS policies are built around:
+## Custom password sessions
 
-- `manager`
-  - Can manage products, categories, inventory receiving, price changes, daily closures, and device records for their stall.
-  - Can view users in their own stall.
-  - Can create, update, and soft-delete operational records tied to their stall.
-  - Can create and reverse sales through the business logic helpers when the app needs a stock adjustment trail.
+This project does not use Supabase Auth providers. The `login_with_password` database function verifies a bcrypt password and returns a random, short-lived session token. The web dashboard stores the token in browser session storage. Android stores it in Room so an already activated POS can continue operating offline. Each API request sends the token in `X-Session-Token`; database policies and secured functions resolve the user from that token.
 
-- `cashier`
-  - Can view the catalog, own-stall inventory state, and sales data needed for checkout.
-  - Can create sales and transaction items for their own stall.
-  - Can read their own stall data only.
-  - Cannot manage master data such as products, categories, devices, or user accounts.
+## Role-based access
 
-Shared rules:
+- `system_admin` can access every stall, create stalls, create or update Owner and Cashier accounts, assign Owners to several stalls, manage POS activation, and perform all Owner operations.
+- `owner` can use the web dashboard for assigned stalls, including revenue and profit reports, products, pricing, costs, overhead, inventory, Cashier accounts, and POS activation. Owners cannot create Owners, System admins, or stalls.
+- `cashier` can sign in to an assigned Android POS, open and close its operating day, make sales while that day is open, and sync the cost-free POS catalog and own-stall inventory. Cashiers cannot use the Owner dashboard or read product costs and profit data.
 
-- Every request is scoped to one stall through the signed-in session.
-- No user can read or mutate records from another stall.
-- No client app should use elevated keys or bypass the session-token flow.
+One POS device can be active for a stall at a time. Redeeming a replacement activation code deactivates the previous device. The code is stored only as a hash, works once, and is bound to the Android hardware identifier when redeemed.
 
-For production, add login rate limiting and a password-reset process before deploying.
+The current business has one active stall. The schema and Owner dashboard already support assigning several stalls without changing the one-stall workflow.
+
+## Migration verification
+
+The rollback-only SQL fixtures in `tests/` cover sale/reversal behavior and the RBAC, stall assignment, device activation, and operating-day contracts. Run them only against a disposable database after applying every migration. They have been prepared locally but were not executed during this implementation because no local PostgreSQL runtime is configured.
+
+Before production, also add login rate limiting and an account recovery process, validate the migrations against a development Supabase project, and complete the release checks in `docs/PROJECT_REVIEW.md`.

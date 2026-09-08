@@ -3,11 +3,16 @@ package com.icecreampost.pos.data.repository
 import com.icecreampost.pos.core.logging.AppLogger
 import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.dao.TransactionDao
+import com.icecreampost.pos.data.local.dao.BusinessDayDao
+import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.data.local.entity.SyncStateEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.PushTransactionItemPayload
 import com.icecreampost.pos.data.remote.dto.PushTransactionPayload
+import com.icecreampost.pos.data.remote.dto.PushTransactionRpcRequest
+import com.icecreampost.pos.data.remote.dto.PushBusinessDayPayload
+import com.icecreampost.pos.data.remote.dto.PushBusinessDayRequest
 import kotlinx.coroutines.flow.Flow
 import retrofit2.HttpException
 import java.io.IOException
@@ -17,11 +22,12 @@ import javax.inject.Singleton
 
 class RetryableSyncException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
-data class SyncReport(val pushed: Int, val permanentFailures: Int)
+data class SyncReport(val pushed: Int, val permanentFailures: Int, val businessDaysSynced: Int = 0)
 
 @Singleton
 class SyncRepository @Inject constructor(
     private val transactionDao: TransactionDao,
+    private val businessDayDao: BusinessDayDao,
     private val syncStateDao: SyncStateDao,
     private val api: SupabaseApi,
     private val productRepository: ProductRepository,
@@ -33,6 +39,23 @@ class SyncRepository @Inject constructor(
         setState("running", null)
         var pushed = 0
         var permanentFailures = 0
+        var businessDaysSynced = 0
+
+        for (day in businessDayDao.getUnsynced()) {
+            try {
+                pushBusinessDay(day)
+                businessDayDao.markSynced(day.id)
+                businessDaysSynced += 1
+            } catch (error: Exception) {
+                val message = error.message ?: "Unable to upload operating day."
+                if (isRetryable(error)) {
+                    setState("retrying", message)
+                    throw RetryableSyncException(message, error)
+                }
+                businessDayDao.markSyncError(day.id, message)
+                permanentFailures += 1
+            }
+        }
 
         for (transaction in transactionDao.getUnsynced()) {
             try {
@@ -64,15 +87,38 @@ class SyncRepository @Inject constructor(
         }
 
         val status = if (permanentFailures == 0) "success" else "error"
-        setState(status, if (permanentFailures == 0) null else "$permanentFailures transaction(s) need attention.")
-        return SyncReport(pushed, permanentFailures)
+        setState(status, if (permanentFailures == 0) null else "$permanentFailures queued record(s) need attention.")
+        return SyncReport(pushed, permanentFailures, businessDaysSynced)
+    }
+
+    private suspend fun pushBusinessDay(day: BusinessDayEntity) {
+        val response = api.pushBusinessDay(PushBusinessDayRequest(PushBusinessDayPayload(
+            id = day.id, stallId = day.stallId, deviceId = day.deviceId,
+            businessDate = day.businessDate, openedAt = day.openedAt, openingNotes = day.openingNotes,
+            closedAt = day.closedAt, closingCashTotal = day.closingCashCents?.div(100.0),
+            closingNotes = day.closingNotes,
+        )))
+        check(response.status == "accepted" || response.status == "duplicate") { "IMS rejected the operating day acknowledgement." }
+        check(response.businessDayId.isNotBlank()) { "IMS did not acknowledge the operating day." }
     }
 
     private suspend fun push(transaction: TransactionEntity) {
         transactionDao.markSyncAttempt(transaction.id, Instant.now().toString())
         val items = transactionDao.getItems(transaction.id)
-        api.pushTransaction(
-            PushTransactionPayload(
+        require(transaction.id.isNotBlank()) { "Transaction ID is missing." }
+        require(transaction.stallId.isNotBlank()) { "Transaction stall is missing." }
+        require(transaction.receiptNumber.isNotBlank()) { "Receipt number is missing." }
+        require(transaction.totalCents >= 0) { "Transaction total is invalid." }
+        require(items.isNotEmpty()) { "Transaction has no items." }
+        require(items.all { it.id.isNotBlank() && !it.productId.isNullOrBlank() }) {
+            "A transaction item is missing its identity or product."
+        }
+        require(items.all { it.productName.isNotBlank() && it.quantity > 0 && it.unitPriceCents >= 0 && it.lineTotalCents >= 0 }) {
+            "A transaction item contains invalid values."
+        }
+
+        val response = api.pushTransaction(
+            PushTransactionRpcRequest(PushTransactionPayload(
                 id = transaction.id,
                 stallId = transaction.stallId,
                 deviceId = transaction.deviceId,
@@ -93,8 +139,12 @@ class SyncRepository @Inject constructor(
                         lineTotal = item.lineTotalCents / 100.0,
                     )
                 },
-            ),
+            )),
         )
+        check(response.status == "accepted" || response.status == "duplicate") {
+            "IMS returned an unexpected sync status: ${response.status}."
+        }
+        check(response.transactionId.isNotBlank()) { "IMS did not acknowledge the transaction ID." }
     }
 
     private suspend fun setState(status: String, errorMessage: String?) {

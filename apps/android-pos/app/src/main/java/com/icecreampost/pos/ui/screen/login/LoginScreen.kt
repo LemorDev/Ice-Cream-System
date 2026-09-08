@@ -33,7 +33,7 @@ fun LoginScreen(viewModel: PosViewModel, onSuccess: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Coolerz POS", style = MaterialTheme.typography.headlineLarge)
-        Text("Manager or cashier sign in. The catalog and checkout work from local Room data after activation.")
+        Text("Cashier sign in. The catalog and checkout work from local Room data after activation.")
         OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(
             password,

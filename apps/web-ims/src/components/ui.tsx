@@ -1,5 +1,14 @@
 import type { ReactNode } from 'react'
 
+export function OverheadIcon({ kind, className = 'h-5 w-5' }: { kind?: string; className?: string }) {
+  const common = { className, fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  if (kind === 'cashier') return <svg {...common} aria-hidden="true"><path d="M4 20v-1.5a4.5 4.5 0 0 1 4.5-4.5h3a4.5 4.5 0 0 1 4.5 4.5V20" /><circle cx="10" cy="7" r="3" /><path d="M17 11h3m-1.5-1.5V12.5" /></svg>
+  if (kind === 'rent') return <svg {...common} aria-hidden="true"><path d="m3 10 9-7 9 7" /><path d="M5 9v11h14V9M9 20v-6h6v6" /></svg>
+  if (kind === 'electricity') return <svg {...common} aria-hidden="true"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z" /></svg>
+  if (kind === 'water') return <svg {...common} aria-hidden="true"><path d="M12 3s6 6.2 6 11a6 6 0 0 1-12 0c0-4.8 6-11 6-11Z" /><path d="M9 16a3 3 0 0 0 3 2" /></svg>
+  return <svg {...common} aria-hidden="true"><path d="M12 5v14m-7-7h14" /></svg>
+}
+
 export function Button({ children, variant = 'primary', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'danger' | 'ghost' }) {
   const styles = {
     primary: 'bg-violet-700 text-[#fff8ea] hover:bg-violet-800 shadow-[0_12px_30px_rgba(91,33,182,0.24)]',
@@ -23,7 +32,7 @@ export function Textarea({ label, ...props }: React.TextareaHTMLAttributes<HTMLT
 }
 
 export function Panel({ title, description, action, children }: { title: string; description?: string; action?: ReactNode; children: ReactNode }) {
-  return <section className="rounded-2xl border border-[#eadcff] bg-white/90 shadow-[0_20px_50px_rgba(60,0,112,0.08)] backdrop-blur"><div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#f1e8ff] p-4 sm:p-5"><div className="min-w-0"><h2 className="font-semibold text-[#240042]">{title}</h2>{description && <p className="mt-1 text-sm text-slate-500">{description}</p>}</div>{action && <div className="w-full sm:w-auto">{action}</div>}</div><div className="p-4 sm:p-5">{children}</div></section>
+  return <section className="min-w-0 overflow-hidden rounded-2xl border border-[#eadcff] bg-white/90 shadow-[0_20px_50px_rgba(60,0,112,0.08)] backdrop-blur"><div className="flex flex-col items-stretch gap-4 border-b border-[#f1e8ff] p-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6 sm:p-5"><div className="min-w-0"><h2 className="font-semibold text-[#240042]">{title}</h2>{description && <p className="mt-1 max-w-3xl text-sm leading-5 text-slate-500">{description}</p>}</div>{action && <div className="min-w-0 w-full sm:w-auto sm:max-w-full">{action}</div>}</div><div className="min-w-0 p-4 sm:p-5">{children}</div></section>
 }
 
 export function Notice({ children, tone = 'error' }: { children: ReactNode; tone?: 'error' | 'success' | 'info' }) {
@@ -45,7 +54,7 @@ export function Badge({ children, tone = 'neutral' }: { children: ReactNode; ton
 }
 
 export function Table({ children }: { children: ReactNode }) {
-  return <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm">{children}</table></div>
+  return <div className="min-w-0 max-w-full overflow-x-auto overscroll-x-contain"><table className="w-full min-w-[680px] text-left text-sm">{children}</table></div>
 }
 
 export function TableHead({ children }: { children: ReactNode }) {

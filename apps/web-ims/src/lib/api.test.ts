@@ -48,6 +48,8 @@ test('a failed overhead update is reported instead of falling back to a partial 
 })
 
 test('saved overhead comes from the database response', async () => {
+  let requestUrl = ''
+  let requestBody: Record<string, unknown> = {}
   const saved = {
     id: 'stall-1', name: 'Coolerz', code: 'MAIN', updated_at: '2026-09-08T00:00:00Z',
     overhead_config: [{ key: 'rent', label: 'Rent', dailyRate: 200 }],
@@ -55,12 +57,20 @@ test('saved overhead comes from the database response', async () => {
   const client = createClient('https://example.invalid', 'test-key', {
     auth: { persistSession: false },
     global: {
-      fetch: async () => new Response(JSON.stringify(saved), {
-        status: 200, headers: { 'Content-Type': 'application/json' },
-      }),
+      fetch: async (input, init) => {
+        requestUrl = String(input)
+        requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return new Response(JSON.stringify(saved), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        })
+      },
     },
   })
 
   const result = await updateStall(client, saved.id, { overhead_config: saved.overhead_config })
   assert.deepEqual(getOverheadForStall(result), saved.overhead_config)
+  assert.match(requestUrl, /\/rpc\/update_managed_stall$/)
+  assert.deepEqual(requestBody, {
+    p_stall_id: 'stall-1', p_name: null, p_code: null, p_overhead_config: saved.overhead_config,
+  })
 })

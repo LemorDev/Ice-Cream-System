@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
+import { canAccessWebView, getDefaultView, getNavigation, getViewLabel, type WebView } from './lib/access'
 import { listAccessibleStalls, loadWorkspace } from './lib/api'
 import { startWorkspaceAutoRefresh } from './lib/live-sync'
 import { getStoredSession, signIn, signOut, type AppSession } from './lib/session'
@@ -9,6 +10,7 @@ import { Button, LoadingState, Notice, Select } from './components/ui'
 import {
   AdjustmentsScreen,
   OperatingDaysScreen,
+  SystemAdminOverviewScreen,
   OverviewScreen,
   ProductsScreen,
   PricingScreen,
@@ -20,28 +22,7 @@ import {
 } from './screens'
 import './styles.css'
 
-type View = 'overview' | 'stall' | 'staff' | 'products' | 'receiving' | 'adjustments' | 'pricing' | 'transactions' | 'reports' | 'days'
-
 const brandLogo = '/branding/coolerz-icecream-logo.png'
-
-const viewLabels: Record<View, string> = {
-  overview: 'Overview',
-  stall: 'Stall settings',
-  staff: 'Staff & devices',
-  products: 'Products',
-  receiving: 'Receive stock',
-  adjustments: 'Adjust inventory',
-  pricing: 'Prices & conversions',
-  transactions: 'Transactions',
-  reports: 'Sales reports',
-  days: 'Operating days',
-}
-
-const navGroups: Array<{ label: string; items: View[] }> = [
-  { label: 'Workspace', items: ['overview', 'stall', 'staff'] },
-  { label: 'Inventory', items: ['products', 'receiving', 'adjustments', 'pricing'] },
-  { label: 'Sales', items: ['transactions', 'reports', 'days'] },
-]
 
 function BrandMark({ compact = false }: { compact?: boolean }) {
   return (
@@ -94,9 +75,9 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void
             <BrandMark />
             <div className="mt-16 max-w-sm">
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-[#f5deff]">The calm center of your stall</p>
-              <h1 className="mt-5 text-4xl font-black leading-tight text-[#fff8ea]">Run every stall from one clear workspace.</h1>
+              <h1 className="mt-5 text-4xl font-black leading-tight text-[#fff8ea]">Manage the business from one clear workspace.</h1>
               <p className="mt-5 text-base leading-7 text-[#f6ebff]">
-                A clear owner workspace built around the Coolerz Ice Cream brand.
+                Separate administration and owner workspaces built around the Coolerz Ice Cream brand.
               </p>
             </div>
             <div className="mt-14 rounded-3xl border border-white/15 bg-white/10 p-4 shadow-2xl shadow-black/10">
@@ -114,7 +95,7 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void
             <BrandMark compact />
           </div>
           <p className="mt-6 text-sm font-semibold uppercase tracking-[0.2em] text-[#5a1bb0] md:hidden">Coolerz IMS</p>
-          <h2 className="mt-3 text-3xl font-black tracking-tight text-[#220046]">Owner sign in</h2>
+          <h2 className="mt-3 text-3xl font-black tracking-tight text-[#220046]">Management sign in</h2>
           <p className="mt-2 max-w-md text-slate-500">Owners and system administrators can use this dashboard.</p>
 
           <label className="mt-7 block text-sm font-medium text-[#39235f]">
@@ -168,7 +149,8 @@ function MenuIcon({ open = false }: { open?: boolean }) {
   )
 }
 
-function Sidebar({ activeView, onNavigate, onSignOut, session, open, onClose }: { activeView: View; onNavigate: (view: View) => void; onSignOut: () => void; session: AppSession; open: boolean; onClose: () => void }) {
+function Sidebar({ activeView, onNavigate, onSignOut, session, open, onClose }: { activeView: WebView; onNavigate: (view: WebView) => void; onSignOut: () => void; session: AppSession; open: boolean; onClose: () => void }) {
+  const navigation = getNavigation(session.role)
   return (
     <>
       <button
@@ -186,7 +168,7 @@ function Sidebar({ activeView, onNavigate, onSignOut, session, open, onClose }: 
       </div>
 
       <nav className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 pb-4">
-        {navGroups.map((group) => (
+        {navigation.map((group) => (
           <div key={group.label}>
             <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-widest text-[#cfb5ff]">{group.label}</p>
             <div>
@@ -201,7 +183,7 @@ function Sidebar({ activeView, onNavigate, onSignOut, session, open, onClose }: 
                   onClick={() => { onNavigate(view); onClose() }}
                   type="button"
                 >
-                  {viewLabels[view]}
+                  {getViewLabel(session.role, view)}
                 </button>
               ))}
             </div>
@@ -224,7 +206,7 @@ function Sidebar({ activeView, onNavigate, onSignOut, session, open, onClose }: 
 }
 
 function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () => void }) {
-  const [view, setView] = useState<View>('overview')
+  const [view, setView] = useState<WebView>(() => getDefaultView(session.role))
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [data, setData] = useState<WorkspaceData | null>(null)
   const [stalls, setStalls] = useState<Stall[]>([])
@@ -276,6 +258,10 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
   }, [refresh])
 
   useEffect(() => {
+    if (!canAccessWebView(session.role, view)) setView(getDefaultView(session.role))
+  }, [session.role, view])
+
+  useEffect(() => {
     return startWorkspaceAutoRefresh(() => refreshWorkspace(true))
   }, [refreshWorkspace])
 
@@ -316,8 +302,10 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
 
   const screenProps = { client, data, onRefresh: refresh, onError: setError, role: session.role, stalls }
   const screen =
-    view === 'overview' ? (
-      <OverviewScreen {...screenProps} onNavigate={(nextView) => setView(nextView as View)} />
+    view === 'admin' && session.role === 'system_admin' ? (
+      <SystemAdminOverviewScreen {...screenProps} onNavigate={setView} />
+    ) : view === 'overview' ? (
+      <OverviewScreen {...screenProps} onNavigate={(nextView) => setView(nextView as WebView)} />
     ) : view === 'stall' ? (
       <StallScreen {...screenProps} />
     ) : view === 'staff' ? (
@@ -359,7 +347,12 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
               {data.stall?.name ?? 'Stall workspace'}
                 </p>
                 <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
-                  <h1 className="text-2xl font-black tracking-tight text-[#220046] sm:text-3xl">{viewLabels[view]}</h1>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="text-2xl font-black tracking-tight text-[#220046] sm:text-3xl">{getViewLabel(session.role, view)}</h1>
+                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${session.role === 'system_admin' ? 'bg-[#220046] text-[#f5d68c]' : 'bg-[#efe5ff] text-[#5a1bb0]'}`}>
+                      {session.role === 'system_admin' ? 'Global administration' : 'Assigned stalls only'}
+                    </span>
+                  </div>
                   {stalls.length > 1 && (
                     <Select aria-label="Active stall" className="mt-0 min-w-48" value={selectedStallId} onChange={(event) => setSelectedStallId(event.target.value)}>
                       {stalls.map((stall) => <option key={stall.id} value={stall.id}>{stall.name}</option>)}

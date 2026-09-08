@@ -75,6 +75,20 @@ begin
     raise exception 'Owner was allowed to create a stall';
   exception when insufficient_privilege then null;
   end;
+  begin
+    perform public.update_managed_stall(stall_a, 'Unauthorized rename', null, null);
+    raise exception 'Owner was allowed to change stall identity';
+  exception when insufficient_privilege then null;
+  end;
+  perform public.update_managed_stall(
+    stall_a,
+    null,
+    null,
+    '[{"key":"rent","label":"Rent","dailyRate":250}]'::jsonb
+  );
+  if (select overhead_config -> 0 ->> 'dailyRate' from public.stalls where id = stall_a) <> '250' then
+    raise exception 'Owner could not update assigned-stall overhead';
+  end if;
 
   activation := public.create_device_activation(stall_a, 'RBAC test POS');
   perform set_config('request.headers', jsonb_build_object('x-session-token', cashier_token)::text, true);
@@ -126,6 +140,10 @@ begin
   perform set_config('request.headers', jsonb_build_object('x-session-token', admin_token)::text, true);
   if not public.is_system_admin() or not public.can_manage_stall(stall_c) then
     raise exception 'System administrator does not have global stall access';
+  end if;
+  perform public.update_managed_stall(stall_c, 'RBAC stall C renamed', null, null);
+  if (select name from public.stalls where id = stall_c) <> 'RBAC stall C renamed' then
+    raise exception 'System administrator could not update stall identity';
   end if;
   if (select cardinality(stall_ids) from public.list_managed_users(stall_b) where id = owner_id) <> 2 then
     raise exception 'Owner directory did not return every stall assignment';

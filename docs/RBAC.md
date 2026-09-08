@@ -9,6 +9,8 @@ The system has three application roles. The current installation can run one act
 | View revenue and sales reports | Every stall | Assigned stalls | Current-day local totals only |
 | View costs, overhead, and profit | Every stall | Assigned stalls | No |
 | Manage products, prices, and inventory | Every stall | Assigned stalls | No |
+| Manage stall name and code | Every stall | No | No |
+| Manage daily costs and overhead | Every stall | Assigned stalls | No |
 | Create stalls | Yes | No | No |
 | Create or update Owners | Yes | No | No |
 | Assign an Owner to several stalls | Yes | No | No |
@@ -18,6 +20,8 @@ The system has three application roles. The current installation can run one act
 | Create sales | No | No | Only while the operating day is open |
 
 System admin access is global. Owner access comes from `owner_stall_access`, and a stall selector appears in the web header when an Owner has more than one assignment. A Cashier remains assigned to one primary stall.
+
+The web IMS presents separate role experiences. A System Administrator lands on **System overview** and receives an **Administration** navigation group with **Stall administration** and **Users & access**. An Owner lands on the operational dashboard and sees **Costs & settings** plus **Cashiers & POS** for assigned stalls. The System Administrator can still open selected-stall operational screens for support, but the database remains authoritative: exposing or changing a client-side menu cannot grant an Owner global access.
 
 ## Owner access on iPhone
 

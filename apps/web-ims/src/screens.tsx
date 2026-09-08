@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { DbClient } from './lib/api'
 import { addInventoryEntry, archiveProduct, createCategory, createDailyClosure, createDeviceActivation, createManagedStall, getOverheadForStall, getStockByProduct, listManagedUsers, reverseTransaction, saveManagedUser, saveProduct, setOwnerStalls, updateStall } from './lib/api'
+import type { WebView } from './lib/access'
 import { getDashboardMetrics, getDailyProfitReport, calculateDailyOverhead, DEFAULT_OVERHEAD_ITEMS } from './lib/dashboard'
 import { downloadCsv } from './lib/export'
 import type { AppRole, ManagedUser, OverheadItem, Product, Stall, WorkspaceData } from './lib/types'
@@ -37,6 +38,66 @@ export function OverviewScreen({ data, onNavigate }: ScreenProps & { onNavigate:
   ]
 
   return <div className="space-y-6"><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{cards.map((card) => <button key={card.label} className="rounded-2xl border border-[#eadcff] bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[#caa8ff]" onClick={card.action}><p className="text-sm text-slate-500">{card.label}</p><p className="mt-2 text-2xl font-bold text-slate-900">{card.value}</p><p className="mt-1 text-xs text-slate-400">{card.detail}</p></button>)}</div><div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]"><Panel title="Stock watchlist" description="Products at or below their configured threshold."><Table><TableHead><th className="px-3 py-3">Product</th><th className="px-3 py-3">On hand</th><th className="px-3 py-3">Threshold</th><th className="px-3 py-3">Status</th></TableHead><tbody>{lowStock.slice(0, 8).map((product) => { const onHand = stock[product.id] ?? 0; return <tr key={product.id} className="border-b border-slate-100"><TableCell><p className="font-medium">{product.name}</p><p className="text-xs text-slate-400">{product.sku}</p></TableCell><TableCell>{onHand.toLocaleString()} {product.unit}</TableCell><TableCell>{product.low_stock_threshold.toLocaleString()} {product.unit}</TableCell><TableCell><Badge tone={onHand <= 0 ? 'danger' : 'warning'}>{onHand <= 0 ? 'Out of stock' : 'Low stock'}</Badge></TableCell></tr> })}</tbody></Table>{lowStock.length === 0 && <EmptyState title="No stock alerts" description="All active products are above their configured thresholds." />}</Panel><Panel title="Quick actions" description="Common owner operations."><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">{[['Receive stock', 'receiving'], ['Adjust inventory', 'adjustments'], ['Edit prices', 'pricing'], ['Download sales report', 'reports']].map(([label, view]) => <Button key={view} variant="secondary" className="text-left" onClick={() => onNavigate(view)}>{label}</Button>)}</div></Panel></div></div>
+}
+
+export function SystemAdminOverviewScreen({ client, data, stalls, onError, onNavigate }: ScreenProps & { onNavigate: (view: WebView) => void }) {
+  const [directory, setDirectory] = useState<ManagedUser[]>([])
+  const [loadingDirectory, setLoadingDirectory] = useState(true)
+  const stallKey = stalls.map((stall) => stall.id).join(',')
+
+  useEffect(() => {
+    let active = true
+    setLoadingDirectory(true)
+    void Promise.all(stalls.map((stall) => listManagedUsers(client, stall.id)))
+      .then((usersByStall) => {
+        if (!active) return
+        const uniqueUsers = new Map(usersByStall.flat().map((user) => [user.id, user]))
+        setDirectory([...uniqueUsers.values()])
+      })
+      .catch((error) => { if (active) onError(getErrorMessage(error)) })
+      .finally(() => { if (active) setLoadingDirectory(false) })
+    return () => { active = false }
+  }, [client, onError, stallKey, stalls])
+
+  const ownerCount = directory.filter((user) => user.role === 'owner').length
+  const cashierCount = directory.filter((user) => user.role === 'cashier').length
+  const cards = [
+    { label: 'Active stalls', value: String(stalls.length), detail: 'System-wide access', view: 'stall' as WebView },
+    { label: 'Owner accounts', value: loadingDirectory ? '…' : String(ownerCount), detail: 'Assign access by stall', view: 'staff' as WebView },
+    { label: 'Cashier accounts', value: loadingDirectory ? '…' : String(cashierCount), detail: 'Managed within each stall', view: 'staff' as WebView },
+    { label: 'Selected stall', value: data.stall?.code ?? '—', detail: data.stall?.name ?? 'No stall selected', view: 'overview' as WebView },
+  ]
+
+  return (
+    <div className="space-y-6">
+      <section className="overflow-hidden rounded-3xl bg-[linear-gradient(135deg,_#220046_0%,_#4f0fb0_100%)] p-6 text-white shadow-[0_20px_50px_rgba(60,0,112,0.2)] sm:p-8">
+        <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#f5d68c]">System administration</p>
+        <h2 className="mt-3 text-2xl font-black sm:text-3xl">Control stalls and account access across the business.</h2>
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-[#eadcff]">This area is available only to the System Administrator. Use it to create stalls, create Owner accounts, and decide which stalls each Owner can manage.</p>
+        <div className="mt-5 flex flex-wrap gap-3">
+          <Button onClick={() => onNavigate('stall')}>Manage stalls</Button>
+          <Button variant="secondary" onClick={() => onNavigate('staff')}>Manage users & access</Button>
+        </div>
+      </section>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map((card) => <button key={card.label} className="rounded-2xl border border-[#eadcff] bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[#caa8ff]" onClick={() => onNavigate(card.view)}><p className="text-sm text-slate-500">{card.label}</p><p className="mt-2 text-2xl font-bold text-slate-900">{card.value}</p><p className="mt-1 text-xs text-slate-400">{card.detail}</p></button>)}
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Panel title="System Administrator access" description="Platform-level responsibilities across every stall.">
+          <ul className="space-y-3 text-sm text-slate-600">
+            {['View and select every active stall', 'Create stalls and maintain stall identity', 'Create Owner or Cashier accounts', 'Assign Owners to one or several stalls', 'Perform operational support for any stall'].map((item) => <li className="flex gap-3" key={item}><span className="mt-0.5 text-emerald-600">✓</span><span>{item}</span></li>)}
+          </ul>
+        </Panel>
+        <Panel title="Owner boundary" description="Owners receive a separate workspace scoped by their assignments.">
+          <ul className="space-y-3 text-sm text-slate-600">
+            {['View revenue, costs, overhead, and profit for assigned stalls', 'Manage products, prices, stock, Cashiers, and POS activation', 'Cannot create stalls or Owner accounts', 'Cannot assign stalls or open another stall’s records'].map((item) => <li className="flex gap-3" key={item}><span className="mt-0.5 text-[#7c3aed]">•</span><span>{item}</span></li>)}
+          </ul>
+        </Panel>
+      </div>
+    </div>
+  )
 }
 
 export function StallScreen({ client, data, onRefresh, onError, role }: ScreenProps) {
@@ -115,15 +176,14 @@ export function StallScreen({ client, data, onRefresh, onError, role }: ScreenPr
     setSaving(true)
     try {
       const updated = await updateStall(client, stall.id, {
-        name: name.trim(),
-        code: code.trim().toUpperCase(),
+        ...(role === 'system_admin' ? { name: name.trim(), code: code.trim().toUpperCase() } : {}),
         overhead_config: overheadItems,
       })
       hasUnsavedChanges.current = false
       setName(updated.name)
       setCode(updated.code)
       setOverheadItems(getOverheadForStall(updated))
-      setMessage('Stall settings & overhead expenses saved successfully.')
+      setMessage(role === 'system_admin' ? 'Stall settings and overhead saved successfully.' : 'Overhead expenses saved successfully.')
       await onRefresh()
     } catch (error) {
       onError(getErrorMessage(error))
@@ -139,7 +199,7 @@ export function StallScreen({ client, data, onRefresh, onError, role }: ScreenPr
       await createManagedStall(client, newStallName, newStallCode)
       setNewStallName('')
       setNewStallCode('')
-      setMessage('Stall created. Assign an Owner from Staff & devices.')
+      setMessage('Stall created. Assign an Owner from Users & access.')
       await onRefresh()
     } catch (error) {
       onError(getErrorMessage(error))
@@ -159,15 +219,15 @@ export function StallScreen({ client, data, onRefresh, onError, role }: ScreenPr
           </form>
         </Panel>
       )}
-      <Panel title="Stall management" description="Manage stall identity, sync code, and dynamic daily overhead deductions.">
+      <Panel title={role === 'system_admin' ? 'Selected stall settings' : 'Stall costs and settings'} description={role === 'system_admin' ? 'Maintain this stall or open its operational tools for support.' : 'Review the stall identity and manage costs and daily overhead for this assigned stall.'}>
         {!stall ? (
           <EmptyState title="No stall found" description="Create the initial stall in Supabase before using the dashboard." />
         ) : (
           <form onSubmit={submit} onChangeCapture={() => { hasUnsavedChanges.current = true }}>
             <fieldset className="min-w-0 space-y-6" disabled={saving}>
             <div className="grid max-w-xl gap-4 sm:grid-cols-2">
-              <Input label="Stall name" value={name} onChange={(event) => setName(event.target.value)} required />
-              <Input label="Stall code" hint="Used when identifying the stall during setup" value={code} onChange={(event) => setCode(event.target.value)} required />
+              <Input disabled={role === 'owner'} label="Stall name" hint={role === 'owner' ? 'Managed by the System Administrator' : undefined} value={name} onChange={(event) => setName(event.target.value)} required />
+              <Input disabled={role === 'owner'} label="Stall code" hint={role === 'owner' ? 'Managed by the System Administrator' : 'Used when identifying the stall during setup'} value={code} onChange={(event) => setCode(event.target.value)} required />
             </div>
 
             <div className="border-t border-[#eadcff] pt-6">
@@ -249,7 +309,7 @@ export function StallScreen({ client, data, onRefresh, onError, role }: ScreenPr
             </div>
 
             <div className="flex items-center gap-3 border-t border-slate-100 pt-4">
-              <Button disabled={saving}>{saving ? 'Saving changes…' : 'Save stall & overhead settings'}</Button>
+              <Button disabled={saving}>{saving ? 'Saving changes…' : role === 'system_admin' ? 'Save stall & overhead settings' : 'Save overhead settings'}</Button>
               {message && <Notice tone={message.includes('successfully') ? 'success' : 'info'}>{message}</Notice>}
             </div>
             </fieldset>
@@ -341,7 +401,7 @@ export function StaffScreen({ client, data, onError, role, stalls }: ScreenProps
   }
 
   return <div className="space-y-6">
-    <Panel title="Staff accounts" description={role === 'system_admin' ? 'Create Owners or Cashiers and control their stall access.' : 'Create and manage Cashiers for this stall.'}>
+    <Panel title={role === 'system_admin' ? 'Users and stall access' : 'Cashier accounts'} description={role === 'system_admin' ? 'Create Owners or Cashiers and control their stall access. System Administrator accounts remain database-managed.' : 'Create and manage Cashiers for this assigned stall. Owner and stall assignment controls are unavailable to Owners.'}>
       <form className="grid gap-4 md:grid-cols-2" onSubmit={submit}>
         <Input label="Display name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required />
         <Input label="Email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />

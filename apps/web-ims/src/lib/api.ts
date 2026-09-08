@@ -136,7 +136,12 @@ export async function updateStall(
   stallId: string,
   values: Partial<Pick<Stall, 'name' | 'code' | 'overhead_config'>>,
 ) {
-  return throwIfError(await client.from('stalls').update(values).eq('id', stallId).select().single()) as Stall
+  return throwIfError(await client.rpc('update_managed_stall', {
+    p_stall_id: stallId,
+    p_name: values.name ?? null,
+    p_code: values.code ?? null,
+    p_overhead_config: values.overhead_config ?? null,
+  })) as Stall
 }
 
 export async function createCategory(client: DbClient, values: Pick<Category, 'name' | 'sort_order'> & { stall_id: string }) {

@@ -28,8 +28,8 @@ This project does not use Supabase Auth providers. The `login_with_password` dat
 
 ## Role-based access
 
-- `system_admin` can access every stall, create stalls, create or update Owner and Cashier accounts, assign Owners to several stalls, manage POS activation, and perform all Owner operations.
-- `owner` can use the web dashboard for assigned stalls, including revenue and profit reports, products, pricing, costs, overhead, inventory, Cashier accounts, and POS activation. Owners cannot create Owners, System admins, or stalls.
+- `system_admin` can access every stall, create stalls, maintain stall names and codes, create or update Owner and Cashier accounts, assign Owners to several stalls, manage POS activation, and perform operational support.
+- `owner` can use the web dashboard for assigned stalls, including revenue and profit reports, products, pricing, costs, overhead, inventory, Cashier accounts, and POS activation. Owners cannot create Owners, System admins, or stalls, change stall identity, or access an unassigned stall.
 - `cashier` can sign in to an assigned Android POS, open and close its operating day, make sales while that day is open, and sync the cost-free POS catalog and own-stall inventory. Cashiers cannot use the Owner dashboard or read product costs and profit data.
 
 One POS device can be active for a stall at a time. Redeeming a replacement activation code deactivates the previous device. The code is stored only as a hash, works once, and is bound to the Android hardware identifier when redeemed.

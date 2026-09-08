@@ -2,7 +2,6 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { DEFAULT_OVERHEAD_ITEMS } from './dashboard.ts'
 import type {
   Category,
-  DailyClosure,
   BusinessDay,
   InventoryEntry,
   OverheadItem,
@@ -31,14 +30,13 @@ export function getOverheadForStall(stall: Stall | null): OverheadItem[] {
 }
 
 export async function loadWorkspace(client: DbClient, stallId: string): Promise<WorkspaceData> {
-  const [stallResult, categoryResult, productResult, inventoryResult, transactionResult, itemResult, closureResult, businessDayResult] = await Promise.all([
+  const [stallResult, categoryResult, productResult, inventoryResult, transactionResult, itemResult, businessDayResult] = await Promise.all([
     client.from('stalls').select('*').eq('id', stallId).is('deleted_at', null).single(),
     client.from('product_categories').select('id, name, sort_order').eq('stall_id', stallId).is('deleted_at', null).order('sort_order').order('name'),
     client.from('products').select('id, stall_id, category_id, sku, name, unit, sale_price, cost_price, low_stock_threshold, pack_size, conversion_rate, is_sellable, updated_at, deleted_at').eq('stall_id', stallId).is('deleted_at', null).order('name'),
     client.from('inventory_ledger').select('id, product_id, quantity_delta, movement_type, reason, reference_id, occurred_at').eq('stall_id', stallId).is('deleted_at', null).order('occurred_at', { ascending: false }).limit(5000),
     client.from('transactions').select('id, receipt_number, status, subtotal, total_amount, cash_received, change_amount, occurred_at').eq('stall_id', stallId).is('deleted_at', null).order('occurred_at', { ascending: false }).limit(1000),
     client.from('transaction_items').select('id, transaction_id, product_id, product_name, quantity, unit_price, line_total').is('deleted_at', null).limit(5000),
-    client.from('daily_closures').select('id, stall_id, closed_by, business_date, cash_total, notes, updated_at').eq('stall_id', stallId).is('deleted_at', null).order('business_date', { ascending: false }).limit(365),
     client.from('business_days').select('id, stall_id, device_id, cashier_id, business_date, opened_at, opening_notes, closed_at, closing_cash_total, closing_notes, updated_at').eq('stall_id', stallId).is('deleted_at', null).order('opened_at', { ascending: false }).limit(365),
   ])
 
@@ -78,10 +76,6 @@ export async function loadWorkspace(client: DbClient, stallId: string): Promise<
       unit_price: Number(item.unit_price),
       line_total: Number(item.line_total),
     })) as TransactionItem[],
-    dailyClosures: throwIfError(closureResult).map((closure) => ({
-      ...closure,
-      cash_total: Number(closure.cash_total),
-    })) as DailyClosure[],
     businessDays: throwIfError(businessDayResult).map((day) => ({
       ...day,
       closing_cash_total: day.closing_cash_total === null ? null : Number(day.closing_cash_total),
@@ -170,8 +164,4 @@ export async function reverseTransaction(client: DbClient, transactionId: string
     p_reason: reason,
     p_restock: restock,
   })) as number
-}
-
-export async function createDailyClosure(client: DbClient, values: { stall_id: string; business_date: string; cash_total: number; notes: string }) {
-  return throwIfError(await client.from('daily_closures').insert(values).select().single()) as DailyClosure
 }

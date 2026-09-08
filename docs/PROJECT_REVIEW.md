@@ -12,7 +12,7 @@ The project has a working development foundation, but it is not ready for produc
 - **Database migration prepared:** [202609080001_secure_sale_reversals.sql](../supabase/migrations/202609080001_secure_sale_reversals.sql) permits stock-neutral waste markers, scopes sale/reversal and inventory-read helpers to the signed-in stall, and serializes duplicate reversals. Reversals require a reason and an eligible posted sale; restock restores the original ledger deduction.
 - **Setup documentation:** corrected the existing Gradle wrapper instructions, APK locations, and requirement to apply every pending database migration in order.
 - **Three-role RBAC:** added System admin, Owner, and Cashier boundaries, explicit multi-stall Owner assignments, secured staff/stall RPCs, audit records for account and device administration, and cost-free POS catalog access.
-- **Owner iPhone experience:** made the existing responsive web IMS installable from Safari as a home-screen app, with stall switching, staff management, POS activation, and operating-day history.
+- **Owner iPhone experience:** made the responsive web IMS installable from Safari as a home-screen app, with read-only revenue, profit, product-performance, and operating-day monitoring.
 - **Cashier operating days:** Android now records and syncs exact opening and closing timestamps, prevents checkout while closed, and shows the current state locally. Cloud sales require the activated device and a matching operating-day window.
 
 These changes prevent the identified failures going forward. They do not repair stock or reporting data already affected by older behavior; reconcile existing development data before relying on it.

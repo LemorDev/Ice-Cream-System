@@ -16,8 +16,8 @@ This document is the full start-to-finish task list for building the offline And
 ### 1.2 Confirm user roles and permissions
 
 - [x] Configure the **Cashier / POS Operator** role to use the activated Android POS, create cash sales, cancel carts, view low-stock and sync status, and open or close the day. Same-day void/refund remains separate work.
-- [x] Configure the **Owner** role to use the web IMS for assigned stalls, including dashboards, revenue, profit, staff, inventory, prices, costs, and overhead.
-- [x] Configure the **System Administrator** role to use the web IMS across all stalls, manage stalls and Owner assignments, and perform Owner operations.
+- [x] Configure the **Owner** role to use a phone-first, read-only web IMS for assigned-stall revenue, profit, sales, product performance, and operating-day monitoring.
+- [x] Configure the **System Administrator** role to use the web IMS across all stalls and own all configuration and operational management.
 - [x] Ensure the POS role cannot access another stall's records, catalog, costs, or inventory.
 - [ ] Decide whether cashier login is required at every app launch, and whether a PIN or biometric re-entry is required after the device has already been activated.
 
@@ -301,7 +301,7 @@ This document is the full start-to-finish task list for building the offline And
 
 The project is complete when all of the following are true:
 
-1. Owners can manage products, pricing, costs, overhead, staff, and stock for assigned stalls in the web dashboard.
+1. Owners can monitor revenue, profit, sales, product performance, and operating days for assigned stalls in the phone-friendly web dashboard.
 2. Android devices can operate fully offline.
 3. Sales are saved locally immediately.
 4. Inventory is updated locally at checkout.

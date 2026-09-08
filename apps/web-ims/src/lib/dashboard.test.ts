@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getDailyProfitReport, getDashboardMetrics } from './dashboard.ts'
+import { getBusinessDateKey, getDailyProfitReport, getDashboardMetrics, getProductPerformance, getRevenueTrend } from './dashboard.ts'
 import type { InventoryEntry, Product, Transaction, TransactionItem } from './types'
 
 const products = [
@@ -31,6 +31,31 @@ test('dashboard stock sums ledger movements and flags threshold breaches', () =>
   assert.equal(result.stock.vanilla, 1)
   assert.deepEqual(result.lowStock, ['vanilla'])
   assert.equal(result.activeProducts, 1)
+})
+
+test('business reporting uses the Manila calendar date', () => {
+  assert.equal(getBusinessDateKey('2026-08-04T23:30:00Z'), '2026-08-05')
+})
+
+test('revenue trend includes zero-sales days and completed transactions only', () => {
+  const result = getRevenueTrend(transactions, '2026-08-03', '2026-08-05')
+  assert.deepEqual(result, [
+    { date: '2026-08-03', revenue: 99, orders: 1 },
+    { date: '2026-08-04', revenue: 40, orders: 1 },
+    { date: '2026-08-05', revenue: 0, orders: 0 },
+  ])
+})
+
+test('product performance ranks completed-sale revenue and excludes voided sales', () => {
+  const items = [
+    { transaction_id: 'sale-1', product_id: 'vanilla', product_name: 'Vanilla', quantity: 2, line_total: 80 },
+    { transaction_id: 'sale-1', product_id: 'cone', product_name: 'Cone', quantity: 1, line_total: 20 },
+    { transaction_id: 'void-1', product_id: 'vanilla', product_name: 'Vanilla', quantity: 4, line_total: 160 },
+  ] as TransactionItem[]
+  assert.deepEqual(getProductPerformance(transactions, items, '2026-08-04', '2026-08-04'), [
+    { name: 'Vanilla', unitsSold: 2, revenue: 80, orders: 1 },
+    { name: 'Cone', unitsSold: 1, revenue: 20, orders: 1 },
+  ])
 })
 
 test('fixed overhead breakdown sums to 743.33 exactly', async () => {
@@ -103,4 +128,15 @@ test('stock adjustments count removals as waste and exclude restocked products',
   )
 
   assert.equal(report.wasteCost, 30)
+})
+
+test('profit report includes an opened business day even when it has no sales', () => {
+  const [report] = getDailyProfitReport(
+    costProducts, [], [], [], '2026-08-05', '2026-08-05', [{ key: 'rent', label: 'Rent', dailyRate: 200 }], ['2026-08-05'],
+  )
+
+  assert.equal(report.businessDate, '2026-08-05')
+  assert.equal(report.revenue, 0)
+  assert.equal(report.fixedOverhead, 200)
+  assert.equal(report.netProfit, -200)
 })

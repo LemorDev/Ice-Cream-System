@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { DbClient } from './lib/api'
-import { addInventoryEntry, archiveProduct, createCategory, createDailyClosure, createDeviceActivation, createManagedStall, getOverheadForStall, getStockByProduct, listManagedUsers, reverseTransaction, saveManagedUser, saveProduct, setOwnerStalls, updateStall } from './lib/api'
+import { addInventoryEntry, archiveProduct, createCategory, createDeviceActivation, createManagedStall, getOverheadForStall, getStockByProduct, listManagedUsers, reverseTransaction, saveManagedUser, saveProduct, setOwnerStalls, updateStall } from './lib/api'
 import type { WebView } from './lib/access'
-import { getDashboardMetrics, getDailyProfitReport, calculateDailyOverhead, DEFAULT_OVERHEAD_ITEMS } from './lib/dashboard'
+import { getDashboardMetrics, getDailyProfitReport, calculateDailyOverhead, DEFAULT_OVERHEAD_ITEMS, getBusinessDateKey, getProductPerformance, getRevenueTrend, shiftDateKey } from './lib/dashboard'
 import { downloadCsv } from './lib/export'
-import type { AppRole, ManagedUser, OverheadItem, Product, Stall, WorkspaceData } from './lib/types'
+import type { ManagedUser, OverheadItem, Product, Stall, WorkspaceData } from './lib/types'
 import { Badge, Button, EmptyState, Input, Notice, OverheadIcon, Panel, Select, Table, TableCell, TableHead, Textarea } from './components/ui'
+import { HorizontalBarChart, RevenueTrendChart } from './components/charts'
 
 const peso = new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' })
 const dateTime = new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
@@ -16,7 +17,6 @@ export type ScreenProps = {
   data: WorkspaceData
   onRefresh: () => Promise<void>
   onError: (message: string) => void
-  role: AppRole
   stalls: Stall[]
 }
 
@@ -37,7 +37,65 @@ export function OverviewScreen({ data, onNavigate }: ScreenProps & { onNavigate:
     { label: 'Transactions', value: String(data.transactions.length), detail: 'Latest 1,000 records loaded', action: () => onNavigate('transactions') },
   ]
 
-  return <div className="space-y-6"><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{cards.map((card) => <button key={card.label} className="rounded-2xl border border-[#eadcff] bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[#caa8ff]" onClick={card.action}><p className="text-sm text-slate-500">{card.label}</p><p className="mt-2 text-2xl font-bold text-slate-900">{card.value}</p><p className="mt-1 text-xs text-slate-400">{card.detail}</p></button>)}</div><div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]"><Panel title="Stock watchlist" description="Products at or below their configured threshold."><Table><TableHead><th className="px-3 py-3">Product</th><th className="px-3 py-3">On hand</th><th className="px-3 py-3">Threshold</th><th className="px-3 py-3">Status</th></TableHead><tbody>{lowStock.slice(0, 8).map((product) => { const onHand = stock[product.id] ?? 0; return <tr key={product.id} className="border-b border-slate-100"><TableCell><p className="font-medium">{product.name}</p><p className="text-xs text-slate-400">{product.sku}</p></TableCell><TableCell>{onHand.toLocaleString()} {product.unit}</TableCell><TableCell>{product.low_stock_threshold.toLocaleString()} {product.unit}</TableCell><TableCell><Badge tone={onHand <= 0 ? 'danger' : 'warning'}>{onHand <= 0 ? 'Out of stock' : 'Low stock'}</Badge></TableCell></tr> })}</tbody></Table>{lowStock.length === 0 && <EmptyState title="No stock alerts" description="All active products are above their configured thresholds." />}</Panel><Panel title="Quick actions" description="Common owner operations."><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">{[['Receive stock', 'receiving'], ['Adjust inventory', 'adjustments'], ['Edit prices', 'pricing'], ['Download sales report', 'reports']].map(([label, view]) => <Button key={view} variant="secondary" className="text-left" onClick={() => onNavigate(view)}>{label}</Button>)}</div></Panel></div></div>
+  return <div className="space-y-6"><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{cards.map((card) => <button key={card.label} className="rounded-2xl border border-[#eadcff] bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[#caa8ff]" onClick={card.action}><p className="text-sm text-slate-500">{card.label}</p><p className="mt-2 text-2xl font-bold text-slate-900">{card.value}</p><p className="mt-1 text-xs text-slate-400">{card.detail}</p></button>)}</div><div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]"><Panel title="Stock watchlist" description="Products at or below their configured threshold."><Table><TableHead><th className="px-3 py-3">Product</th><th className="px-3 py-3">On hand</th><th className="px-3 py-3">Threshold</th><th className="px-3 py-3">Status</th></TableHead><tbody>{lowStock.slice(0, 8).map((product) => { const onHand = stock[product.id] ?? 0; return <tr key={product.id} className="border-b border-slate-100"><TableCell><p className="font-medium">{product.name}</p><p className="text-xs text-slate-400">{product.sku}</p></TableCell><TableCell>{onHand.toLocaleString()} {product.unit}</TableCell><TableCell>{product.low_stock_threshold.toLocaleString()} {product.unit}</TableCell><TableCell><Badge tone={onHand <= 0 ? 'danger' : 'warning'}>{onHand <= 0 ? 'Out of stock' : 'Low stock'}</Badge></TableCell></tr> })}</tbody></Table>{lowStock.length === 0 && <EmptyState title="No stock alerts" description="All active products are above their configured thresholds." />}</Panel><Panel title="Quick actions" description="Common selected-stall operations."><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">{[['Receive stock', 'receiving'], ['Adjust inventory', 'adjustments'], ['Edit prices', 'pricing'], ['Download sales report', 'reports']].map(([label, view]) => <Button key={view} variant="secondary" className="text-left" onClick={() => onNavigate(view)}>{label}</Button>)}</div></Panel></div></div>
+}
+
+export function OwnerDashboardScreen({ data, onNavigate }: ScreenProps & { onNavigate: (view: WebView) => void }) {
+  const today = getBusinessDateKey()
+  const yesterday = shiftDateKey(today, -1)
+  const weekStart = shiftDateKey(today, -6)
+  const trend = useMemo(() => getRevenueTrend(data.transactions, weekStart, today), [data.transactions, today, weekStart])
+  const todayPoint = trend.at(-1) ?? { revenue: 0, orders: 0 }
+  const yesterdayRevenue = data.transactions
+    .filter((transaction) => transaction.status === 'completed' && getBusinessDateKey(transaction.occurred_at) === yesterday)
+    .reduce((sum, transaction) => sum + transaction.total_amount, 0)
+  const weekRevenue = trend.reduce((sum, point) => sum + point.revenue, 0)
+  const weekOrders = trend.reduce((sum, point) => sum + point.orders, 0)
+  const averageSale = weekOrders > 0 ? weekRevenue / weekOrders : 0
+  const change = yesterdayRevenue > 0 ? ((todayPoint.revenue - yesterdayRevenue) / yesterdayRevenue) * 100 : null
+  const products = useMemo(
+    () => getProductPerformance(data.transactions, data.transactionItems, weekStart, today),
+    [data.transactionItems, data.transactions, today, weekStart],
+  )
+  const openDay = data.businessDays.find((day) => day.closed_at === null)
+  const recentSales = data.transactions.slice(0, 5)
+
+  return (
+    <div className="space-y-5">
+      <section className="overflow-hidden rounded-3xl bg-[linear-gradient(135deg,_#26004f_0%,_#6d28d9_62%,_#9b5cf6_100%)] p-5 text-white shadow-[0_22px_55px_rgba(70,20,140,0.24)] sm:p-7">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#f5d68c]">Live stall snapshot</p>
+            <h2 className="mt-2 text-2xl font-black">{data.stall?.name ?? 'Your stall'}</h2>
+            <p className="mt-2 text-sm text-[#eadcff]">Revenue and sales activity update automatically when the POS syncs.</p>
+          </div>
+          <Badge tone={openDay ? 'success' : 'neutral'}>{openDay ? 'Open now' : 'Currently closed'}</Badge>
+        </div>
+        <div className="mt-7">
+          <p className="text-sm text-[#e7d9f8]">Today’s revenue</p>
+          <p className="mt-1 text-4xl font-black tracking-tight text-[#fff8ea] sm:text-5xl">{peso.format(todayPoint.revenue)}</p>
+          <p className="mt-2 text-xs text-[#e7d9f8]">{todayPoint.orders} completed order{todayPoint.orders === 1 ? '' : 's'}{change === null ? '' : ` · ${change >= 0 ? '+' : ''}${change.toFixed(0)}% vs yesterday`}</p>
+        </div>
+      </section>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[['Orders today', todayPoint.orders.toLocaleString(), 'Completed sales'], ['7-day revenue', peso.format(weekRevenue), `${weekOrders} orders`], ['Average sale', peso.format(averageSale), 'Last 7 days'], ['Top product', products[0]?.name ?? '—', products[0] ? `${products[0].unitsSold.toLocaleString()} units` : 'No sales yet']].map(([label, value, detail]) => <div className="rounded-2xl border border-[#eadcff] bg-white p-4 shadow-sm" key={label}><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-2 truncate text-xl font-black text-[#220046]">{value}</p><p className="mt-1 text-xs text-slate-400">{detail}</p></div>)}
+      </div>
+
+      <Panel title="Revenue trend" description="Completed sales over the last seven days." action={<Button variant="ghost" onClick={() => onNavigate('reports')}>View analytics</Button>}>
+        <RevenueTrendChart points={trend.map((point) => ({ date: point.date, value: point.revenue }))} formatValue={(value) => peso.format(value)} />
+      </Panel>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Panel title="Top products" description="Highest product revenue in the last seven days." action={<Button variant="ghost" onClick={() => onNavigate('productReport')}>Full report</Button>}>
+          <HorizontalBarChart items={products.slice(0, 5).map((product) => ({ label: product.name, value: product.revenue, detail: `${product.unitsSold.toLocaleString()} units` }))} formatValue={(value) => peso.format(value)} />
+        </Panel>
+        <Panel title="Recent sales" description="Latest POS activity after synchronization.">
+          {recentSales.length === 0 ? <EmptyState title="No sales yet" description="Transactions will appear after the POS completes and syncs a sale." /> : <div className="divide-y divide-slate-100">{recentSales.map((transaction) => <div className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0" key={transaction.id}><div className="min-w-0"><p className="truncate text-sm font-semibold text-[#39235f]">{transaction.receipt_number}</p><p className="mt-0.5 text-xs text-slate-400">{dateTime.format(new Date(transaction.occurred_at))}</p></div><div className="text-right"><p className="text-sm font-bold text-[#220046]">{peso.format(transaction.total_amount)}</p><Badge tone={transaction.status === 'completed' ? 'success' : 'warning'}>{transaction.status}</Badge></div></div>)}</div>}
+        </Panel>
+      </div>
+    </div>
+  )
 }
 
 export function SystemAdminOverviewScreen({ client, data, stalls, onError, onNavigate }: ScreenProps & { onNavigate: (view: WebView) => void }) {
@@ -73,7 +131,7 @@ export function SystemAdminOverviewScreen({ client, data, stalls, onError, onNav
       <section className="overflow-hidden rounded-3xl bg-[linear-gradient(135deg,_#220046_0%,_#4f0fb0_100%)] p-6 text-white shadow-[0_20px_50px_rgba(60,0,112,0.2)] sm:p-8">
         <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#f5d68c]">System administration</p>
         <h2 className="mt-3 text-2xl font-black sm:text-3xl">Control stalls and account access across the business.</h2>
-        <p className="mt-3 max-w-3xl text-sm leading-6 text-[#eadcff]">This area is available only to the System Administrator. Use it to create stalls, create Owner accounts, and decide which stalls each Owner can manage.</p>
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-[#eadcff]">This area is available only to the System Administrator. Use it to create stalls, create Owner accounts, and decide which stalls each Owner can monitor.</p>
         <div className="mt-5 flex flex-wrap gap-3">
           <Button onClick={() => onNavigate('stall')}>Manage stalls</Button>
           <Button variant="secondary" onClick={() => onNavigate('staff')}>Manage users & access</Button>
@@ -90,9 +148,9 @@ export function SystemAdminOverviewScreen({ client, data, stalls, onError, onNav
             {['View and select every active stall', 'Create stalls and maintain stall identity', 'Create Owner or Cashier accounts', 'Assign Owners to one or several stalls', 'Perform operational support for any stall'].map((item) => <li className="flex gap-3" key={item}><span className="mt-0.5 text-emerald-600">✓</span><span>{item}</span></li>)}
           </ul>
         </Panel>
-        <Panel title="Owner boundary" description="Owners receive a separate workspace scoped by their assignments.">
+        <Panel title="Owner monitoring" description="Owners receive a read-only phone workspace scoped by assignment.">
           <ul className="space-y-3 text-sm text-slate-600">
-            {['View revenue, costs, overhead, and profit for assigned stalls', 'Manage products, prices, stock, Cashiers, and POS activation', 'Cannot create stalls or Owner accounts', 'Cannot assign stalls or open another stall’s records'].map((item) => <li className="flex gap-3" key={item}><span className="mt-0.5 text-[#7c3aed]">•</span><span>{item}</span></li>)}
+            {['View revenue, profit, and sales activity for assigned stalls', 'Monitor product performance and operating days', 'Cannot change products, stock, prices, staff, POS devices, or stall settings', 'Cannot assign stalls or open another stall’s records'].map((item) => <li className="flex gap-3" key={item}><span className="mt-0.5 text-[#7c3aed]">•</span><span>{item}</span></li>)}
           </ul>
         </Panel>
       </div>
@@ -100,7 +158,7 @@ export function SystemAdminOverviewScreen({ client, data, stalls, onError, onNav
   )
 }
 
-export function StallScreen({ client, data, onRefresh, onError, role }: ScreenProps) {
+export function StallScreen({ client, data, onRefresh, onError }: ScreenProps) {
   const stall = data.stall
   const [name, setName] = useState(stall?.name ?? '')
   const [code, setCode] = useState(stall?.code ?? '')
@@ -119,7 +177,7 @@ export function StallScreen({ client, data, onRefresh, onError, role }: ScreenPr
   const persistedOverhead = JSON.stringify(getOverheadForStall(stall))
 
   // Polling creates new objects every few seconds. Sync persisted changes only,
-  // and keep the owner's draft intact while they are editing this stall.
+  // and keep the administrator's draft intact while they are editing this stall.
   useEffect(() => {
     if (formStallId.current === stallId && hasUnsavedChanges.current) return
     formStallId.current = stallId
@@ -176,14 +234,15 @@ export function StallScreen({ client, data, onRefresh, onError, role }: ScreenPr
     setSaving(true)
     try {
       const updated = await updateStall(client, stall.id, {
-        ...(role === 'system_admin' ? { name: name.trim(), code: code.trim().toUpperCase() } : {}),
+        name: name.trim(),
+        code: code.trim().toUpperCase(),
         overhead_config: overheadItems,
       })
       hasUnsavedChanges.current = false
       setName(updated.name)
       setCode(updated.code)
       setOverheadItems(getOverheadForStall(updated))
-      setMessage(role === 'system_admin' ? 'Stall settings and overhead saved successfully.' : 'Overhead expenses saved successfully.')
+      setMessage('Stall settings and overhead saved successfully.')
       await onRefresh()
     } catch (error) {
       onError(getErrorMessage(error))
@@ -210,24 +269,22 @@ export function StallScreen({ client, data, onRefresh, onError, role }: ScreenPr
 
   return (
     <div className="space-y-6">
-      {role === 'system_admin' && (
-        <Panel title="Add a stall" description="System administrators can create another stall when the business expands.">
-          <form className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]" onSubmit={addStall}>
-            <Input label="Stall name" value={newStallName} onChange={(event) => setNewStallName(event.target.value)} required />
-            <Input label="Stall code" value={newStallCode} onChange={(event) => setNewStallCode(event.target.value)} required />
-            <Button className="self-end" disabled={saving}>Create stall</Button>
-          </form>
-        </Panel>
-      )}
-      <Panel title={role === 'system_admin' ? 'Selected stall settings' : 'Stall costs and settings'} description={role === 'system_admin' ? 'Maintain this stall or open its operational tools for support.' : 'Review the stall identity and manage costs and daily overhead for this assigned stall.'}>
+      <Panel title="Add a stall" description="System administrators can create another stall when the business expands.">
+        <form className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]" onSubmit={addStall}>
+          <Input label="Stall name" value={newStallName} onChange={(event) => setNewStallName(event.target.value)} required />
+          <Input label="Stall code" value={newStallCode} onChange={(event) => setNewStallCode(event.target.value)} required />
+          <Button className="self-end" disabled={saving}>Create stall</Button>
+        </form>
+      </Panel>
+      <Panel title="Selected stall settings" description="Maintain this stall or open its operational tools for support.">
         {!stall ? (
           <EmptyState title="No stall found" description="Create the initial stall in Supabase before using the dashboard." />
         ) : (
           <form onSubmit={submit} onChangeCapture={() => { hasUnsavedChanges.current = true }}>
             <fieldset className="min-w-0 space-y-6" disabled={saving}>
             <div className="grid max-w-xl gap-4 sm:grid-cols-2">
-              <Input disabled={role === 'owner'} label="Stall name" hint={role === 'owner' ? 'Managed by the System Administrator' : undefined} value={name} onChange={(event) => setName(event.target.value)} required />
-              <Input disabled={role === 'owner'} label="Stall code" hint={role === 'owner' ? 'Managed by the System Administrator' : 'Used when identifying the stall during setup'} value={code} onChange={(event) => setCode(event.target.value)} required />
+              <Input label="Stall name" value={name} onChange={(event) => setName(event.target.value)} required />
+              <Input label="Stall code" hint="Used when identifying the stall during setup" value={code} onChange={(event) => setCode(event.target.value)} required />
             </div>
 
             <div className="border-t border-[#eadcff] pt-6">
@@ -309,7 +366,7 @@ export function StallScreen({ client, data, onRefresh, onError, role }: ScreenPr
             </div>
 
             <div className="flex items-center gap-3 border-t border-slate-100 pt-4">
-              <Button disabled={saving}>{saving ? 'Saving changes…' : role === 'system_admin' ? 'Save stall & overhead settings' : 'Save overhead settings'}</Button>
+              <Button disabled={saving}>{saving ? 'Saving changes…' : 'Save stall & overhead settings'}</Button>
               {message && <Notice tone={message.includes('successfully') ? 'success' : 'info'}>{message}</Notice>}
             </div>
             </fieldset>
@@ -327,7 +384,7 @@ function ProductFormFields({ form, setField, categories }: { form: ProductFormVa
   return <><Input label="Product name" value={form.name} onChange={(event) => setField('name', event.target.value)} required autoFocus /><p className="rounded-xl border border-[#eadcff] bg-[#fbf7ff] px-3 py-2 text-sm text-[#4b2a7a]"><span className="font-semibold">SKU:</span> Generated automatically when you save this product.</p><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><Input label="Unit" value={form.unit} onChange={(event) => setField('unit', event.target.value)} required /><Select label="Category" value={form.category_id} onChange={(event) => setField('category_id', event.target.value)}><option value="">Uncategorized</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</Select></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><Input label="Sale price" type="number" min="0" step="0.01" value={form.sale_price} onChange={(event) => setField('sale_price', event.target.value)} /><Input label="Cost price" type="number" min="0" step="0.01" value={form.cost_price} onChange={(event) => setField('cost_price', event.target.value)} /></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><Input label="Low-stock threshold" type="number" min="0" step="0.001" value={form.low_stock_threshold} onChange={(event) => setField('low_stock_threshold', event.target.value)} /><Input label="Pack size" type="number" min="0.001" step="0.001" value={form.pack_size} onChange={(event) => setField('pack_size', event.target.value)} /></div><Input label="Conversion rate" hint="Usable units per pack" type="number" min="0.001" step="0.001" value={form.conversion_rate} onChange={(event) => setField('conversion_rate', event.target.value)} /><label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.is_sellable} onChange={(event) => setField('is_sellable', event.target.checked)} /> Available for sale</label></>
 }
 
-export function StaffScreen({ client, data, onError, role, stalls }: ScreenProps) {
+export function StaffScreen({ client, data, onError, stalls }: ScreenProps) {
   const stallId = data.stall?.id ?? ''
   const [users, setUsers] = useState<ManagedUser[]>([])
   const [loading, setLoading] = useState(true)
@@ -376,10 +433,10 @@ export function StaffScreen({ client, data, onError, role, stalls }: ScreenProps
     setSaving(true); setMessage('')
     try {
       const saved = await saveManagedUser(client, {
-        stallId, email, displayName, role: role === 'owner' ? 'cashier' : userRole,
+        stallId, email, displayName, role: userRole,
         password, userId: editingId, isActive,
       })
-      if (role === 'system_admin' && userRole === 'owner') {
+      if (userRole === 'owner') {
         await setOwnerStalls(client, saved.id, assignedStalls.length ? assignedStalls : [stallId])
       }
       setMessage(editingId ? 'Staff account updated.' : 'Staff account created.')
@@ -401,14 +458,14 @@ export function StaffScreen({ client, data, onError, role, stalls }: ScreenProps
   }
 
   return <div className="space-y-6">
-    <Panel title={role === 'system_admin' ? 'Users and stall access' : 'Cashier accounts'} description={role === 'system_admin' ? 'Create Owners or Cashiers and control their stall access. System Administrator accounts remain database-managed.' : 'Create and manage Cashiers for this assigned stall. Owner and stall assignment controls are unavailable to Owners.'}>
+    <Panel title="Users and stall access" description="Create Owners or Cashiers and control their stall access. System Administrator accounts remain database-managed.">
       <form className="grid gap-4 md:grid-cols-2" onSubmit={submit}>
         <Input label="Display name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required />
         <Input label="Email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-        {role === 'system_admin' && <Select label="Role" value={userRole} onChange={(event) => setUserRole(event.target.value as 'owner' | 'cashier')}><option value="cashier">Cashier</option><option value="owner">Owner</option></Select>}
+        <Select label="Role" value={userRole} onChange={(event) => setUserRole(event.target.value as 'owner' | 'cashier')}><option value="cashier">Cashier</option><option value="owner">Owner</option></Select>
         <Input label={editingId ? 'New password (optional)' : 'Temporary password'} type="password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} required={!editingId} />
         <label className="flex items-center gap-2 text-sm text-[#39235f]"><input type="checkbox" checked={isActive} onChange={(event) => setIsActive(event.target.checked)} /> Active account</label>
-        {role === 'system_admin' && userRole === 'owner' && <fieldset className="rounded-xl border border-[#eadcff] p-3 md:col-span-2"><legend className="px-1 text-sm font-semibold text-[#39235f]">Assigned stalls</legend>{stalls.map((stall) => <label className="mr-5 inline-flex items-center gap-2 text-sm" key={stall.id}><input type="checkbox" checked={assignedStalls.includes(stall.id)} onChange={(event) => setAssignedStalls((current) => event.target.checked ? [...new Set([...current, stall.id])] : current.filter((id) => id !== stall.id))} />{stall.name}</label>)}</fieldset>}
+        {userRole === 'owner' && <fieldset className="rounded-xl border border-[#eadcff] p-3 md:col-span-2"><legend className="px-1 text-sm font-semibold text-[#39235f]">Assigned stalls</legend>{stalls.map((stall) => <label className="mr-5 inline-flex items-center gap-2 text-sm" key={stall.id}><input type="checkbox" checked={assignedStalls.includes(stall.id)} onChange={(event) => setAssignedStalls((current) => event.target.checked ? [...new Set([...current, stall.id])] : current.filter((id) => id !== stall.id))} />{stall.name}</label>)}</fieldset>}
         <div className="flex gap-2 md:col-span-2"><Button disabled={saving}>{saving ? 'Saving…' : editingId ? 'Save account' : 'Create account'}</Button>{editingId && <Button type="button" variant="ghost" onClick={resetForm}>Cancel</Button>}</div>
         {message && <div className="md:col-span-2"><Notice tone="success">{message}</Notice></div>}
       </form>
@@ -491,57 +548,87 @@ export function TransactionsScreen({ client, data, onRefresh, onError }: ScreenP
   return <Panel title="Transaction history" description="Review sales and reverse an eligible transaction with an audit reason." action={<div className="flex gap-2"><Input aria-label="Search receipts" placeholder="Receipt number" value={search} onChange={(event) => setSearch(event.target.value)} /><Select aria-label="Filter status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="completed">Completed</option><option value="voided">Voided</option><option value="refunded">Refunded</option></Select></div>}>{filtered.length === 0 ? <EmptyState title="No transactions found" description="Sales will appear here after the POS syncs them." /> : <Table><TableHead><th className="px-3 py-3">Receipt</th><th className="px-3 py-3">Date</th><th className="px-3 py-3">Total</th><th className="px-3 py-3">Status</th><th className="px-3 py-3" /></TableHead><tbody>{filtered.map((transaction) => <tr key={transaction.id} className="border-b border-slate-100"><TableCell className="font-medium">{transaction.receipt_number}</TableCell><TableCell>{dateTime.format(new Date(transaction.occurred_at))}</TableCell><TableCell>{peso.format(transaction.total_amount)}</TableCell><TableCell><Badge tone={transaction.status === 'completed' ? 'success' : transaction.status === 'voided' ? 'danger' : 'warning'}>{transaction.status}</Badge></TableCell><TableCell>{transaction.status === 'completed' && <Button variant="danger" onClick={() => setSelectedId(transaction.id)}>Void / reverse</Button>}</TableCell></tr>)}</tbody></Table>}{selectedId && <div className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4"><p className="font-semibold text-red-800">Reverse transaction</p><p className="mt-1 text-sm text-red-700">Choose whether the sold stock should return to inventory.</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><Select label="Reason" value={reason} onChange={(event) => setReason(event.target.value)}><option>Customer changed mind</option><option>Incorrect order</option><option>Quality issue</option></Select><Select label="Stock action" value={restock ? 'restock' : 'waste'} onChange={(event) => setRestock(event.target.value === 'restock')}><option value="restock">Restock items</option><option value="waste">Waste stock</option></Select></div><div className="mt-3 flex gap-2"><Button variant="danger" onClick={() => void reverse()}>Confirm reversal</Button><Button variant="ghost" onClick={() => setSelectedId(undefined)}>Cancel</Button></div></div>}</Panel>
 }
 
-export function ReportsScreen({ data }: ScreenProps) {
-  const [from, setFrom] = useState(new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10))
-  const [to, setTo] = useState(new Date().toISOString().slice(0, 10))
+export function ProductPerformanceScreen({ data }: ScreenProps) {
+  const today = getBusinessDateKey()
+  const [from, setFrom] = useState(shiftDateKey(today, -29))
+  const [to, setTo] = useState(today)
+  const products = useMemo(
+    () => getProductPerformance(data.transactions, data.transactionItems, from, to),
+    [data.transactionItems, data.transactions, from, to],
+  )
+  const unitsSold = products.reduce((sum, product) => sum + product.unitsSold, 0)
+  const productRevenue = products.reduce((sum, product) => sum + product.revenue, 0)
+  const topShare = productRevenue > 0 ? ((products[0]?.revenue ?? 0) / productRevenue) * 100 : 0
 
+  return (
+    <div className="space-y-5">
+      <Panel title="Product performance" description="See which products drive unit sales and revenue. This report is read-only." action={<div className="grid w-full grid-cols-2 gap-2 sm:w-auto"><Input label="From" type="date" value={from} onChange={(event) => setFrom(event.target.value)} /><Input label="To" type="date" value={to} onChange={(event) => setTo(event.target.value)} /></div>}>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[['Product revenue', peso.format(productRevenue)], ['Units sold', unitsSold.toLocaleString()], ['Products sold', products.length.toLocaleString()], ['Top product share', `${topShare.toFixed(0)}%`]].map(([label, value]) => <div className="rounded-2xl bg-[#f7f1ff] p-4" key={label}><p className="text-xs font-semibold text-[#6b4d89]">{label}</p><p className="mt-2 text-xl font-black text-[#220046]">{value}</p></div>)}
+        </div>
+      </Panel>
+
+      <Panel title="Top products by revenue" description={`${from} to ${to}`}>
+        <HorizontalBarChart items={products.slice(0, 8).map((product) => ({ label: product.name, value: product.revenue, detail: `${product.unitsSold.toLocaleString()} units · ${product.orders} orders` }))} formatValue={(value) => peso.format(value)} />
+      </Panel>
+
+      <Panel title="Product detail" description="Completed POS sales in the selected period.">
+        {products.length === 0 ? <EmptyState title="No product sales" description="Try a wider date range or wait for completed sales to sync." /> : <>
+          <div className="space-y-3 md:hidden">{products.map((product, index) => <article className="rounded-2xl border border-[#eadcff] bg-[#fffdf8] p-4" key={product.name}><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold text-[#8b6ca8]">#{index + 1}</p><h3 className="mt-1 font-bold text-[#220046]">{product.name}</h3></div><p className="font-black text-[#5a1bb0]">{peso.format(product.revenue)}</p></div><div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500"><span>{product.unitsSold.toLocaleString()} units sold</span><span className="text-right">{product.orders} orders</span></div></article>)}</div>
+          <div className="hidden md:block"><Table><TableHead><th className="px-3 py-3">Rank</th><th className="px-3 py-3">Product</th><th className="px-3 py-3 text-right">Units sold</th><th className="px-3 py-3 text-right">Orders</th><th className="px-3 py-3 text-right">Revenue</th></TableHead><tbody>{products.map((product, index) => <tr className="border-b border-slate-100" key={product.name}><TableCell>#{index + 1}</TableCell><TableCell className="font-semibold">{product.name}</TableCell><TableCell className="text-right">{product.unitsSold.toLocaleString()}</TableCell><TableCell className="text-right">{product.orders}</TableCell><TableCell className="text-right font-bold text-[#5a1bb0]">{peso.format(product.revenue)}</TableCell></tr>)}</tbody></Table></div>
+        </>}
+      </Panel>
+    </div>
+  )
+}
+
+export function ReportsScreen({ data }: ScreenProps) {
+  const today = getBusinessDateKey()
+  const [from, setFrom] = useState(shiftDateKey(today, -6))
+  const [to, setTo] = useState(today)
   const overheadItems = useMemo(
     () => (data.stall?.overhead_config?.length ? data.stall.overhead_config : DEFAULT_OVERHEAD_ITEMS),
     [data.stall?.overhead_config],
   )
-  const dailyOverheadRate = useMemo(() => calculateDailyOverhead(overheadItems), [overheadItems])
-
   const report = useMemo(() => {
     const transactions = data.transactions.filter((transaction) => {
-      const date = transaction.occurred_at.slice(0, 10)
+      const date = getBusinessDateKey(transaction.occurred_at)
       return date >= from && date <= to
     })
-    const completed = transactions.filter((transaction) => transaction.status === 'completed')
-    const voided = transactions.filter((transaction) => transaction.status === 'voided')
-    const itemTotals = data.transactionItems
-      .filter((item) => completed.some((transaction) => transaction.id === item.transaction_id))
-      .reduce<Record<string, number>>((totals, item) => {
-        totals[item.product_name] = (totals[item.product_name] ?? 0) + item.quantity
-        return totals
-      }, {})
     return {
       transactions,
-      completed,
-      voided,
-      sales: completed.reduce((sum, transaction) => sum + transaction.total_amount, 0),
-      itemTotals,
+      completed: transactions.filter((transaction) => transaction.status === 'completed'),
+      voided: transactions.filter((transaction) => transaction.status === 'voided'),
     }
-  }, [data, from, to])
-
+  }, [data.transactions, from, to])
   const profitDays = useMemo(
-    () => getDailyProfitReport(data.products, data.inventory, data.transactions, data.transactionItems, from, to, overheadItems),
+    () => getDailyProfitReport(
+      data.products,
+      data.inventory,
+      data.transactions,
+      data.transactionItems,
+      from,
+      to,
+      overheadItems,
+      data.businessDays.map((day) => day.business_date),
+    ),
     [data, from, to, overheadItems],
   )
-
-  const daysCount = profitDays.length || 1
-
-  const totals = useMemo(() => {
-    return profitDays.reduce(
-      (acc, day) => ({
-        revenue: acc.revenue + day.revenue,
-        cogs: acc.cogs + day.cogs,
-        wasteCost: acc.wasteCost + day.wasteCost,
-        overhead: acc.overhead + day.fixedOverhead,
-        netProfit: acc.netProfit + day.netProfit,
-      }),
-      { revenue: 0, cogs: 0, wasteCost: 0, overhead: 0, netProfit: 0 },
-    )
-  }, [profitDays])
+  const revenueTrend = useMemo(
+    () => getRevenueTrend(data.transactions, from, to),
+    [data.transactions, from, to],
+  )
+  const totals = useMemo(() => profitDays.reduce(
+    (acc, day) => ({
+      revenue: acc.revenue + day.revenue,
+      cogs: acc.cogs + day.cogs,
+      wasteCost: acc.wasteCost + day.wasteCost,
+      overhead: acc.overhead + day.fixedOverhead,
+      netProfit: acc.netProfit + day.netProfit,
+    }),
+    { revenue: 0, cogs: 0, wasteCost: 0, overhead: 0, netProfit: 0 },
+  ), [profitDays])
+  const averageSale = report.completed.length > 0 ? totals.revenue / report.completed.length : 0
 
   function exportReport() {
     downloadCsv(`sales-report-${from}-to-${to}.csv`, report.transactions.map((transaction) => ({
@@ -556,144 +643,37 @@ export function ReportsScreen({ data }: ScreenProps) {
   }
 
   return (
-    <div className="space-y-6">
-      <Panel
-        title="Sales reporting"
-        description="Revenue, cost of goods sold, waste, overhead, and net profit."
-        action={
-          <div className="grid w-full gap-2 sm:w-auto sm:grid-cols-[minmax(0,9rem)_minmax(0,9rem)_auto] sm:items-end">
-            <Input label="From" type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
-            <Input label="To" type="date" value={to} onChange={(event) => setTo(event.target.value)} />
-            <Button className="w-full sm:w-auto" onClick={exportReport} disabled={report.transactions.length === 0}>
-              Download CSV
-            </Button>
-          </div>
-        }
-      >
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <div className="rounded-xl bg-[#f4ecff] p-4">
-            <p className="text-sm text-[#5a1bb0]">Revenue</p>
-            <p className="mt-2 text-2xl font-bold text-[#220046]">{peso.format(totals.revenue)}</p>
-            <p className="mt-1 text-xs text-slate-500">{report.completed.length} completed sale{report.completed.length === 1 ? '' : 's'}</p>
-          </div>
-          <div className="rounded-xl bg-orange-50 p-4">
-            <p className="text-sm text-orange-700">Cost of Goods Sold (COGS)</p>
-            <p className="mt-2 text-2xl font-bold text-orange-900">{peso.format(totals.cogs)}</p>
-            <p className="mt-1 text-xs text-slate-500">Raw material costs from recipes</p>
-          </div>
-          <div className="rounded-xl bg-red-50 p-4">
-            <p className="text-sm text-red-700">Waste Cost</p>
-            <p className="mt-2 text-2xl font-bold text-red-900">{peso.format(totals.wasteCost)}</p>
-            <p className="mt-1 text-xs text-slate-500">Voided items + inventory adjustments</p>
-          </div>
-          <div className="rounded-xl bg-slate-100 p-4">
-            <p className="text-sm text-slate-600">Fixed Operating Overhead</p>
-            <p className="mt-2 text-2xl font-bold">{peso.format(totals.overhead)}</p>
-            <p className="mt-1 text-xs text-slate-500">{peso.format(dailyOverheadRate)}/day × {profitDays.length} active day{profitDays.length === 1 ? '' : 's'}</p>
-          </div>
-          <div className="rounded-xl bg-amber-50 p-4">
-            <p className="text-sm text-amber-700">Voided Transactions</p>
-            <p className="mt-2 text-2xl font-bold text-amber-900">{report.voided.length}</p>
-            <p className="mt-1 text-xs text-slate-500">Cancelled/reversed sales</p>
-          </div>
-          <div className={`rounded-xl p-4 ${totals.netProfit >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}>
-            <p className={`text-sm ${totals.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>Net Profit</p>
-            <p className={`mt-2 text-2xl font-bold ${totals.netProfit >= 0 ? 'text-emerald-900' : 'text-red-900'}`}>{peso.format(totals.netProfit)}</p>
-            <p className="mt-1 text-xs text-slate-500">Revenue − COGS − Waste − Overhead</p>
-          </div>
+    <div className="space-y-5">
+      <Panel title="Sales analytics" description="Revenue and profit monitoring for completed POS sales." action={<div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-[minmax(0,9rem)_minmax(0,9rem)_auto] sm:items-end"><Input label="From" type="date" value={from} onChange={(event) => setFrom(event.target.value)} /><Input label="To" type="date" value={to} onChange={(event) => setTo(event.target.value)} /><Button className="col-span-2 w-full sm:col-span-1 sm:w-auto" onClick={exportReport} disabled={report.transactions.length === 0}>Download CSV</Button></div>}>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="rounded-2xl bg-[#f4ecff] p-4"><p className="text-xs font-semibold text-[#5a1bb0]">Revenue</p><p className="mt-2 text-xl font-black text-[#220046] sm:text-2xl">{peso.format(totals.revenue)}</p><p className="mt-1 text-xs text-slate-500">{report.completed.length} completed sales</p></div>
+          <div className={`rounded-2xl p-4 ${totals.netProfit >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}><p className={`text-xs font-semibold ${totals.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>Net profit</p><p className={`mt-2 text-xl font-black sm:text-2xl ${totals.netProfit >= 0 ? 'text-emerald-900' : 'text-red-900'}`}>{peso.format(totals.netProfit)}</p><p className="mt-1 text-xs text-slate-500">After reported costs</p></div>
+          <div className="rounded-2xl bg-[#fff7e8] p-4"><p className="text-xs font-semibold text-amber-700">Average sale</p><p className="mt-2 text-xl font-black text-amber-950 sm:text-2xl">{peso.format(averageSale)}</p><p className="mt-1 text-xs text-slate-500">Per completed order</p></div>
+          <div className="rounded-2xl bg-slate-100 p-4"><p className="text-xs font-semibold text-slate-600">Voided sales</p><p className="mt-2 text-xl font-black text-slate-900 sm:text-2xl">{report.voided.length}</p><p className="mt-1 text-xs text-slate-500">In selected period</p></div>
         </div>
       </Panel>
 
-      <Panel
-        title="Operating Expenses (OPEX / Fixed Overhead Breakdown)"
-        description={`Configured daily overhead of ${peso.format(dailyOverheadRate)}/day applied across ${profitDays.length} active business day${profitDays.length === 1 ? '' : 's'} (${from} to ${to}).`}
-      >
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {overheadItems.map((item) => {
-            const periodCost = (Number(item.dailyRate) || 0) * daysCount
-            return (
-              <div key={item.key} className="rounded-xl border border-[#eadcff] bg-[#fffdf8] p-4 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#f4ecff] text-[#5a1bb0]"><OverheadIcon kind={item.key} /></span>
-                    <p className="text-sm font-bold text-[#220046]">{item.label}</p>
-                  </div>
-                  <Badge tone="neutral">{peso.format(item.dailyRate)} / day</Badge>
-                </div>
-                <div className="mt-3 border-t border-slate-100 pt-2">
-                  <p className="text-xs text-slate-500">{item.description || 'Configured stall expense'}</p>
-                  <p className="mt-2 text-lg font-black text-[#5a1bb0]">
-                    {peso.format(periodCost)}
-                    <span className="ml-1 text-xs font-normal text-slate-400">({daysCount} day{daysCount === 1 ? '' : 's'})</span>
-                  </p>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#eadcff] bg-[#fbf7ff] px-4 py-3 text-sm">
-          <span className="text-slate-600">
-            <strong>Configured Daily Rate:</strong> {overheadItems.map((item) => `${peso.format(item.dailyRate)} (${item.label})`).join(' + ')} = <strong>{peso.format(dailyOverheadRate)} / day</strong>
-          </span>
-          <span className="font-semibold text-[#5a1bb0]">
-            Total Overhead Deducted: {peso.format(totals.overhead)}
-          </span>
-        </div>
+      <Panel title="Revenue by day" description="Completed sales in the selected period.">
+        <RevenueTrendChart points={revenueTrend.map((day) => ({ date: day.date, value: day.revenue }))} formatValue={(value) => peso.format(value)} />
       </Panel>
 
-      {profitDays.length > 0 && (
-        <Panel title="Daily breakdown" description="Profit and loss per business day in the selected range.">
-          <Table>
-            <TableHead>
-              <th className="px-3 py-3">Date</th>
-              <th className="px-3 py-3 text-right">Revenue</th>
-              <th className="px-3 py-3 text-right">COGS</th>
-              <th className="px-3 py-3 text-right">Waste</th>
-              <th className="px-3 py-3 text-right">Overhead</th>
-              <th className="px-3 py-3 text-right">Net Profit</th>
-              <th className="px-3 py-3 text-right">Sales</th>
-            </TableHead>
-            <tbody>
-              {profitDays.map((day) => (
-                <tr key={day.businessDate} className="border-b border-slate-100">
-                  <TableCell className="font-medium">{day.businessDate}</TableCell>
-                  <TableCell className="text-right">{peso.format(day.revenue)}</TableCell>
-                  <TableCell className="text-right">{peso.format(day.cogs)}</TableCell>
-                  <TableCell className="text-right">{peso.format(day.wasteCost)}</TableCell>
-                  <TableCell className="text-right">{peso.format(day.fixedOverhead)}</TableCell>
-                  <TableCell className={`text-right font-semibold ${day.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                    {peso.format(day.netProfit)}
-                  </TableCell>
-                  <TableCell className="text-right">{day.completedSales}</TableCell>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
+      <div className="grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
+        <Panel title="Cost summary" description="Amounts used in the profit estimate.">
+          <HorizontalBarChart items={[
+            { label: 'Cost of goods sold', value: totals.cogs },
+            { label: 'Fixed overhead', value: totals.overhead },
+            { label: 'Waste', value: totals.wasteCost },
+          ]} formatValue={(value) => peso.format(value)} />
         </Panel>
-      )}
+        <Panel title="Recent activity" description="Latest transactions in this date range.">
+          {report.transactions.length === 0 ? <EmptyState title="No transactions" description="Choose a different date range or wait for POS synchronization." /> : <div className="divide-y divide-slate-100">{report.transactions.slice(0, 8).map((transaction) => <div className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0" key={transaction.id}><div className="min-w-0"><p className="truncate text-sm font-semibold text-[#39235f]">{transaction.receipt_number}</p><p className="mt-0.5 text-xs text-slate-400">{dateTime.format(new Date(transaction.occurred_at))}</p></div><div className="text-right"><p className="text-sm font-bold">{peso.format(transaction.total_amount)}</p><Badge tone={transaction.status === 'completed' ? 'success' : 'warning'}>{transaction.status}</Badge></div></div>)}</div>}
+        </Panel>
+      </div>
 
-      <Panel title="Units sold" description="Based on transaction items attached to completed sales.">
-        {Object.keys(report.itemTotals).length === 0 ? (
-          <EmptyState title="No item data in this period" description="Completed sales with line items will appear here." />
-        ) : (
-          <Table>
-            <TableHead>
-              <th className="px-3 py-3">Product</th>
-              <th className="px-3 py-3">Quantity sold</th>
-            </TableHead>
-            <tbody>
-              {Object.entries(report.itemTotals)
-                .sort(([, a], [, b]) => b - a)
-                .map(([name, quantity]) => (
-                  <tr key={name} className="border-b border-slate-100">
-                    <TableCell>{name}</TableCell>
-                    <TableCell>{quantity.toLocaleString()}</TableCell>
-                  </tr>
-                ))}
-            </tbody>
-          </Table>
-        )}
-      </Panel>
+      {profitDays.length > 0 && <Panel title="Daily breakdown" description="Revenue, costs, and net profit for each active day.">
+        <div className="space-y-3 md:hidden">{profitDays.map((day) => <article className="rounded-2xl border border-[#eadcff] bg-[#fffdf8] p-4" key={day.businessDate}><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-slate-500">{day.businessDate}</p><p className="mt-1 text-lg font-black text-[#220046]">{peso.format(day.revenue)}</p><p className="text-xs text-slate-400">{day.completedSales} sales</p></div><p className={`font-black ${day.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{peso.format(day.netProfit)}</p></div><div className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-100 pt-3 text-xs text-slate-500"><span>COGS<br/><strong>{peso.format(day.cogs)}</strong></span><span>Waste<br/><strong>{peso.format(day.wasteCost)}</strong></span><span>Overhead<br/><strong>{peso.format(day.fixedOverhead)}</strong></span></div></article>)}</div>
+        <div className="hidden md:block"><Table><TableHead><th className="px-3 py-3">Date</th><th className="px-3 py-3 text-right">Revenue</th><th className="px-3 py-3 text-right">COGS</th><th className="px-3 py-3 text-right">Waste</th><th className="px-3 py-3 text-right">Overhead</th><th className="px-3 py-3 text-right">Net profit</th><th className="px-3 py-3 text-right">Sales</th></TableHead><tbody>{profitDays.map((day) => <tr className="border-b border-slate-100" key={day.businessDate}><TableCell className="font-medium">{day.businessDate}</TableCell><TableCell className="text-right">{peso.format(day.revenue)}</TableCell><TableCell className="text-right">{peso.format(day.cogs)}</TableCell><TableCell className="text-right">{peso.format(day.wasteCost)}</TableCell><TableCell className="text-right">{peso.format(day.fixedOverhead)}</TableCell><TableCell className={`text-right font-semibold ${day.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{peso.format(day.netProfit)}</TableCell><TableCell className="text-right">{day.completedSales}</TableCell></tr>)}</tbody></Table></div>
+      </Panel>}
     </div>
   )
 }
@@ -703,7 +683,9 @@ export function OperatingDaysScreen({ data }: ScreenProps) {
   return <div className="space-y-6">
     {openDay && <Notice tone="info">This stall is open. It was opened {dateTime.format(new Date(openDay.opened_at))}.</Notice>}
     <Panel title="Opening and closing history" description="Times are recorded by the Cashier POS and shown in your local time.">
-      {data.businessDays.length === 0 ? <EmptyState title="No operating days yet" description="The first day will appear after a Cashier opens the Android POS and it syncs." /> : <Table>
+      {data.businessDays.length === 0 ? <EmptyState title="No operating days yet" description="The first day will appear after a Cashier opens the Android POS and it syncs." /> : <>
+        <div className="space-y-3 md:hidden">{data.businessDays.map((day) => <article className="rounded-2xl border border-[#eadcff] bg-[#fffdf8] p-4" key={day.id}><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-slate-500">Business date</p><p className="mt-1 font-black text-[#220046]">{day.business_date}</p></div>{day.closed_at ? <Badge tone="neutral">Closed</Badge> : <Badge tone="success">Open</Badge>}</div><dl className="mt-4 grid grid-cols-2 gap-3 text-xs"><div><dt className="text-slate-400">Opened</dt><dd className="mt-1 font-semibold text-slate-700">{dateTime.format(new Date(day.opened_at))}</dd></div><div><dt className="text-slate-400">Closed</dt><dd className="mt-1 font-semibold text-slate-700">{day.closed_at ? dateTime.format(new Date(day.closed_at)) : 'Still open'}</dd></div><div><dt className="text-slate-400">Closing cash</dt><dd className="mt-1 font-semibold text-slate-700">{day.closing_cash_total === null ? '—' : peso.format(day.closing_cash_total)}</dd></div><div><dt className="text-slate-400">Notes</dt><dd className="mt-1 font-semibold text-slate-700">{[day.opening_notes, day.closing_notes].filter(Boolean).join(' · ') || '—'}</dd></div></dl></article>)}</div>
+        <div className="hidden md:block"><Table>
         <TableHead><th className="px-3 py-3">Business date</th><th className="px-3 py-3">Opened</th><th className="px-3 py-3">Closed</th><th className="px-3 py-3 text-right">Closing cash</th><th className="px-3 py-3">Notes</th></TableHead>
         <tbody>{data.businessDays.map((day) => <tr className="border-b border-slate-100" key={day.id}>
           <TableCell className="font-medium">{day.business_date}</TableCell>
@@ -712,148 +694,8 @@ export function OperatingDaysScreen({ data }: ScreenProps) {
           <TableCell className="text-right">{day.closing_cash_total === null ? '—' : peso.format(day.closing_cash_total)}</TableCell>
           <TableCell className="max-w-xs text-xs text-slate-500">{[day.opening_notes, day.closing_notes].filter(Boolean).join(' · ') || '—'}</TableCell>
         </tr>)}</tbody>
-      </Table>}
+        </Table></div>
+      </>}
     </Panel>
   </div>
-}
-
-export function DailyClosuresScreen({ client, data, onRefresh, onError }: ScreenProps) {
-  const today = new Date().toISOString().slice(0, 10)
-  const [notes, setNotes] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
-
-  const overheadItems = useMemo(
-    () => (data.stall?.overhead_config?.length ? data.stall.overhead_config : DEFAULT_OVERHEAD_ITEMS),
-    [data.stall?.overhead_config],
-  )
-  const dailyOverheadRate = useMemo(() => calculateDailyOverhead(overheadItems), [overheadItems])
-
-  const alreadyClosed = data.dailyClosures.some((closure) => closure.business_date === today)
-
-  // Compute today's summary for the close-day form
-  const todayProfit = useMemo(
-    () => getDailyProfitReport(data.products, data.inventory, data.transactions, data.transactionItems, today, today, overheadItems),
-    [data, today, overheadItems],
-  )
-  const todaySummary = todayProfit[0] ?? { revenue: 0, cogs: 0, wasteCost: 0, fixedOverhead: dailyOverheadRate, netProfit: -dailyOverheadRate, completedSales: 0, voidedSales: 0, businessDate: today }
-
-  async function closeDay(event: FormEvent) {
-    event.preventDefault()
-    setMessage('')
-    if (alreadyClosed) { setMessage('Today has already been closed.'); return }
-    if (!data.stall) return
-    setSaving(true)
-    try {
-      await createDailyClosure(client, {
-        stall_id: data.stall.id,
-        business_date: today,
-        cash_total: todaySummary.revenue,
-        notes: notes.trim() || `Closed with ${todaySummary.completedSales} sales. Net profit: ${peso.format(todaySummary.netProfit)}`,
-      })
-      setMessage('Day closed successfully.')
-      setNotes('')
-      await onRefresh()
-    } catch (error) {
-      onError(error instanceof Error ? error.message : 'Unable to close the day.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <Panel title="Close today's business day" description={`Business date: ${today}`}>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <div className="rounded-xl bg-[#f4ecff] p-4">
-            <p className="text-sm text-[#5a1bb0]">Cash collected</p>
-            <p className="mt-2 text-2xl font-bold text-[#220046]">{peso.format(todaySummary.revenue)}</p>
-          </div>
-          <div className="rounded-xl bg-orange-50 p-4">
-            <p className="text-sm text-orange-700">COGS</p>
-            <p className="mt-2 text-2xl font-bold text-orange-900">{peso.format(todaySummary.cogs)}</p>
-          </div>
-          <div className="rounded-xl bg-red-50 p-4">
-            <p className="text-sm text-red-700">Waste</p>
-            <p className="mt-2 text-2xl font-bold text-red-900">{peso.format(todaySummary.wasteCost)}</p>
-          </div>
-          <div className="rounded-xl bg-slate-100 p-4">
-            <p className="text-sm text-slate-600">Fixed Overhead</p>
-            <p className="mt-2 text-2xl font-bold">{peso.format(todaySummary.fixedOverhead)}</p>
-          </div>
-          <div className={`rounded-xl p-4 ${todaySummary.netProfit >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}>
-            <p className={`text-sm ${todaySummary.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>Net Profit</p>
-            <p className={`mt-2 text-2xl font-bold ${todaySummary.netProfit >= 0 ? 'text-emerald-900' : 'text-red-900'}`}>{peso.format(todaySummary.netProfit)}</p>
-          </div>
-          <div className="rounded-xl bg-slate-100 p-4">
-            <p className="text-sm text-slate-600">Sales / Voids</p>
-            <p className="mt-2 text-2xl font-bold">{todaySummary.completedSales} / {todaySummary.voidedSales}</p>
-          </div>
-        </div>
-
-        {/* Dynamic Itemized Overhead Breakdown Card */}
-        <div className="mt-6 rounded-2xl border border-[#eadcff] bg-[#fbf7ff] p-4 sm:p-5">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#eadcff] pb-3">
-            <div>
-              <h3 className="font-bold text-[#220046]">Today's Fixed Operating Expenses (Overhead)</h3>
-              <p className="text-xs text-slate-500">Configured daily stall expenses deducted from gross margin</p>
-            </div>
-            <Badge tone="neutral">{peso.format(dailyOverheadRate)} / day total</Badge>
-          </div>
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {overheadItems.map((item) => (
-              <div key={item.key} className="rounded-xl border border-white/80 bg-white p-3 shadow-xs">
-                <div className="flex items-center gap-2">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#f4ecff] text-[#5a1bb0]"><OverheadIcon kind={item.key} className="h-4 w-4" /></span>
-                  <p className="text-xs font-semibold text-slate-600">{item.label}</p>
-                </div>
-                <p className="mt-1 text-lg font-black text-[#5a1bb0]">{peso.format(item.dailyRate)}</p>
-                <p className="text-[11px] text-slate-400">{item.description || 'Stall expense'}</p>
-              </div>
-            ))}
-          </div>
-
-          <p className="mt-3 text-xs text-slate-500">
-            <strong>Calculation:</strong> Net Profit = Cash Collected ({peso.format(todaySummary.revenue)}) − COGS ({peso.format(todaySummary.cogs)}) − Waste ({peso.format(todaySummary.wasteCost)}) − Overhead ({peso.format(dailyOverheadRate)}) = <strong className={todaySummary.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}>{peso.format(todaySummary.netProfit)}</strong>
-          </p>
-        </div>
-
-        <form className="mt-6 max-w-xl space-y-4" onSubmit={closeDay}>
-          <Textarea label="Closing notes (optional)" rows={3} placeholder="Any notes about today's operations…" value={notes} onChange={(event) => setNotes(event.target.value)} />
-          {message && <Notice tone={message.includes('successfully') ? 'success' : 'error'}>{message}</Notice>}
-          {alreadyClosed ? (
-            <Notice tone="info">Today ({today}) has already been closed.</Notice>
-          ) : (
-            <Button disabled={saving}>{saving ? 'Closing day…' : 'Close today'}</Button>
-          )}
-        </form>
-      </Panel>
-
-      <Panel title="Past closures" description="All recorded daily closures.">
-        {data.dailyClosures.length === 0 ? (
-          <EmptyState title="No closures yet" description="Close your first business day to see it here." />
-        ) : (
-          <Table>
-            <TableHead>
-              <th className="px-3 py-3">Business Date</th>
-              <th className="px-3 py-3 text-right">Cash Total</th>
-              <th className="px-3 py-3">Notes</th>
-              <th className="px-3 py-3">Closed At</th>
-            </TableHead>
-            <tbody>
-              {data.dailyClosures.map((closure) => (
-                <tr key={closure.id} className="border-b border-slate-100">
-                  <TableCell className="font-medium">{closure.business_date}</TableCell>
-                  <TableCell className="text-right">{peso.format(closure.cash_total)}</TableCell>
-                  <TableCell className="max-w-xs truncate text-sm text-slate-500">{closure.notes ?? '—'}</TableCell>
-                  <TableCell>{dateTime.format(new Date(closure.updated_at))}</TableCell>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </Panel>
-    </div>
-  )
 }

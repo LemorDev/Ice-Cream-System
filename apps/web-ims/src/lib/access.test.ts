@@ -14,6 +14,14 @@ test('owners cannot open or navigate to system administration', () => {
   assert.equal(getNavigation('owner').flatMap((group) => group.items).includes('admin'), false)
 })
 
+test('owners receive monitoring views without management modules', () => {
+  const ownerViews = getNavigation('owner').flatMap((group) => group.items)
+  assert.deepEqual(ownerViews, ['overview', 'reports', 'productReport', 'days'])
+  for (const managementView of ['stall', 'staff', 'products', 'receiving', 'adjustments', 'pricing', 'transactions'] as const) {
+    assert.equal(canAccessWebView('owner', managementView), false)
+  }
+})
+
 test('cashiers receive no web dashboard routes', () => {
   assert.deepEqual(getNavigation('cashier'), [])
   assert.equal(canAccessWebView('cashier', 'overview'), false)
@@ -21,7 +29,7 @@ test('cashiers receive no web dashboard routes', () => {
 
 test('administrative and owner navigation use role-specific labels', () => {
   assert.equal(getViewLabel('system_admin', 'staff'), 'Users & access')
-  assert.equal(getViewLabel('owner', 'staff'), 'Cashiers & POS')
   assert.equal(getViewLabel('system_admin', 'stall'), 'Stall administration')
-  assert.equal(getViewLabel('owner', 'stall'), 'Costs & settings')
+  assert.equal(getViewLabel('owner', 'overview'), 'Dashboard')
+  assert.equal(getViewLabel('owner', 'reports'), 'Sales analytics')
 })

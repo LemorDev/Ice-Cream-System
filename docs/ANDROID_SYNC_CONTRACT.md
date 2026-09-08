@@ -31,7 +31,7 @@ Product and inventory pulls use separate successfully persisted cursors (`catalo
 
 ## Device activation
 
-The Owner creates a one-time code in **Staff & devices**. Android redeems the code with its hardware identifier and stores the returned cloud `device_id` in Room. Successful redemption deactivates the previous POS for that stall, so an interrupted replacement does not lock out the working device. A used, foreign-stall, or replaced code is rejected.
+The System Administrator creates a one-time code in **Users & access**. Android redeems the code with its hardware identifier and stores the returned cloud `device_id` in Room. Successful redemption deactivates the previous POS for that stall, so an interrupted replacement does not lock out the working device. A used, foreign-stall, or replaced code is rejected.
 
 ## Operating days
 

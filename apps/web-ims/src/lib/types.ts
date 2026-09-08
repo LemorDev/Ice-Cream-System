@@ -70,16 +70,6 @@ export type TransactionItem = {
   line_total: number
 }
 
-export type DailyClosure = {
-  id: string
-  stall_id: string
-  closed_by: string | null
-  business_date: string
-  cash_total: number
-  notes: string | null
-  updated_at: string
-}
-
 export type BusinessDay = {
   id: string
   stall_id: string
@@ -123,7 +113,6 @@ export type WorkspaceData = {
   inventory: InventoryEntry[]
   transactions: Transaction[]
   transactionItems: TransactionItem[]
-  dailyClosures: DailyClosure[]
   businessDays: BusinessDay[]
 }
 

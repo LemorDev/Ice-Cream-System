@@ -9,7 +9,9 @@ import type { Stall, WorkspaceData } from './lib/types'
 import { Button, LoadingState, Notice, Select } from './components/ui'
 import {
   AdjustmentsScreen,
+  OwnerDashboardScreen,
   OperatingDaysScreen,
+  ProductPerformanceScreen,
   SystemAdminOverviewScreen,
   OverviewScreen,
   ProductsScreen,
@@ -34,7 +36,7 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
       />
       <div>
         <p className={`text-xs font-semibold uppercase tracking-[0.28em] ${compact ? 'text-[#efe1ff]' : 'text-[#f4dcff]'}`}>Coolerz IMS</p>
-        <p className={`mt-1 ${compact ? 'text-sm text-[#f5edf8]' : 'text-sm text-[#f8eefe]'}`}>Shop management console</p>
+        <p className={`mt-1 ${compact ? 'text-sm text-[#f5edf8]' : 'text-sm text-[#f8eefe]'}`}>Business control center</p>
       </div>
     </div>
   )
@@ -75,7 +77,7 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void
             <BrandMark />
             <div className="mt-16 max-w-sm">
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-[#f5deff]">The calm center of your stall</p>
-              <h1 className="mt-5 text-4xl font-black leading-tight text-[#fff8ea]">Manage the business from one clear workspace.</h1>
+              <h1 className="mt-5 text-4xl font-black leading-tight text-[#fff8ea]">See and run the business from one clear workspace.</h1>
               <p className="mt-5 text-base leading-7 text-[#f6ebff]">
                 Separate administration and owner workspaces built around the Coolerz Ice Cream brand.
               </p>
@@ -149,17 +151,31 @@ function MenuIcon({ open = false }: { open?: boolean }) {
   )
 }
 
+function OwnerBottomNavigation({ activeView, onNavigate }: { activeView: WebView; onNavigate: (view: WebView) => void }) {
+  const items: Array<{ view: WebView; label: string }> = [
+    { view: 'overview', label: 'Dashboard' },
+    { view: 'reports', label: 'Sales' },
+    { view: 'productReport', label: 'Products' },
+    { view: 'days', label: 'Days' },
+  ]
+  return (
+    <nav aria-label="Owner monitoring" className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-[#e6d7f7] bg-white/95 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-12px_35px_rgba(45,0,82,0.12)] backdrop-blur lg:hidden">
+      {items.map((item) => <button aria-current={activeView === item.view ? 'page' : undefined} className={`min-h-12 rounded-xl px-1 text-xs font-semibold transition ${activeView === item.view ? 'bg-[#efe5ff] text-[#5a1bb0]' : 'text-slate-500'}`} key={item.view} onClick={() => onNavigate(item.view)} type="button">{item.label}</button>)}
+    </nav>
+  )
+}
+
 function Sidebar({ activeView, onNavigate, onSignOut, session, open, onClose }: { activeView: WebView; onNavigate: (view: WebView) => void; onSignOut: () => void; session: AppSession; open: boolean; onClose: () => void }) {
   const navigation = getNavigation(session.role)
   return (
     <>
       <button
         aria-label="Close navigation"
-        className={`fixed inset-0 z-40 bg-[#18002f]/55 backdrop-blur-[2px] transition-opacity lg:hidden ${open ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+        className={`fixed inset-0 z-40 bg-[#18002f]/55 backdrop-blur-[2px] transition-opacity lg:hidden ${session.role === 'owner' ? 'hidden' : ''} ${open ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         onClick={onClose}
         type="button"
       />
-      <aside className={`fixed inset-y-0 left-0 z-50 flex w-[min(86vw,18rem)] shrink-0 flex-col bg-[linear-gradient(180deg,_#220046_0%,_#3a007a_100%)] text-white shadow-2xl transition-transform duration-300 ease-out lg:static lg:z-auto lg:min-h-screen lg:w-72 lg:translate-x-0 lg:shadow-none ${open ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed inset-y-0 left-0 z-50 w-[min(86vw,18rem)] shrink-0 flex-col bg-[linear-gradient(180deg,_#220046_0%,_#3a007a_100%)] text-white shadow-2xl transition-transform duration-300 ease-out lg:static lg:z-auto lg:flex lg:min-h-screen lg:w-72 lg:translate-x-0 lg:shadow-none ${session.role === 'owner' ? 'hidden' : 'flex'} ${open ? 'translate-x-0' : '-translate-x-full'}`}>
       <div className="flex items-center justify-between p-5">
         <BrandMark />
         <button aria-label="Close navigation" className="rounded-lg p-2 text-[#f5deff] transition hover:bg-white/10 hover:text-white lg:hidden" onClick={onClose} type="button">
@@ -300,12 +316,14 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
     )
   }
 
-  const screenProps = { client, data, onRefresh: refresh, onError: setError, role: session.role, stalls }
+  const screenProps = { client, data, onRefresh: refresh, onError: setError, stalls }
   const screen =
     view === 'admin' && session.role === 'system_admin' ? (
       <SystemAdminOverviewScreen {...screenProps} onNavigate={setView} />
     ) : view === 'overview' ? (
-      <OverviewScreen {...screenProps} onNavigate={(nextView) => setView(nextView as WebView)} />
+      session.role === 'owner'
+        ? <OwnerDashboardScreen {...screenProps} onNavigate={setView} />
+        : <OverviewScreen {...screenProps} onNavigate={(nextView) => setView(nextView as WebView)} />
     ) : view === 'stall' ? (
       <StallScreen {...screenProps} />
     ) : view === 'staff' ? (
@@ -322,6 +340,8 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
       <TransactionsScreen {...screenProps} />
     ) : view === 'days' ? (
       <OperatingDaysScreen {...screenProps} />
+    ) : view === 'productReport' ? (
+      <ProductPerformanceScreen {...screenProps} />
     ) : (
       <ReportsScreen {...screenProps} />
     )
@@ -333,7 +353,7 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
         <header className="border-b border-[#eadcff] bg-white/85 px-4 py-4 backdrop-blur sm:px-8 sm:py-6">
           <div className="mx-auto max-w-7xl">
             <div className="flex items-start gap-3">
-              <button
+              {session.role === 'system_admin' && <button
                 aria-expanded={sidebarOpen}
                 aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
                 className="mt-0.5 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-xl border border-[#eadcff] bg-white text-[#4b2a7a] shadow-sm transition hover:border-[#caa8ff] hover:bg-[#fbf7ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 lg:hidden"
@@ -341,16 +361,17 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
                 type="button"
               >
                 <MenuIcon open={sidebarOpen} />
-              </button>
+              </button>}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-semibold uppercase tracking-[0.16em] text-[#5a1bb0] sm:text-sm sm:tracking-[0.18em]">
-              {data.stall?.name ?? 'Stall workspace'}
-                </p>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="truncate text-xs font-semibold uppercase tracking-[0.16em] text-[#5a1bb0] sm:text-sm sm:tracking-[0.18em]">{data.stall?.name ?? 'Stall workspace'}</p>
+                  {session.role === 'owner' && <button className="shrink-0 text-xs font-semibold text-[#5a1bb0]" onClick={onSignOut} type="button">Sign out</button>}
+                </div>
                 <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <h1 className="text-2xl font-black tracking-tight text-[#220046] sm:text-3xl">{getViewLabel(session.role, view)}</h1>
                     <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${session.role === 'system_admin' ? 'bg-[#220046] text-[#f5d68c]' : 'bg-[#efe5ff] text-[#5a1bb0]'}`}>
-                      {session.role === 'system_admin' ? 'Global administration' : 'Assigned stalls only'}
+                      {session.role === 'system_admin' ? 'Global administration' : 'Read-only monitoring'}
                     </span>
                   </div>
                   {stalls.length > 1 && (
@@ -367,7 +388,7 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
           </div>
         </header>
 
-        <div className="mx-auto w-full max-w-7xl space-y-4 p-4 sm:p-8">
+        <div className={`mx-auto w-full max-w-7xl space-y-4 p-4 sm:p-8 ${session.role === 'owner' ? 'pb-28 sm:pb-28 lg:pb-8' : ''}`}>
           {error && (
             <div className="flex items-start justify-between gap-3">
               <Notice>{error}</Notice>
@@ -380,6 +401,7 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
           {screen}
         </div>
       </main>
+      {session.role === 'owner' && <OwnerBottomNavigation activeView={view} onNavigate={setView} />}
     </div>
   )
 }

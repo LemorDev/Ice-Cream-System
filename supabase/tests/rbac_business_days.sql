@@ -46,9 +46,10 @@ begin
   if not public.is_owner() or public.is_system_admin() then
     raise exception 'Owner role helpers returned the wrong result';
   end if;
-  if not public.can_manage_stall(stall_a) or not public.can_manage_stall(stall_b)
-    or public.can_manage_stall(stall_c) then
-    raise exception 'Owner stall assignments were not enforced';
+  if public.can_manage_stall(stall_a) or public.can_manage_stall(stall_b)
+    or not public.can_monitor_stall(stall_a) or not public.can_monitor_stall(stall_b)
+    or public.can_monitor_stall(stall_c) then
+    raise exception 'Owner read-only stall assignments were not enforced';
   end if;
   if (select count(*) from public.get_my_stalls()) <> 2 then
     raise exception 'Owner did not receive exactly the assigned stalls';
@@ -58,10 +59,14 @@ begin
     raise exception 'Owner could not read inventory for a secondary assigned stall';
   end if;
 
-  perform public.save_managed_user(
-    stall_a, 'new-cashier-' || substr(gen_random_uuid()::text, 1, 8) || '@example.invalid',
-    'New cashier', 'cashier', 'cashier-password', null, true
-  );
+  begin
+    perform public.save_managed_user(
+      stall_a, 'new-cashier-' || substr(gen_random_uuid()::text, 1, 8) || '@example.invalid',
+      'Unauthorized cashier', 'cashier', 'cashier-password', null, true
+    );
+    raise exception 'Owner was allowed to create a cashier';
+  exception when insufficient_privilege then null;
+  end;
   begin
     perform public.save_managed_user(
       stall_a, 'owner-' || substr(gen_random_uuid()::text, 1, 8) || '@example.invalid',
@@ -80,16 +85,15 @@ begin
     raise exception 'Owner was allowed to change stall identity';
   exception when insufficient_privilege then null;
   end;
-  perform public.update_managed_stall(
-    stall_a,
-    null,
-    null,
-    '[{"key":"rent","label":"Rent","dailyRate":250}]'::jsonb
-  );
-  if (select overhead_config -> 0 ->> 'dailyRate' from public.stalls where id = stall_a) <> '250' then
-    raise exception 'Owner could not update assigned-stall overhead';
-  end if;
+  begin
+    perform public.update_managed_stall(
+      stall_a, null, null, '[{"key":"rent","label":"Rent","dailyRate":250}]'::jsonb
+    );
+    raise exception 'Owner was allowed to update stall overhead';
+  exception when insufficient_privilege then null;
+  end;
 
+  perform set_config('request.headers', jsonb_build_object('x-session-token', admin_token)::text, true);
   activation := public.create_device_activation(stall_a, 'RBAC test POS');
   perform set_config('request.headers', jsonb_build_object('x-session-token', cashier_token)::text, true);
   activation_result := public.activate_pos_device(activation ->> 'activation_code', 'rbac-test-hardware');
@@ -126,7 +130,7 @@ begin
     raise exception 'Closing the operating day was not recorded';
   end if;
 
-  perform set_config('request.headers', jsonb_build_object('x-session-token', owner_token)::text, true);
+  perform set_config('request.headers', jsonb_build_object('x-session-token', admin_token)::text, true);
   replacement_activation := public.create_device_activation(stall_a, 'Replacement POS');
   if not exists (select 1 from public.devices where id = (activation_result ->> 'device_id')::uuid and is_active) then
     raise exception 'Creating a replacement code disabled the working POS too early';
@@ -150,7 +154,7 @@ begin
   end if;
   perform public.set_owner_stalls(owner_id, array[stall_c]);
   perform set_config('request.headers', jsonb_build_object('x-session-token', owner_token)::text, true);
-  if public.can_manage_stall(stall_a) or not public.can_manage_stall(stall_c)
+  if public.can_manage_stall(stall_a) or not public.can_monitor_stall(stall_c)
     or (select count(*) from public.get_my_stalls()) <> 1 then
     raise exception 'Updated owner stall assignments were not enforced';
   end if;

@@ -11,6 +11,7 @@ export type WebView =
   | 'pricing'
   | 'transactions'
   | 'reports'
+  | 'productReport'
   | 'days'
 
 export type NavigationGroup = {
@@ -20,7 +21,7 @@ export type NavigationGroup = {
 
 const commonOperations: NavigationGroup[] = [
   { label: 'Inventory', items: ['products', 'receiving', 'adjustments', 'pricing'] },
-  { label: 'Sales', items: ['transactions', 'reports', 'days'] },
+  { label: 'Sales', items: ['transactions', 'reports', 'productReport', 'days'] },
 ]
 
 const navigationByRole: Record<'system_admin' | 'owner', NavigationGroup[]> = {
@@ -30,8 +31,7 @@ const navigationByRole: Record<'system_admin' | 'owner', NavigationGroup[]> = {
     ...commonOperations,
   ],
   owner: [
-    { label: 'Owner workspace', items: ['overview', 'stall', 'staff'] },
-    ...commonOperations,
+    { label: 'Monitoring', items: ['overview', 'reports', 'productReport', 'days'] },
   ],
 }
 
@@ -46,6 +46,7 @@ const baseLabels: Record<WebView, string> = {
   pricing: 'Prices & conversions',
   transactions: 'Transactions',
   reports: 'Sales reports',
+  productReport: 'Product performance',
   days: 'Operating days',
 }
 
@@ -68,8 +69,8 @@ export function getViewLabel(role: AppRole, view: WebView): string {
     if (view === 'overview') return 'Stall overview'
   }
   if (role === 'owner') {
-    if (view === 'stall') return 'Costs & settings'
-    if (view === 'staff') return 'Cashiers & POS'
+    if (view === 'overview') return 'Dashboard'
+    if (view === 'reports') return 'Sales analytics'
   }
   return baseLabels[view]
 }

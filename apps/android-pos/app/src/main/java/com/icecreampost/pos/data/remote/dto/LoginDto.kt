@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class LoginRequest(
+    @SerialName("p_stall_code") val stallCode: String,
     @SerialName("p_email") val email: String,
     @SerialName("p_password") val password: String,
 )
@@ -17,6 +18,8 @@ data class LoginResponse(
     @SerialName("display_name") val displayName: String,
     val role: String,
     @SerialName("expires_at") val expiresAt: String,
+    @SerialName("device_id") val deviceId: String? = null,
+    @SerialName("is_activated") val isActivated: Boolean = false,
 )
 
 @Serializable

@@ -20,6 +20,7 @@ declare
   activation_result jsonb;
   day_id uuid := gen_random_uuid();
   day_result jsonb;
+  restored_login record;
   opened_at timestamptz := now() - interval '30 minutes';
 begin
   insert into public.stalls (id, name, code) values
@@ -29,7 +30,7 @@ begin
   insert into public.app_users (id, stall_id, email, display_name, role, password_hash) values
     (admin_id, stall_a, admin_id::text || '@example.invalid', 'System admin fixture', 'system_admin', 'unused'),
     (owner_id, stall_a, owner_id::text || '@example.invalid', 'Owner fixture', 'owner', 'unused'),
-    (cashier_id, stall_a, cashier_id::text || '@example.invalid', 'Cashier fixture', 'cashier', 'unused');
+    (cashier_id, stall_a, cashier_id::text || '@example.invalid', 'Cashier fixture', 'cashier', crypt('cashier-password', gen_salt('bf')));
   insert into public.owner_stall_access (user_id, stall_id) values
     (owner_id, stall_a),
     (owner_id, stall_b);
@@ -104,6 +105,20 @@ begin
   perform set_config('request.headers', jsonb_build_object(
     'x-session-token', cashier_token, 'x-device-id', 'rbac-test-hardware'
   )::text, true);
+  select * into restored_login from public.login_pos_with_password(
+    lower((select code from public.stalls where id = stall_a)),
+    cashier_id::text || '@example.invalid',
+    'cashier-password'
+  );
+  if not restored_login.is_activated or restored_login.device_id::text <> activation_result ->> 'device_id' then
+    raise exception 'Cashier login did not restore the active device';
+  end if;
+  begin
+    perform public.login_pos_with_password('WRONG-STALL', cashier_id::text || '@example.invalid', 'cashier-password');
+    raise exception 'Cashier login accepted the wrong stall code';
+  exception when invalid_authorization_specification then null;
+  end;
+
   day_result := public.push_business_day(jsonb_build_object(
     'id', day_id,
     'stall_id', stall_a,

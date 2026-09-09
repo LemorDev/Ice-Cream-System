@@ -24,7 +24,7 @@ For an existing database, the role migration automatically renames every `manage
 
 ## Custom password sessions
 
-This project does not use Supabase Auth providers. The `login_with_password` database function verifies a bcrypt password and returns a random, short-lived session token. The web dashboard stores the token in browser session storage. Android stores it in Room so an already activated POS can continue operating offline. Each API request sends the token in `X-Session-Token`; database policies and secured functions resolve the user from that token.
+This project does not use Supabase Auth providers. The web uses `login_with_password`; Android uses `login_pos_with_password`, which also verifies the stall code and recognizes an already activated device from `X-Device-Id`. Both return a random, short-lived session token after bcrypt password verification. The web dashboard stores the token in browser session storage. Android stores its session and restored device binding in Room so an activated POS can continue operating offline. Each API request sends the token in `X-Session-Token`; database policies and secured functions resolve the user from that token.
 
 ## Role-based access
 
@@ -32,7 +32,7 @@ This project does not use Supabase Auth providers. The `login_with_password` dat
 - `owner` has read-only web monitoring for assigned stalls: revenue, profit, sales activity, product performance, and opening/closing history. Owners cannot mutate operational data or access an unassigned stall.
 - `cashier` can sign in to an assigned Android POS, open and close its operating day, make sales while that day is open, and sync the cost-free POS catalog and own-stall inventory. Cashiers cannot use the Owner dashboard or read product costs and profit data.
 
-One POS device can be active for a stall at a time. Redeeming a replacement activation code deactivates the previous device. The code is stored only as a hash, works once, and is bound to the Android hardware identifier when redeemed.
+One POS device can be active for a stall at a time. `MAIN-001` is a stall code used during sign-in, while the System Administrator-generated POS code is a separate one-time activation credential. Redeeming a replacement activation code deactivates the previous device. The code is stored only as a hash, works once, and is bound to the Android hardware identifier when redeemed. Subsequent Cashier sign-ins on that phone restore the active binding without asking for another activation code.
 
 The current business has one active stall. The schema and Owner dashboard already support assigning several stalls without changing the one-stall workflow.
 

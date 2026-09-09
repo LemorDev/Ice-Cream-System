@@ -8,6 +8,7 @@ import com.icecreampost.pos.data.remote.dto.ActivateDeviceRequest
 import com.icecreampost.pos.data.remote.interceptor.DeviceIdentity
 import com.icecreampost.pos.data.remote.interceptor.SessionTokenStore
 import kotlinx.coroutines.flow.Flow
+import retrofit2.HttpException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -29,11 +30,18 @@ class SessionRepository @Inject constructor(
         }
     }
 
-    suspend fun signIn(email: String, password: String) {
+    suspend fun signIn(stallCode: String, email: String, password: String) {
+        require(stallCode.isNotBlank()) { "Stall code is required." }
         require(email.isNotBlank()) { "Email is required." }
         require(password.isNotBlank()) { "Password is required." }
-        val response = api.login(LoginRequest(email.trim(), password)).firstOrNull()
-            ?: error("Invalid email or password.")
+        val response = try {
+            api.login(LoginRequest(stallCode.trim().uppercase(), email.trim(), password)).firstOrNull()
+        } catch (error: HttpException) {
+            if (error.code() == 401 || error.code() == 403) {
+                throw IllegalArgumentException("The stall code, email, or password is incorrect, or this Cashier account is inactive.")
+            }
+            throw error
+        } ?: error("The stall code, email, or password is incorrect.")
         require(response.role == "cashier") { "Use the Owner web dashboard for this account." }
         sessionTokenStore.token = response.sessionToken
         sessionDao.save(
@@ -44,6 +52,8 @@ class SessionRepository @Inject constructor(
                 role = response.role,
                 sessionToken = response.sessionToken,
                 expiresAt = response.expiresAt,
+                deviceId = response.deviceId.takeIf { response.isActivated },
+                isActivated = response.isActivated && response.deviceId != null,
             ),
         )
     }
@@ -52,7 +62,14 @@ class SessionRepository @Inject constructor(
         require(deviceCode.trim().isNotEmpty()) { "Device activation code is required." }
         val current = sessionDao.getCurrent() ?: error("Sign in before activating this device.")
         require(current.role == "cashier") { "Only a Cashier account can activate the POS." }
-        val activation = api.activateDevice(ActivateDeviceRequest(deviceCode.trim(), deviceIdentity.id))
+        val activation = try {
+            api.activateDevice(ActivateDeviceRequest(deviceCode.trim(), deviceIdentity.id))
+        } catch (error: HttpException) {
+            if (error.code() == 401 || error.code() == 403) {
+                throw IllegalArgumentException("That POS activation code is invalid or expired. Use the one-time code generated in Users & access, not the stall code.")
+            }
+            throw error
+        }
         require(activation.stallId == current.stallId) { "The activation code belongs to another stall." }
         sessionDao.save(
             current.copy(

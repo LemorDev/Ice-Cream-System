@@ -37,6 +37,8 @@ After the web IMS is deployed over HTTPS, open it in Safari, tap **Share**, choo
 3. The System admin generates a one-time activation code for the stall's Android POS. Redeeming a replacement code deactivates the previous POS for that stall.
 4. The Cashier signs in on Android and redeems the code while online. Later checkout and operating-day actions save to Room first and can work offline.
 
+Cashier sign-in uses the stall code (for example, `MAIN-001`), email, and password. The one-time POS activation code is entered only when registering a new or replacement Android device. When the same active phone signs in again, the server recognizes its device identifier and skips activation.
+
 ## Operating-day rules
 
 The Cashier must open the stall before starting a sale. Opening records the Manila business date, Cashier, device, exact opening timestamp, and optional notes in Room, then queues the record for sync. Only one operating day can be opened per stall and business date.

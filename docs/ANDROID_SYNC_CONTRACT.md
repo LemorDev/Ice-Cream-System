@@ -14,13 +14,13 @@ X-Session-Token: <custom session token>
 X-Device-Id: <stable Android device identifier>
 ```
 
-The service-role key is never shipped to Android. `login_with_password` returns the short-lived token. Android accepts only a `cashier` login. Device-protected RPCs also require `X-Device-Id` to match the active device row for that Cashier's stall.
+The service-role key is never shipped to Android. `login_pos_with_password` verifies the stall code and Cashier credentials, then returns a short-lived token. If `X-Device-Id` already matches the stall's active POS, the response also restores its cloud `device_id` so another activation code is not required. Device-protected RPCs require the same active-device match.
 
 ## Endpoints
 
 | Purpose | Method | Path |
 |---|---:|---|
-| Login | POST | `/rest/v1/rpc/login_with_password` |
+| Cashier login and device restore | POST | `/rest/v1/rpc/login_pos_with_password` |
 | Redeem the one-time POS code | POST | `/rest/v1/rpc/activate_pos_device` |
 | Push an opening or closing record | POST | `/rest/v1/rpc/push_business_day` |
 | Push one local sale | POST | `/rest/v1/rpc/push_pos_transaction` |
@@ -31,7 +31,7 @@ Product and inventory pulls use separate successfully persisted cursors (`catalo
 
 ## Device activation
 
-The System Administrator creates a one-time code in **Users & access**. Android redeems the code with its hardware identifier and stores the returned cloud `device_id` in Room. Successful redemption deactivates the previous POS for that stall, so an interrupted replacement does not lock out the working device. A used, foreign-stall, or replaced code is rejected.
+The stall code, such as `MAIN-001`, identifies the stall during Cashier sign-in; it is not a device activation code. The System Administrator creates a separate one-time activation code in **Users & access**. Android redeems it with its hardware identifier and stores the returned cloud `device_id` in Room. Later sign-ins on that same active phone restore the device binding automatically. Successful redemption of a replacement code deactivates the previous POS for that stall, so an interrupted replacement does not lock out the working device. A used, foreign-stall, or replaced code is rejected.
 
 ## Operating days
 

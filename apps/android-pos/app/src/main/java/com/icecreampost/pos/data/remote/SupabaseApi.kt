@@ -18,7 +18,7 @@ import retrofit2.http.POST
 import retrofit2.http.Query
 
 interface SupabaseApi {
-    @POST("rest/v1/rpc/login_with_password")
+    @POST("rest/v1/rpc/login_pos_with_password")
     suspend fun login(@Body request: LoginRequest): List<LoginResponse>
 
     @POST("rest/v1/rpc/activate_pos_device")

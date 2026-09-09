@@ -36,7 +36,7 @@ class SessionRepositoryTest {
         coEvery { api.login(any()) } returns listOf(login(role = "owner"))
 
         assertThrows(IllegalArgumentException::class.java) {
-            runTest { repository.signIn("owner@example.com", "password") }
+            runTest { repository.signIn("MAIN-001", "owner@example.com", "password") }
         }
 
         assertEquals(null, tokenStore.token)
@@ -49,12 +49,27 @@ class SessionRepositoryTest {
         val saved = slot<AppSessionEntity>()
         coEvery { sessionDao.save(capture(saved)) } returns Unit
 
-        repository.signIn("cashier@example.com", "password")
+        repository.signIn(" main-001 ", "cashier@example.com", "password")
 
+        coVerify(exactly = 1) { api.login(match { it.stallCode == "MAIN-001" }) }
         assertEquals("token-1", tokenStore.token)
         assertEquals("cashier", saved.captured.role)
         assertEquals("stall-1", saved.captured.stallId)
         assertEquals(false, saved.captured.isActivated)
+    }
+
+    @Test
+    fun `cashier login restores an active registration for the same device`() = runTest {
+        coEvery { api.login(any()) } returns listOf(
+            login(role = "cashier", deviceId = "device-1", isActivated = true),
+        )
+        val saved = slot<AppSessionEntity>()
+        coEvery { sessionDao.save(capture(saved)) } returns Unit
+
+        repository.signIn("MAIN-001", "cashier@example.com", "password")
+
+        assertEquals("device-1", saved.captured.deviceId)
+        assertEquals(true, saved.captured.isActivated)
     }
 
     @Test
@@ -77,12 +92,14 @@ class SessionRepositoryTest {
         assertEquals(true, saved.captured.isActivated)
     }
 
-    private fun login(role: String) = LoginResponse(
+    private fun login(role: String, deviceId: String? = null, isActivated: Boolean = false) = LoginResponse(
         sessionToken = "token-1",
         userId = "user-1",
         stallId = "stall-1",
         displayName = "Test user",
         role = role,
         expiresAt = "2026-09-08T12:00:00Z",
+        deviceId = deviceId,
+        isActivated = isActivated,
     )
 }

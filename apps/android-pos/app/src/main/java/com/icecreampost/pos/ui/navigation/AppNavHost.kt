@@ -37,7 +37,7 @@ fun AppNavHost(viewModel: PosViewModel) {
 
     NavHost(navController = navController, startDestination = Routes.LOGIN) {
         composable(Routes.LOGIN) {
-            LoginScreen(viewModel = viewModel, onSuccess = { navController.navigate(Routes.ACTIVATION) })
+            LoginScreen(viewModel = viewModel)
         }
         composable(Routes.ACTIVATION) {
             ActivationScreen(viewModel = viewModel, onSuccess = {

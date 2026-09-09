@@ -121,8 +121,8 @@ class PosViewModel @Inject constructor(
     fun openDay(notes: String = "") { runAction { businessDayRepository.openDay(notes) } }
     fun closeDay(notes: String = "") { runAction { businessDayRepository.closeDay(notes) } }
 
-    fun signIn(email: String, password: String, onSuccess: () -> Unit) {
-        runAction(onSuccess) { sessionRepository.signIn(email, password) }
+    fun signIn(stallCode: String, email: String, password: String) {
+        runAction { sessionRepository.signIn(stallCode, email, password) }
     }
 
     fun activate(deviceCode: String, onSuccess: () -> Unit) {

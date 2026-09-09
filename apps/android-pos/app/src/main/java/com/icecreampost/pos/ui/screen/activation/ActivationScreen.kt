@@ -31,7 +31,7 @@ fun ActivationScreen(viewModel: PosViewModel, onSuccess: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Activate this device", style = MaterialTheme.typography.headlineMedium)
-        Text("Enter the device code assigned to this stall. Activation metadata is saved locally for offline startup.")
+        Text("Enter the one-time POS activation code created by the System Administrator. This is different from the stall code used during sign-in.")
         OutlinedTextField(code, { code = it }, label = { Text("Device activation code") }, modifier = Modifier.fillMaxWidth())
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(onClick = { viewModel.activate(code, onSuccess) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {

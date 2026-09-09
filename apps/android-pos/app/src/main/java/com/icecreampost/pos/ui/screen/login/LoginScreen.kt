@@ -4,7 +4,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
@@ -22,29 +25,43 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.icecreampost.pos.ui.PosViewModel
 
 @Composable
-fun LoginScreen(viewModel: PosViewModel, onSuccess: () -> Unit) {
+fun LoginScreen(viewModel: PosViewModel) {
+    var stallCode by rememberSaveable { mutableStateOf("") }
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Coolerz POS", style = MaterialTheme.typography.headlineLarge)
-        Text("Cashier sign in. The catalog and checkout work from local Room data after activation.")
-        OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
+        Text("Sign in with the stall code and Cashier account. This phone will reuse its active POS registration.")
+        OutlinedTextField(
+            stallCode,
+            { stallCode = it.uppercase() },
+            label = { Text("Stall code") },
+            placeholder = { Text("MAIN-001") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(
             password,
             { password = it },
             label = { Text("Password") },
             visualTransformation = PasswordVisualTransformation(),
+            singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(
-            onClick = { viewModel.signIn(email, password, onSuccess) },
+            onClick = { viewModel.signIn(stallCode, email, password) },
             enabled = !busy,
             modifier = Modifier.fillMaxWidth(),
         ) {

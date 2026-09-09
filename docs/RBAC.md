@@ -26,7 +26,7 @@ The web IMS presents separate role experiences. A System Administrator lands on 
 
 ## Owner access on iPhone
 
-The Owner uses the responsive web IMS as an iPhone home-screen app. The streamlined interface provides live revenue, profit, product-performance, and operating-day reports without exposing management controls.
+The Owner uses the responsive web IMS as an iPhone home-screen app. The streamlined interface provides live revenue, profit, product-performance, and operating-day reports without exposing management controls. On compact screens such as the iPhone XR, a hamburger menu opens the four monitoring sections without covering report content.
 
 After the web IMS is deployed over HTTPS, open it in Safari, tap **Share**, choose **Add to Home Screen**, and launch **Coolerz IMS** from the new icon. The manifest and iOS metadata are already included. The service worker deliberately does not cache business or financial data; an internet connection is required for the Owner dashboard.
 

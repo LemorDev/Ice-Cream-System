@@ -1,7 +1,7 @@
 {
   "name": "Coolerz Owner Dashboard",
   "short_name": "Coolerz IMS",
-  "description": "Stall revenue, profit, inventory, staff, and operating-day management.",
+  "description": "Mobile stall revenue, profit, product, and operating-day monitoring.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#fffdf8",

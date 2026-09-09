@@ -35,8 +35,8 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
         src={brandLogo}
       />
       <div>
-        <p className={`text-xs font-semibold uppercase tracking-[0.28em] ${compact ? 'text-[#efe1ff]' : 'text-[#f4dcff]'}`}>Coolerz IMS</p>
-        <p className={`mt-1 ${compact ? 'text-sm text-[#f5edf8]' : 'text-sm text-[#f8eefe]'}`}>Business control center</p>
+        <p className={`text-xs font-semibold uppercase tracking-[0.28em] ${compact ? 'text-[#5a1bb0]' : 'text-[#f4dcff]'}`}>Coolerz IMS</p>
+        <p className={`mt-1 ${compact ? 'text-sm text-[#6b4d89]' : 'text-sm text-[#f8eefe]'}`}>Business control center</p>
       </div>
     </div>
   )
@@ -96,8 +96,7 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void
           <div className="md:hidden">
             <BrandMark compact />
           </div>
-          <p className="mt-6 text-sm font-semibold uppercase tracking-[0.2em] text-[#5a1bb0] md:hidden">Coolerz IMS</p>
-          <h2 className="mt-3 text-3xl font-black tracking-tight text-[#220046]">Management sign in</h2>
+          <h2 className="mt-7 text-3xl font-black tracking-tight text-[#220046]">Management sign in</h2>
           <p className="mt-2 max-w-md text-slate-500">Owners and system administrators can use this dashboard.</p>
 
           <label className="mt-7 block text-sm font-medium text-[#39235f]">
@@ -151,32 +150,18 @@ function MenuIcon({ open = false }: { open?: boolean }) {
   )
 }
 
-function OwnerBottomNavigation({ activeView, onNavigate }: { activeView: WebView; onNavigate: (view: WebView) => void }) {
-  const items: Array<{ view: WebView; label: string }> = [
-    { view: 'overview', label: 'Dashboard' },
-    { view: 'reports', label: 'Sales' },
-    { view: 'productReport', label: 'Products' },
-    { view: 'days', label: 'Days' },
-  ]
-  return (
-    <nav aria-label="Owner monitoring" className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-[#e6d7f7] bg-white/95 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-12px_35px_rgba(45,0,82,0.12)] backdrop-blur lg:hidden">
-      {items.map((item) => <button aria-current={activeView === item.view ? 'page' : undefined} className={`min-h-12 rounded-xl px-1 text-xs font-semibold transition ${activeView === item.view ? 'bg-[#efe5ff] text-[#5a1bb0]' : 'text-slate-500'}`} key={item.view} onClick={() => onNavigate(item.view)} type="button">{item.label}</button>)}
-    </nav>
-  )
-}
-
 function Sidebar({ activeView, onNavigate, onSignOut, session, open, onClose }: { activeView: WebView; onNavigate: (view: WebView) => void; onSignOut: () => void; session: AppSession; open: boolean; onClose: () => void }) {
   const navigation = getNavigation(session.role)
   return (
     <>
       <button
         aria-label="Close navigation"
-        className={`fixed inset-0 z-40 bg-[#18002f]/55 backdrop-blur-[2px] transition-opacity lg:hidden ${session.role === 'owner' ? 'hidden' : ''} ${open ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+        className={`fixed inset-0 z-40 bg-[#18002f]/55 backdrop-blur-[2px] transition-opacity lg:hidden ${open ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         onClick={onClose}
         type="button"
       />
-      <aside className={`fixed inset-y-0 left-0 z-50 w-[min(86vw,18rem)] shrink-0 flex-col bg-[linear-gradient(180deg,_#220046_0%,_#3a007a_100%)] text-white shadow-2xl transition-transform duration-300 ease-out lg:static lg:z-auto lg:flex lg:min-h-screen lg:w-72 lg:translate-x-0 lg:shadow-none ${session.role === 'owner' ? 'hidden' : 'flex'} ${open ? 'translate-x-0' : '-translate-x-full'}`}>
-      <div className="flex items-center justify-between p-5">
+      <aside aria-label={session.role === 'owner' ? 'Owner monitoring navigation' : 'System administration navigation'} className={`fixed inset-y-0 left-0 z-50 flex w-[min(86vw,18rem)] shrink-0 flex-col bg-[linear-gradient(180deg,_#220046_0%,_#3a007a_100%)] text-white shadow-2xl transition-transform duration-300 ease-out lg:static lg:z-auto lg:min-h-screen lg:w-72 lg:translate-x-0 lg:shadow-none ${open ? 'translate-x-0' : '-translate-x-full'}`}>
+      <div className="flex items-center justify-between px-5 pb-5 pt-[max(1.25rem,env(safe-area-inset-top))]">
         <BrandMark />
         <button aria-label="Close navigation" className="rounded-lg p-2 text-[#f5deff] transition hover:bg-white/10 hover:text-white lg:hidden" onClick={onClose} type="button">
           <MenuIcon open />
@@ -207,7 +192,7 @@ function Sidebar({ activeView, onNavigate, onSignOut, session, open, onClose }: 
         ))}
       </nav>
 
-      <div className="border-t border-white/10 p-4">
+      <div className="border-t border-white/10 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4">
         <p className="truncate text-sm font-medium">{session.displayName}</p>
         <p className="mt-1 text-xs text-[#d9c2ff]">
           {session.role === 'system_admin' ? 'System admin' : 'Owner'}
@@ -350,10 +335,10 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
     <div className="min-h-screen bg-[linear-gradient(180deg,_#fbf6ff_0%,_#fffdf8_100%)] text-slate-900 lg:flex">
       <Sidebar activeView={view} onNavigate={setView} onSignOut={onSignOut} session={session} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <main className="min-w-0 flex-1 overflow-x-hidden">
-        <header className="border-b border-[#eadcff] bg-white/85 px-4 py-4 backdrop-blur sm:px-8 sm:py-6">
+        <header className="sticky top-0 z-30 border-b border-[#eadcff] bg-white/90 px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))] backdrop-blur sm:px-8 sm:py-6">
           <div className="mx-auto max-w-7xl">
             <div className="flex items-start gap-3">
-              {session.role === 'system_admin' && <button
+              <button
                 aria-expanded={sidebarOpen}
                 aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
                 className="mt-0.5 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-xl border border-[#eadcff] bg-white text-[#4b2a7a] shadow-sm transition hover:border-[#caa8ff] hover:bg-[#fbf7ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 lg:hidden"
@@ -361,21 +346,20 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
                 type="button"
               >
                 <MenuIcon open={sidebarOpen} />
-              </button>}
+              </button>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-3">
+                <div>
                   <p className="truncate text-xs font-semibold uppercase tracking-[0.16em] text-[#5a1bb0] sm:text-sm sm:tracking-[0.18em]">{data.stall?.name ?? 'Stall workspace'}</p>
-                  {session.role === 'owner' && <button className="shrink-0 text-xs font-semibold text-[#5a1bb0]" onClick={onSignOut} type="button">Sign out</button>}
                 </div>
                 <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h1 className="text-2xl font-black tracking-tight text-[#220046] sm:text-3xl">{getViewLabel(session.role, view)}</h1>
+                    <h1 className="text-xl font-black tracking-tight text-[#220046] min-[390px]:text-2xl sm:text-3xl">{getViewLabel(session.role, view)}</h1>
                     <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${session.role === 'system_admin' ? 'bg-[#220046] text-[#f5d68c]' : 'bg-[#efe5ff] text-[#5a1bb0]'}`}>
                       {session.role === 'system_admin' ? 'Global administration' : 'Read-only monitoring'}
                     </span>
                   </div>
                   {stalls.length > 1 && (
-                    <Select aria-label="Active stall" className="mt-0 min-w-48" value={selectedStallId} onChange={(event) => setSelectedStallId(event.target.value)}>
+                    <Select aria-label="Active stall" className="mt-0 min-w-0 sm:min-w-48" value={selectedStallId} onChange={(event) => setSelectedStallId(event.target.value)}>
                       {stalls.map((stall) => <option key={stall.id} value={stall.id}>{stall.name}</option>)}
                     </Select>
                   )}
@@ -388,7 +372,7 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
           </div>
         </header>
 
-        <div className={`mx-auto w-full max-w-7xl space-y-4 p-4 sm:p-8 ${session.role === 'owner' ? 'pb-28 sm:pb-28 lg:pb-8' : ''}`}>
+        <div className="mx-auto w-full max-w-7xl space-y-4 p-3 min-[390px]:p-4 sm:p-8">
           {error && (
             <div className="flex items-start justify-between gap-3">
               <Notice>{error}</Notice>
@@ -401,7 +385,6 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
           {screen}
         </div>
       </main>
-      {session.role === 'owner' && <OwnerBottomNavigation activeView={view} onNavigate={setView} />}
     </div>
   )
 }

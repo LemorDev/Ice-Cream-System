@@ -79,7 +79,7 @@ export function OwnerDashboardScreen({ data, onNavigate }: ScreenProps & { onNav
       </section>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[['Orders today', todayPoint.orders.toLocaleString(), 'Completed sales'], ['7-day revenue', peso.format(weekRevenue), `${weekOrders} orders`], ['Average sale', peso.format(averageSale), 'Last 7 days'], ['Top product', products[0]?.name ?? '—', products[0] ? `${products[0].unitsSold.toLocaleString()} units` : 'No sales yet']].map(([label, value, detail]) => <div className="rounded-2xl border border-[#eadcff] bg-white p-4 shadow-sm" key={label}><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-2 truncate text-xl font-black text-[#220046]">{value}</p><p className="mt-1 text-xs text-slate-400">{detail}</p></div>)}
+        {[['Orders today', todayPoint.orders.toLocaleString(), 'Completed sales'], ['7-day revenue', peso.format(weekRevenue), `${weekOrders} orders`], ['Average sale', peso.format(averageSale), 'Last 7 days'], ['Top product', products[0]?.name ?? '—', products[0] ? `${products[0].unitsSold.toLocaleString()} units` : 'No sales yet']].map(([label, value, detail]) => <div className="min-w-0 rounded-2xl border border-[#eadcff] bg-white p-3 shadow-sm min-[390px]:p-4" key={label}><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-2 break-words text-lg font-black leading-tight text-[#220046] min-[390px]:text-xl">{value}</p><p className="mt-1 text-xs text-slate-400">{detail}</p></div>)}
       </div>
 
       <Panel title="Revenue trend" description="Completed sales over the last seven days." action={<Button variant="ghost" onClick={() => onNavigate('reports')}>View analytics</Button>}>

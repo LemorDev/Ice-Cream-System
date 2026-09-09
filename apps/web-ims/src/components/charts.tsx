@@ -14,9 +14,9 @@ function displayDate(date: string) {
 
 export function RevenueTrendChart({ points, formatValue }: { points: TrendPoint[]; formatValue: (value: number) => string }) {
   const gradientId = useId().replaceAll(':', '')
-  const width = 720
-  const height = 260
-  const paddingX = 42
+  const width = 560
+  const height = 240
+  const paddingX = 46
   const paddingTop = 22
   const paddingBottom = 38
   const chartWidth = width - paddingX * 2
@@ -46,12 +46,12 @@ export function RevenueTrendChart({ points, formatValue }: { points: TrendPoint[
         {[0, 0.5, 1].map((ratio) => {
           const y = paddingTop + chartHeight * ratio
           const value = maxValue * (1 - ratio)
-          return <g key={ratio}><line stroke="#eadcff" strokeDasharray="5 6" x1={paddingX} x2={paddingX + chartWidth} y1={y} y2={y} /><text fill="#8b7b9e" fontSize="11" textAnchor="end" x={paddingX - 8} y={y + 4}>{compactNumber.format(value)}</text></g>
+          return <g key={ratio}><line stroke="#eadcff" strokeDasharray="5 6" x1={paddingX} x2={paddingX + chartWidth} y1={y} y2={y} /><text fill="#8b7b9e" fontSize="13" textAnchor="end" x={paddingX - 8} y={y + 4}>{compactNumber.format(value)}</text></g>
         })}
         {area && <polygon fill={`url(#${gradientId})`} points={area} />}
         {line && <polyline fill="none" points={line} stroke="#6d28d9" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" />}
         {coordinates.map((point) => <circle key={point.date} cx={point.x} cy={point.y} fill="#fffdf8" r="5" stroke="#6d28d9" strokeWidth="3"><title>{displayDate(point.date)}: {formatValue(point.value)}</title></circle>)}
-        {labelIndexes.map((index) => points[index] && <text fill="#746681" fontSize="12" key={points[index].date} textAnchor={index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'} x={coordinates[index].x} y={height - 8}>{displayDate(points[index].date)}</text>)}
+        {labelIndexes.map((index) => points[index] && <text fill="#746681" fontSize="14" key={points[index].date} textAnchor={index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'} x={coordinates[index].x} y={height - 8}>{displayDate(points[index].date)}</text>)}
       </svg>
       {points.every((point) => point.value === 0) && <p className="absolute inset-0 flex items-center justify-center text-sm text-slate-400">No completed sales in this period</p>}
     </div>

@@ -9,6 +9,7 @@ import com.icecreampost.pos.data.remote.interceptor.DeviceIdentity
 import com.icecreampost.pos.data.remote.interceptor.SessionTokenStore
 import kotlinx.coroutines.flow.Flow
 import retrofit2.HttpException
+import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -21,16 +22,22 @@ class SessionRepository @Inject constructor(
 ) {
     fun observeSession(): Flow<AppSessionEntity?> = sessionDao.observeCurrent()
 
-    suspend fun restoreStoredSession() {
+    suspend fun restoreStoredSession(): AppSessionEntity? {
         val current = sessionDao.getCurrent()
         val storedToken = current?.sessionToken?.takeIf { it.isNotBlank() }
-        sessionTokenStore.token = storedToken
-        if (current != null && storedToken == null) {
+        val isExpired = current?.expiresAt?.let { expiresAt ->
+            runCatching { !Instant.parse(expiresAt).isAfter(Instant.now()) }.getOrDefault(true)
+        } ?: false
+        if (current != null && (storedToken == null || isExpired)) {
+            sessionTokenStore.token = null
             sessionDao.clear()
+            return null
         }
+        sessionTokenStore.token = storedToken
+        return current
     }
 
-    suspend fun signIn(stallCode: String, email: String, password: String) {
+    suspend fun signIn(stallCode: String, email: String, password: String): AppSessionEntity {
         require(stallCode.isNotBlank()) { "Stall code is required." }
         require(email.isNotBlank()) { "Email is required." }
         require(password.isNotBlank()) { "Password is required." }
@@ -44,8 +51,7 @@ class SessionRepository @Inject constructor(
         } ?: error("The stall code, email, or password is incorrect.")
         require(response.role == "cashier") { "Use the Owner web dashboard for this account." }
         sessionTokenStore.token = response.sessionToken
-        sessionDao.save(
-            AppSessionEntity(
+        val session = AppSessionEntity(
                 userId = response.userId,
                 stallId = response.stallId,
                 displayName = response.displayName,
@@ -54,8 +60,9 @@ class SessionRepository @Inject constructor(
                 expiresAt = response.expiresAt,
                 deviceId = response.deviceId.takeIf { response.isActivated },
                 isActivated = response.isActivated && response.deviceId != null,
-            ),
-        )
+            )
+        sessionDao.save(session)
+        return session
     }
 
     suspend fun activate(deviceCode: String) {

@@ -45,4 +45,25 @@ class SyncWorkerTest {
 
         coVerify(exactly = 1) { syncRepository.sync() }
     }
+
+    @Test
+    fun `background sync is skipped before a cashier signs in`() = runTest {
+        val sessionDao = mockk<SessionDao>()
+        val syncRepository = mockk<SyncRepository>()
+        coEvery { sessionDao.getCurrent() } returns null
+        val sessionRepository = SessionRepository(
+            sessionDao,
+            mockk<SupabaseApi>(),
+            SessionTokenStore(),
+            mockk<DeviceIdentity>(),
+        )
+        val worker = SyncWorker(
+            mockk<Context>(), mockk<WorkerParameters>(relaxed = true),
+            syncRepository, sessionRepository, mockk<AppLogger>(relaxed = true),
+        )
+
+        assertEquals(ListenableWorker.Result.success(), worker.doWork())
+
+        coVerify(exactly = 0) { syncRepository.sync() }
+    }
 }

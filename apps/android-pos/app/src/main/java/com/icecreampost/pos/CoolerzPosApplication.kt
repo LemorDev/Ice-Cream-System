@@ -22,7 +22,6 @@ class CoolerzPosApplication : Application(), Configuration.Provider {
         super.onCreate()
         if (BuildConfig.SUPABASE_URL.isNotBlank() && BuildConfig.SUPABASE_ANON_KEY.isNotBlank()) {
             SyncScheduler.schedule(this)
-            SyncScheduler.enqueueNow(this)
         }
     }
 }

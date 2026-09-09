@@ -14,19 +14,24 @@ import com.icecreampost.pos.ui.screen.catalog.ProductCatalogScreen
 import com.icecreampost.pos.ui.screen.history.TransactionHistoryScreen
 import com.icecreampost.pos.ui.screen.home.HomeScreen
 import com.icecreampost.pos.ui.screen.login.LoginScreen
+import com.icecreampost.pos.ui.screen.loading.LoadingScreen
 import com.icecreampost.pos.ui.screen.receipt.ReceiptScreen
 import com.icecreampost.pos.ui.screen.settings.SettingsScreen
 
 @Composable
 fun AppNavHost(viewModel: PosViewModel) {
-    val navController = rememberNavController()
     val session by viewModel.session.collectAsStateWithLifecycle()
     val sessionReady by viewModel.sessionReady.collectAsStateWithLifecycle()
+    if (!sessionReady) {
+        LoadingScreen()
+        return
+    }
+
+    val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
     LaunchedEffect(sessionReady, session, currentRoute) {
-        if (!sessionReady) return@LaunchedEffect
         if (session == null && currentRoute != null && currentRoute != Routes.LOGIN) {
             navController.navigate(Routes.LOGIN) {
                 popUpTo(navController.graph.id) { inclusive = true }

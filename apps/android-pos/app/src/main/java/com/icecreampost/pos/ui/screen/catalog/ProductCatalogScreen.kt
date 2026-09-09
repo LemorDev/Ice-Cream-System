@@ -9,25 +9,23 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -37,20 +35,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -61,6 +51,7 @@ import com.icecreampost.pos.ui.component.QuantityStepper
 import com.icecreampost.pos.ui.component.ScreenHeader
 import com.icecreampost.pos.ui.component.formatMoney
 import com.icecreampost.pos.ui.screen.checkout.toCentsOrNull
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -318,51 +309,39 @@ private fun OrderAndPaymentSheet(
     onComplete: () -> Unit,
 ) {
     val quantity = lines.sumOf { it.quantity }
-    val listState = rememberLazyListState()
-    val cashFocusRequester = remember { FocusRequester() }
-    val keyboardController = LocalSoftwareKeyboardController.current
-
-    LaunchedEffect(lines.size) {
-        listState.scrollToItem(lines.size + 2)
-        withFrameNanos { }
-        cashFocusRequester.requestFocus()
-        keyboardController?.show()
-    }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxWidth().heightIn(max = 760.dp).imePadding(),
-        state = listState,
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+    Column(
+        modifier = Modifier.fillMaxWidth().fillMaxHeight(0.94f).padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        item {
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Order details", style = MaterialTheme.typography.headlineSmall)
-                    Text("$quantity ${if (quantity == 1) "item" else "items"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                TextButton(onClick = onClear, enabled = !busy) { Text("Clear order", color = MaterialTheme.colorScheme.error) }
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Order details", style = MaterialTheme.typography.headlineSmall)
+                Text("$quantity ${if (quantity == 1) "item" else "items"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            TextButton(onClick = onClear, enabled = !busy) { Text("Clear", color = MaterialTheme.colorScheme.error) }
         }
-        items(lines, key = { it.product.id }) { line ->
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = MaterialTheme.shapes.medium,
-            ) {
-                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(line.product.name, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "${formatMoney(line.product.priceCents)} each · ${line.product.unitsInStock - line.quantity} left",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().weight(1f).heightIn(min = 92.dp),
+            contentPadding = PaddingValues(bottom = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(lines, key = { it.product.id }) { line ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = MaterialTheme.shapes.medium,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(line.product.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${formatMoney(line.product.priceCents)} each", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Text(formatMoney(line.lineTotalCents), style = MaterialTheme.typography.titleMedium)
-                    }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        Text(formatMoney(line.lineTotalCents), style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.width(10.dp))
                         QuantityStepper(
                             quantity = line.quantity,
                             onDecrease = { onDecrease(line.product.id) },
@@ -373,79 +352,104 @@ private fun OrderAndPaymentSheet(
                 }
             }
         }
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = MaterialTheme.shapes.medium,
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            shape = MaterialTheme.shapes.medium,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SummaryRow("Subtotal", formatMoney(total))
-                    Surface(modifier = Modifier.fillMaxWidth().height(1.dp), color = MaterialTheme.colorScheme.outlineVariant) {}
-                    SummaryRow("Total", formatMoney(total), emphasized = true)
+                Column {
+                    Text("Total due", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text(formatMoney(total), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
                 }
-            }
-        }
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Cash received", style = MaterialTheme.typography.titleMedium)
-                OutlinedTextField(
-                    value = cashInput,
-                    onValueChange = onCashInputChange,
-                    prefix = { Text("₱") },
-                    placeholder = { Text("0.00") },
-                    modifier = Modifier.fillMaxWidth().focusRequester(cashFocusRequester),
-                    textStyle = MaterialTheme.typography.titleLarge,
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { keyboardController?.hide() }),
-                    shape = MaterialTheme.shapes.medium,
-                )
-            }
-        }
-        if (cashCents != null && cashCents < total) {
-            item { Text("Still due ${formatMoney(total - cashCents)}", color = MaterialTheme.colorScheme.error) }
-        }
-        changeCents?.let { change ->
-            item {
-                Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text("Change", style = MaterialTheme.typography.titleMedium)
-                        Text(formatMoney(change), style = MaterialTheme.typography.titleLarge)
+                if (changeCents != null) {
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("Change", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text(formatMoney(changeCents), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
                     }
                 }
             }
         }
-        error?.let { item { ErrorMessage(it) } }
-        item {
-            Button(
-                onClick = onComplete,
-                enabled = !busy && cashCents != null && cashCents >= total,
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = MaterialTheme.shapes.medium,
-            ) { Text(if (busy) "Saving…" else "Confirm sale") }
+
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Cash received", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    text = "₱${cashInput.ifBlank { "0.00" }}",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = if (cashInput.isBlank()) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            TextButton(onClick = { onCashInputChange(total.toPesoInput()) }, enabled = !busy) { Text("Exact amount") }
         }
+
+        NumericCashKeypad(
+            enabled = !busy,
+            onKey = { key -> onCashInputChange(updateCashInput(cashInput, key)) },
+        )
+
+        if (cashCents != null && cashCents < total) {
+            Text("Still due ${formatMoney(total - cashCents)}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+        }
+        error?.let { ErrorMessage(it) }
+        Button(
+            onClick = onComplete,
+            enabled = !busy && cashCents != null && cashCents >= total,
+            modifier = Modifier.fillMaxWidth().height(54.dp),
+            shape = MaterialTheme.shapes.medium,
+        ) { Text(if (busy) "Saving…" else "Review sale") }
     }
 }
 
 @Composable
-private fun SummaryRow(label: String, value: String, emphasized: Boolean = false) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(
-            label,
-            style = if (emphasized) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyMedium,
-            color = if (emphasized) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            value,
-            style = if (emphasized) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyMedium,
-            color = if (emphasized) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-        )
+private fun NumericCashKeypad(enabled: Boolean, onKey: (String) -> Unit) {
+    val rows = listOf(
+        listOf("1", "2", "3"),
+        listOf("4", "5", "6"),
+        listOf("7", "8", "9"),
+        listOf(".", "0", "⌫"),
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        rows.forEach { keys ->
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                keys.forEach { key ->
+                    FilledTonalButton(
+                        onClick = { onKey(key) },
+                        enabled = enabled,
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = MaterialTheme.shapes.medium,
+                        contentPadding = PaddingValues(0.dp),
+                    ) {
+                        Text(key, style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+            }
+        }
     }
 }
+
+internal fun updateCashInput(current: String, key: String): String = when (key) {
+    "⌫" -> current.dropLast(1)
+    "." -> when {
+        current.contains('.') -> current
+        current.isBlank() -> "0."
+        else -> "$current."
+    }
+    else -> {
+        if (key.length != 1 || !key[0].isDigit()) current
+        else if (current.substringBefore('.').length >= 8 && !current.contains('.')) current
+        else if (current.contains('.') && current.substringAfter('.').length >= 2) current
+        else if (current == "0") key
+        else current + key
+    }
+}
+
+private fun Long.toPesoInput(): String = String.format(Locale.US, "%.2f", this / 100.0)
 
 @Composable
 private fun ErrorMessage(message: String, modifier: Modifier = Modifier) {

@@ -10,8 +10,10 @@ import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.repository.CheckoutReceipt
 import com.icecreampost.pos.data.repository.CheckoutRepository
 import com.icecreampost.pos.data.repository.ProductRepository
+import com.icecreampost.pos.data.repository.PosAuthorizationException
 import com.icecreampost.pos.data.repository.SessionRepository
 import com.icecreampost.pos.data.repository.SyncRepository
+import com.icecreampost.pos.data.repository.SyncReport
 import com.icecreampost.pos.data.repository.BusinessDayRepository
 import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.domain.model.CartLine
@@ -68,11 +70,14 @@ class PosViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            var restoredSession: AppSessionEntity? = null
             try {
-                sessionRepository.restoreStoredSession()
+                restoredSession = sessionRepository.restoreStoredSession()
+                if (restoredSession != null) syncRepository.resetStatus()
             } finally {
                 _sessionReady.value = true
             }
+            if (restoredSession?.isActivated == true) syncToIms()
         }
     }
 
@@ -122,7 +127,13 @@ class PosViewModel @Inject constructor(
     fun closeDay(notes: String = "") { runAction { businessDayRepository.closeDay(notes) } }
 
     fun signIn(stallCode: String, email: String, password: String) {
-        runAction { sessionRepository.signIn(stallCode, email, password) }
+        runAction {
+            val signedIn = sessionRepository.signIn(stallCode, email, password)
+            syncRepository.resetStatus()
+            if (signedIn.isActivated) {
+                syncAuthorizedSession()
+            }
+        }
     }
 
     fun activate(deviceCode: String, onSuccess: () -> Unit) {
@@ -149,7 +160,7 @@ class PosViewModel @Inject constructor(
     fun syncToIms() {
         runAction {
             _syncMessage.value = null
-            val report = syncRepository.sync()
+            val report = syncAuthorizedSession()
             _syncMessage.value = if (report.permanentFailures == 0) {
                 val uploads = buildList {
                     if (report.pushed > 0) add(if (report.pushed == 1) "1 sale" else "${report.pushed} sales")
@@ -160,6 +171,13 @@ class PosViewModel @Inject constructor(
                 "${report.pushed} sales uploaded; ${report.permanentFailures} queued records need attention. Catalog and inventory updated."
             }
         }
+    }
+
+    private suspend fun syncAuthorizedSession(): SyncReport = try {
+        syncRepository.sync()
+    } catch (error: PosAuthorizationException) {
+        if (error.sessionExpired) sessionRepository.signOut()
+        throw error
     }
 
     private fun runAction(onSuccess: () -> Unit = {}, action: suspend () -> Unit) {

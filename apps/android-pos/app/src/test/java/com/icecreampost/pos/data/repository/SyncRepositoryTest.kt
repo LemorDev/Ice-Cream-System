@@ -176,6 +176,21 @@ class SyncRepositoryTest {
     }
 
     @Test
+    fun `authorization failure stops sync with a cashier friendly message`() {
+        coEvery { api.pushTransaction(any()) } throws httpError(401)
+
+        val error = assertThrows(PosAuthorizationException::class.java) {
+            runTest { repository.sync() }
+        }
+
+        assertEquals("Your cashier session expired. Sign in again.", error.message)
+        coVerify(exactly = 0) { transactionDao.markSyncError(any(), any(), any()) }
+        coVerify(exactly = 1) {
+            syncStateDao.upsert(match { it.status == "error" && it.errorMessage == error.message })
+        }
+    }
+
+    @Test
     fun `unexpected IMS acknowledgement does not mark the sale synced`() = runTest {
         coEvery { api.pushTransaction(any()) } returns acknowledgement("unknown")
 

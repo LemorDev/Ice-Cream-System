@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources xmlns:tools="http://schemas.android.com/tools">
+<resources>
     <style name="Theme.IceCreamPos" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/coolerz_splash</item>
+        <item name="android:windowSplashScreenBackground">@color/coolerz_splash</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@android:color/white</item>
         <item name="android:navigationBarColor">@android:color/black</item>
     </style>
 </resources>

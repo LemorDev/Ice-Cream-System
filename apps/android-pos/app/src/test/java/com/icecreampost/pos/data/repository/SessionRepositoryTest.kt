@@ -102,6 +102,22 @@ class SessionRepositoryTest {
         coVerify(exactly = 1) { sessionDao.clear() }
     }
 
+    @Test
+    fun `expired stored session is removed before startup continues`() = runTest {
+        coEvery { sessionDao.getCurrent() } returns AppSessionEntity(
+            displayName = "Cashier",
+            role = "cashier",
+            sessionToken = "expired-token",
+            expiresAt = "2000-01-01T00:00:00Z",
+        )
+
+        val restored = repository.restoreStoredSession()
+
+        assertEquals(null, restored)
+        assertEquals(null, tokenStore.token)
+        coVerify(exactly = 1) { sessionDao.clear() }
+    }
+
     private fun login(role: String, deviceId: String? = null, isActivated: Boolean = false) = LoginResponse(
         sessionToken = "token-1",
         userId = "user-1",

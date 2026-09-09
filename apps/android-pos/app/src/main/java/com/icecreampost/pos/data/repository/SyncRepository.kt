@@ -21,6 +21,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 class RetryableSyncException(message: String, cause: Throwable? = null) : Exception(message, cause)
+class PosAuthorizationException(
+    message: String,
+    val sessionExpired: Boolean,
+    cause: Throwable,
+) : Exception(message, cause)
 
 data class SyncReport(val pushed: Int, val permanentFailures: Int, val businessDaysSynced: Int = 0)
 
@@ -35,6 +40,10 @@ class SyncRepository @Inject constructor(
 ) {
     fun observeSyncState(): Flow<SyncStateEntity?> = syncStateDao.observe("sync")
 
+    suspend fun resetStatus() {
+        setState("offline-ready", null)
+    }
+
     suspend fun sync(): SyncReport {
         setState("running", null)
         var pushed = 0
@@ -47,6 +56,10 @@ class SyncRepository @Inject constructor(
                 businessDayDao.markSynced(day.id)
                 businessDaysSynced += 1
             } catch (error: Exception) {
+                authorizationError(error)?.let {
+                    setState("error", it.message)
+                    throw it
+                }
                 val message = error.message ?: "Unable to upload operating day."
                 if (isRetryable(error)) {
                     setState("retrying", message)
@@ -63,6 +76,10 @@ class SyncRepository @Inject constructor(
                 transactionDao.markSynced(transaction.id)
                 pushed += 1
             } catch (error: Exception) {
+                authorizationError(error)?.let {
+                    setState("error", it.message)
+                    throw it
+                }
                 val message = error.message ?: "Unable to upload transaction."
                 if (isRetryable(error)) {
                     setState("retrying", message)
@@ -77,7 +94,11 @@ class SyncRepository @Inject constructor(
         try {
             productRepository.refreshFromCloud()
         } catch (error: Exception) {
-            val message = error.message ?: "Unable to pull catalog."
+            authorizationError(error)?.let {
+                setState("error", it.message)
+                throw it
+            }
+            val message = error.message ?: "Unable to update the product catalog."
             if (isRetryable(error)) {
                 setState("retrying", message)
                 throw RetryableSyncException(message, error)
@@ -166,5 +187,14 @@ class SyncRepository @Inject constructor(
         is IOException -> true
         is HttpException -> error.code() == 408 || error.code() == 425 || error.code() == 429 || error.code() >= 500
         else -> false
+    }
+
+    private fun authorizationError(error: Exception): PosAuthorizationException? {
+        val status = (error as? HttpException)?.code() ?: return null
+        return when (status) {
+            401 -> PosAuthorizationException("Your cashier session expired. Sign in again.", true, error)
+            403 -> PosAuthorizationException("This POS device is not authorized for the selected stall.", false, error)
+            else -> null
+        }
     }
 }

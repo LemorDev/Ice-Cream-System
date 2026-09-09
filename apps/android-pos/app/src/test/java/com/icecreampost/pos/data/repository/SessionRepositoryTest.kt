@@ -92,6 +92,16 @@ class SessionRepositoryTest {
         assertEquals(true, saved.captured.isActivated)
     }
 
+    @Test
+    fun `sign out clears the token and local session`() = runTest {
+        tokenStore.token = "token-1"
+
+        repository.signOut()
+
+        assertEquals(null, tokenStore.token)
+        coVerify(exactly = 1) { sessionDao.clear() }
+    }
+
     private fun login(role: String, deviceId: String? = null, isActivated: Boolean = false) = LoginResponse(
         sessionToken = "token-1",
         userId = "user-1",

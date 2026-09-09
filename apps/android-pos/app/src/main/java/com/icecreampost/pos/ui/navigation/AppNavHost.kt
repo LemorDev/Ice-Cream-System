@@ -26,7 +26,13 @@ fun AppNavHost(viewModel: PosViewModel) {
     val currentRoute = backStackEntry?.destination?.route
 
     LaunchedEffect(sessionReady, session, currentRoute) {
-        if (sessionReady && currentRoute == Routes.LOGIN && session != null) {
+        if (!sessionReady) return@LaunchedEffect
+        if (session == null && currentRoute != null && currentRoute != Routes.LOGIN) {
+            navController.navigate(Routes.LOGIN) {
+                popUpTo(navController.graph.id) { inclusive = true }
+                launchSingleTop = true
+            }
+        } else if (currentRoute == Routes.LOGIN && session != null) {
             val destination = if (session?.isActivated == true) Routes.HOME else Routes.ACTIVATION
             navController.navigate(destination) {
                 popUpTo(Routes.LOGIN) { inclusive = true }
@@ -72,11 +78,6 @@ fun AppNavHost(viewModel: PosViewModel) {
             SettingsScreen(
                 viewModel = viewModel,
                 onBack = { navController.popBackStack() },
-                onSignedOut = {
-                    navController.navigate(Routes.LOGIN) {
-                        popUpTo(Routes.HOME) { inclusive = true }
-                    }
-                },
             )
         }
     }

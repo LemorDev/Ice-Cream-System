@@ -20,7 +20,7 @@ import com.icecreampost.pos.ui.PosViewModel
 import com.icecreampost.pos.ui.component.SyncStatusCard
 
 @Composable
-fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit, onSignedOut: () -> Unit) {
+fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit) {
     val session by viewModel.session.collectAsStateWithLifecycle()
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
     val syncMessage by viewModel.syncMessage.collectAsStateWithLifecycle()
@@ -44,7 +44,7 @@ fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit, onSignedOut: () 
         }
         syncMessage?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
         error?.let { Text("Sync failed: $it", color = MaterialTheme.colorScheme.error) }
-        OutlinedButton(onClick = { viewModel.signOut(onSignedOut) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = viewModel::signOut, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
             Text("Sign out")
         }
     }

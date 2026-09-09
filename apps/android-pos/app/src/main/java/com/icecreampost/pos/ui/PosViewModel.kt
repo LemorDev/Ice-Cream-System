@@ -132,8 +132,8 @@ class PosViewModel @Inject constructor(
         }
     }
 
-    fun signOut(onComplete: () -> Unit) {
-        runAction(onComplete) { sessionRepository.signOut() }
+    fun signOut() {
+        runAction { sessionRepository.signOut() }
     }
 
     fun checkout(cashReceivedCents: Long, onSuccess: () -> Unit) {

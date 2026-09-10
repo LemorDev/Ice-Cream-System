@@ -21,11 +21,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 class RetryableSyncException(message: String, cause: Throwable? = null) : Exception(message, cause)
-class PosAuthorizationException(
-    message: String,
-    val sessionExpired: Boolean,
-    cause: Throwable,
-) : Exception(message, cause)
+class PosAuthorizationException(message: String, cause: Throwable) : Exception(message, cause)
 
 data class SyncReport(val pushed: Int, val permanentFailures: Int, val businessDaysSynced: Int = 0)
 
@@ -192,8 +188,8 @@ class SyncRepository @Inject constructor(
     private fun authorizationError(error: Exception): PosAuthorizationException? {
         val status = (error as? HttpException)?.code() ?: return null
         return when (status) {
-            401 -> PosAuthorizationException("Your cashier session expired. Sign in again.", true, error)
-            403 -> PosAuthorizationException("This POS device is not authorized for the selected stall.", false, error)
+            401 -> PosAuthorizationException("Cloud sync needs a fresh sign-in. Your sale remains saved on this device.", error)
+            403 -> PosAuthorizationException("This POS device is not authorized for the selected stall. Your sale remains saved on this device.", error)
             else -> null
         }
     }

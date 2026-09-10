@@ -15,6 +15,7 @@ import com.icecreampost.pos.domain.model.CartLine
 import com.icecreampost.pos.sync.SyncTrigger
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.verify
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
@@ -31,6 +32,7 @@ class CheckoutRepositoryTest {
     private val ledgerDao = mockk<InventoryLedgerDao>(relaxed = true)
     private val sessionDao = mockk<SessionDao>()
     private val businessDayDao = mockk<BusinessDayDao>()
+    private val syncTrigger = mockk<SyncTrigger>(relaxed = true)
     private lateinit var repository: CheckoutRepository
     private val cartProduct = ProductEntity(
         id = "product-1",
@@ -57,7 +59,7 @@ class CheckoutRepositoryTest {
         )
         repository = CheckoutRepository(
             database, productDao, transactionDao, ledgerDao, sessionDao, businessDayDao,
-            mockk<SyncTrigger>(relaxed = true), mockk<AppLogger>(relaxed = true),
+            syncTrigger, mockk<AppLogger>(relaxed = true),
         )
     }
 
@@ -74,6 +76,8 @@ class CheckoutRepositoryTest {
 
         coVerify(exactly = 1) { productDao.updateStock(cartProduct.id, 3, any()) }
         coVerify(exactly = 1) { transactionDao.upsert(any()) }
+        coVerify(exactly = 0) { sessionDao.clear() }
+        verify(exactly = 1) { syncTrigger.triggerNow() }
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.icecreampost.pos.ui.screen.home
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -88,9 +89,16 @@ fun HomeScreen(
             }
         }
         item {
-            Card(colors = CardDefaults.cardColors(containerColor = if (isOpen) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant)) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
                 Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (isOpen) "Stall is open" else "Operating day is closed", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (isOpen) "Stall is open" else "Operating day is closed",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (isOpen) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface,
+                    )
                     businessDay?.let { day ->
                         Text("Business date: ${day.businessDate}", style = MaterialTheme.typography.bodyMedium)
                         Text("Opened: ${formatTimestamp(day.openedAt)}", style = MaterialTheme.typography.bodySmall)
@@ -107,10 +115,13 @@ fun HomeScreen(
             }
         }
         item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
                 Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("New sale", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    Text(if (isOpen) "Build an order from your available products." else "Open the operating day before accepting sales.", color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text("New sale", style = MaterialTheme.typography.titleLarge)
+                    Text(if (isOpen) "Build an order from your available products." else "Open the operating day before accepting sales.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Button(onClick = onCatalog, enabled = isOpen, modifier = Modifier.fillMaxWidth()) { Text("Start a sale  →") }
                 }
             }
@@ -138,7 +149,11 @@ private fun formatTimestamp(value: String): String = runCatching {
 
 @Composable
 private fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {
-    Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(value, style = MaterialTheme.typography.titleLarge)

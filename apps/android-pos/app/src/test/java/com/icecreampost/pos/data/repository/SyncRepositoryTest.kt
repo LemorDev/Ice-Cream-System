@@ -183,7 +183,7 @@ class SyncRepositoryTest {
             runTest { repository.sync() }
         }
 
-        assertEquals("Your cashier session expired. Sign in again.", error.message)
+        assertEquals("Cloud sync needs a fresh sign-in. Your sale remains saved on this device.", error.message)
         coVerify(exactly = 0) { transactionDao.markSyncError(any(), any(), any()) }
         coVerify(exactly = 1) {
             syncStateDao.upsert(match { it.status == "error" && it.errorMessage == error.message })

@@ -10,6 +10,7 @@ import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.interceptor.SessionTokenStore
 import com.icecreampost.pos.data.remote.interceptor.DeviceIdentity
 import com.icecreampost.pos.data.repository.SessionRepository
+import com.icecreampost.pos.data.repository.PosAuthorizationException
 import com.icecreampost.pos.data.repository.SyncReport
 import com.icecreampost.pos.data.repository.SyncRepository
 import io.mockk.coEvery
@@ -65,5 +66,36 @@ class SyncWorkerTest {
         assertEquals(ListenableWorker.Result.success(), worker.doWork())
 
         coVerify(exactly = 0) { syncRepository.sync() }
+    }
+
+    @Test
+    fun `failed post-sale sync never clears the local cashier session`() = runTest {
+        val sessionDao = mockk<SessionDao>()
+        coEvery { sessionDao.getCurrent() } returns AppSessionEntity(
+            displayName = "Cashier",
+            role = "cashier",
+            sessionToken = "cloud-token",
+            stallId = "stall-1",
+            isActivated = true,
+        )
+        val syncRepository = mockk<SyncRepository>()
+        coEvery { syncRepository.sync() } throws PosAuthorizationException(
+            "Cloud sync needs a fresh sign-in. Your sale remains saved on this device.",
+            IllegalStateException("HTTP 401"),
+        )
+        val sessionRepository = SessionRepository(
+            sessionDao,
+            mockk<SupabaseApi>(),
+            SessionTokenStore(),
+            mockk<DeviceIdentity>(),
+        )
+        val worker = SyncWorker(
+            mockk<Context>(), mockk<WorkerParameters>(relaxed = true),
+            syncRepository, sessionRepository, mockk<AppLogger>(relaxed = true),
+        )
+
+        assertEquals(ListenableWorker.Result.failure(), worker.doWork())
+
+        coVerify(exactly = 0) { sessionDao.clear() }
     }
 }

@@ -103,7 +103,23 @@ class SessionRepositoryTest {
     }
 
     @Test
-    fun `expired stored session is removed before startup continues`() = runTest {
+    fun `stored cashier session remains available for offline sales when cloud token expires`() = runTest {
+        coEvery { sessionDao.getCurrent() } returns AppSessionEntity(
+            displayName = "Cashier",
+            role = "cashier",
+            sessionToken = "expired-token",
+            expiresAt = "2000-01-01T00:00:00Z",
+        )
+
+        val restored = repository.restoreStoredSession(allowExpiredForOfflineWork = true)
+
+        assertEquals("Cashier", restored?.displayName)
+        assertEquals("expired-token", tokenStore.token)
+        coVerify(exactly = 0) { sessionDao.clear() }
+    }
+
+    @Test
+    fun `expired session requires sign in again on the next app launch`() = runTest {
         coEvery { sessionDao.getCurrent() } returns AppSessionEntity(
             displayName = "Cashier",
             role = "cashier",

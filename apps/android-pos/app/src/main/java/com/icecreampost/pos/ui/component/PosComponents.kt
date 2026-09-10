@@ -1,5 +1,6 @@
 package com.icecreampost.pos.ui.component
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -122,12 +123,9 @@ fun SyncStatusCard(syncState: SyncStateEntity? = null) {
     }
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = when (status) {
-            "success" -> MaterialTheme.colorScheme.secondaryContainer
-            "error" -> MaterialTheme.colorScheme.errorContainer
-            else -> MaterialTheme.colorScheme.surfaceVariant
-        },
+        color = MaterialTheme.colorScheme.surface,
         shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -136,7 +134,15 @@ fun SyncStatusCard(syncState: SyncStateEntity? = null) {
         ) {
             Text(detail, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
             Spacer(Modifier.width(12.dp))
-            Text(status.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelMedium)
+            Text(
+                status.replaceFirstChar { it.uppercase() },
+                style = MaterialTheme.typography.labelMedium,
+                color = when (status) {
+                    "success" -> MaterialTheme.colorScheme.secondary
+                    "error" -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.primary
+                },
+            )
         }
     }
 }

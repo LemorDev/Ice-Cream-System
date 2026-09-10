@@ -1,6 +1,7 @@
 package com.icecreampost.pos.ui.screen.catalog
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,10 +26,10 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -355,8 +356,9 @@ private fun OrderAndPaymentSheet(
 
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.primaryContainer,
+            color = MaterialTheme.colorScheme.surface,
             shape = MaterialTheme.shapes.medium,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -364,13 +366,13 @@ private fun OrderAndPaymentSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column {
-                    Text("Total due", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text("Total due", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(formatMoney(total), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
                 }
                 if (changeCents != null) {
                     Column(horizontalAlignment = Alignment.End) {
-                        Text("Change", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        Text(formatMoney(changeCents), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text("Change", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(formatMoney(changeCents), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             }
@@ -418,7 +420,7 @@ private fun NumericCashKeypad(enabled: Boolean, onKey: (String) -> Unit) {
         rows.forEach { keys ->
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 keys.forEach { key ->
-                    FilledTonalButton(
+                    OutlinedButton(
                         onClick = { onKey(key) },
                         enabled = enabled,
                         modifier = Modifier.weight(1f).height(48.dp),

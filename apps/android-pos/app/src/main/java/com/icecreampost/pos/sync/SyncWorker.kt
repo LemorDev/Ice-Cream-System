@@ -22,7 +22,7 @@ class SyncWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         return try {
             logger.info("Sync started")
-            val session = sessionRepository.restoreStoredSession()
+            val session = sessionRepository.restoreStoredSession(allowExpiredForOfflineWork = true)
             if (session == null || !session.isActivated) {
                 logger.info("Sync skipped: no activated cashier session")
                 Result.success()

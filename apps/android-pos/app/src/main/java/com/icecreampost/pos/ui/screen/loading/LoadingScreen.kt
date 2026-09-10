@@ -13,7 +13,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -21,7 +20,7 @@ import com.icecreampost.pos.R
 
 @Composable
 fun LoadingScreen() {
-    Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF5E239D)) {
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             modifier = Modifier.fillMaxSize().statusBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -36,16 +35,16 @@ fun LoadingScreen() {
                 text = "COOLERZ POS",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = MaterialTheme.colorScheme.primary,
             )
             Text(
                 text = "Preparing your counter…",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.82f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             CircularProgressIndicator(
                 modifier = Modifier.size(28.dp),
-                color = Color(0xFFFFD77A),
+                color = MaterialTheme.colorScheme.primary,
                 strokeWidth = 3.dp,
             )
         }

@@ -7,6 +7,7 @@ import com.icecreampost.pos.data.local.dao.ProductDao
 import com.icecreampost.pos.data.local.dao.TransactionDao
 import com.icecreampost.pos.data.local.dao.SessionDao
 import com.icecreampost.pos.data.local.dao.BusinessDayDao
+import com.icecreampost.pos.data.local.dao.ProductRecipeDao
 import com.icecreampost.pos.data.local.database.CoolerzDatabase
 import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
@@ -35,6 +36,7 @@ class CheckoutRepository @Inject constructor(
     private val inventoryLedgerDao: InventoryLedgerDao,
     private val sessionDao: SessionDao,
     private val businessDayDao: BusinessDayDao,
+    private val productRecipeDao: ProductRecipeDao,
     private val syncTrigger: SyncTrigger,
     private val logger: AppLogger,
 ) {
@@ -68,14 +70,26 @@ class CheckoutRepository @Inject constructor(
                 val current = productDao.findById(line.product.id)
                     ?: error("${line.product.name} is no longer available locally.")
                 require(current.isSellable) { "${current.name} is not available for sale." }
-                require(current.unitsInStock >= line.quantity) {
-                    "Not enough stock for ${current.name}. Available: ${current.unitsInStock}."
+            }
+            val recipes = productRecipeDao.findForParents(lines.map { it.product.id })
+            val recipesByParent = recipes.groupBy { it.parentProductId }
+            val usage = mutableMapOf<String, Double>()
+            lines.forEach { line ->
+                val recipe = recipesByParent[line.product.id].orEmpty()
+                if (recipe.isEmpty()) usage[line.product.id] = (usage[line.product.id] ?: 0.0) + line.quantity
+                else recipe.forEach { ingredient ->
+                    usage[ingredient.ingredientProductId] = (usage[ingredient.ingredientProductId] ?: 0.0) + ingredient.quantity * line.quantity
                 }
-                productDao.updateStock(
-                    id = current.id,
-                    stock = current.unitsInStock - line.quantity,
-                    updatedAt = now,
-                )
+            }
+            val stockProducts = usage.mapValues { (productId, required) ->
+                val current = productDao.findById(productId) ?: error("A recipe ingredient is no longer available locally.")
+                require(current.unitsInStock >= required) {
+                    "Not enough ${current.name}. Required: $required ${current.baseUnit}; available: ${current.unitsInStock} ${current.baseUnit}."
+                }
+                current
+            }
+            stockProducts.forEach { (productId, current) ->
+                productDao.updateStock(productId, current.unitsInStock - requireNotNull(usage[productId]), now)
             }
 
             transactionDao.upsert(
@@ -110,12 +124,12 @@ class CheckoutRepository @Inject constructor(
                 )
             })
 
-            inventoryLedgerDao.upsertAll(lines.map { line ->
+            inventoryLedgerDao.upsertAll(usage.map { (productId, quantity) ->
                 InventoryLedgerEntity(
                     id = UUID.randomUUID().toString(),
                     stallId = resolvedStallId,
-                    productId = line.product.id,
-                    quantityDelta = -line.quantity.toDouble(),
+                    productId = productId,
+                    quantityDelta = -quantity,
                     movementType = "sale",
                     reason = "offline checkout",
                     referenceId = transactionId,

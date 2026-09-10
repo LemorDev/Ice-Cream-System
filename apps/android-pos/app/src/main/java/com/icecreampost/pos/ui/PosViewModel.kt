@@ -40,6 +40,23 @@ class PosViewModel @Inject constructor(
     val products: StateFlow<List<ProductEntity>> = productRepository.observeProducts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val recipes = productRepository.observeRecipes()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val lowStockProducts: StateFlow<List<ProductEntity>> = products
+        .combine(MutableStateFlow(Unit)) { values, _ ->
+            values.filter { product ->
+                if (product.productType == "sellable" || product.deletedAt != null) false
+                else if (product.lowStockThreshold > 0) product.unitsInStock <= product.lowStockThreshold
+                else when {
+                    product.baseUnit == "g" && product.name.contains("powder", true) -> product.unitsInStock <= 1000.0
+                    product.name.contains("cone", true) -> product.unitsInStock < 20.0
+                    product.name.contains("cup", true) -> product.unitsInStock < 15.0
+                    else -> false
+                }
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val transactions: StateFlow<List<TransactionEntity>> = checkoutRepository.observeTransactions()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -108,12 +125,14 @@ class PosViewModel @Inject constructor(
 
     fun addToCart(product: ProductEntity) {
         val currentQuantity = cart.value[product.id] ?: 0
-        if (currentQuantity < product.unitsInStock) {
+        if (hasRecipe(product) || currentQuantity < product.unitsInStock) {
             cart.value = cart.value + (product.id to currentQuantity + 1)
         } else {
             _error.value = "No more ${product.name} is available locally."
         }
     }
+
+    fun hasRecipe(product: ProductEntity): Boolean = recipes.value.any { it.parentProductId == product.id }
 
     fun removeFromCart(productId: String) {
         val currentQuantity = cart.value[productId] ?: return
@@ -124,7 +143,7 @@ class PosViewModel @Inject constructor(
     fun clearCart() { cart.value = emptyMap() }
 
     fun openDay(notes: String = "") { runAction { businessDayRepository.openDay(notes) } }
-    fun closeDay(notes: String = "") { runAction { businessDayRepository.closeDay(notes) } }
+    fun closeDay(notes: String = "", collectedCashCents: Long? = null) { runAction { businessDayRepository.closeDay(notes, collectedCashCents) } }
 
     fun signIn(stallCode: String, email: String, password: String) {
         runAction {
@@ -166,6 +185,8 @@ class PosViewModel @Inject constructor(
                 val uploads = buildList {
                     if (report.pushed > 0) add(if (report.pushed == 1) "1 sale" else "${report.pushed} sales")
                     if (report.businessDaysSynced > 0) add(if (report.businessDaysSynced == 1) "1 operating-day update" else "${report.businessDaysSynced} operating-day updates")
+                    if (report.ledgerEntriesSynced > 0) add(if (report.ledgerEntriesSynced == 1) "1 inventory movement" else "${report.ledgerEntriesSynced} inventory movements")
+                    if (report.closingsSynced > 0) add(if (report.closingsSynced == 1) "1 daily closing" else "${report.closingsSynced} daily closings")
                 }
                 "${uploads.joinToString(" and ").ifBlank { "No queued changes" }} uploaded. Catalog and inventory updated."
             } else {

@@ -4,9 +4,11 @@ import androidx.room.withTransaction
 import com.icecreampost.pos.data.local.dao.ProductDao
 import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
 import com.icecreampost.pos.data.local.dao.SyncStateDao
+import com.icecreampost.pos.data.local.dao.ProductRecipeDao
 import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
 import com.icecreampost.pos.data.local.entity.ProductEntity
 import com.icecreampost.pos.data.local.entity.SyncStateEntity
+import com.icecreampost.pos.data.local.entity.ProductRecipeEntity
 import com.icecreampost.pos.data.local.database.CoolerzDatabase
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.ProductPullRequest
@@ -14,6 +16,7 @@ import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
+import retrofit2.HttpException
 
 @Singleton
 class ProductRepository @Inject constructor(
@@ -21,9 +24,11 @@ class ProductRepository @Inject constructor(
     private val productDao: ProductDao,
     private val inventoryLedgerDao: InventoryLedgerDao,
     private val syncStateDao: SyncStateDao,
+    private val productRecipeDao: ProductRecipeDao,
     private val api: SupabaseApi,
 ) {
     fun observeProducts(): Flow<List<ProductEntity>> = productDao.observeProducts()
+    fun observeRecipes(): Flow<List<ProductRecipeEntity>> = productRecipeDao.observeAll()
 
     suspend fun refreshFromCloud() {
         val legacyCursor = syncStateDao.find("catalog")?.cursorUpdatedAt
@@ -34,6 +39,14 @@ class ProductRepository @Inject constructor(
         val ledgerCursor = if (ledgerState == null) legacyCursor else ledgerState.cursorUpdatedAt
         val remoteLedger = api.getInventoryLedger(updatedAtFilter = ledgerCursor?.let { "gt.$it" })
         val productDtos = api.getProducts(ProductPullRequest(productCursor))
+        // Older deployed databases do not expose get_pos_recipes yet. Treat a
+        // missing RPC as an empty recipe catalog so ordinary sales keep working
+        // until the server migration is applied.
+        val recipeDtos = try {
+            api.getRecipes(ProductPullRequest(null))
+        } catch (error: HttpException) {
+            if (error.code() == 404) emptyList() else throw error
+        }
         val ledger = remoteLedger.map { entry ->
             InventoryLedgerEntity(
                 id = entry.id,
@@ -46,6 +59,7 @@ class ProductRepository @Inject constructor(
                 occurredAt = entry.occurredAt,
                 updatedAt = entry.updatedAt,
                 deletedAt = entry.deletedAt,
+                isSynced = true,
             )
         }
         // Stock, ledger rows and cursors must commit together so a retry cannot
@@ -67,7 +81,9 @@ class ProductRepository @Inject constructor(
                     packSize = dto.packSize,
                     conversionRate = dto.conversionRate,
                     isSellable = dto.isSellable,
-                    unitsInStock = current?.unitsInStock ?: 0,
+                    productType = dto.productType,
+                    baseUnit = dto.baseUnit,
+                    unitsInStock = current?.unitsInStock ?: 0.0,
                     updatedAt = dto.updatedAt,
                     deletedAt = dto.deletedAt,
                     localUpdatedAt = current?.localUpdatedAt ?: dto.updatedAt,
@@ -78,7 +94,7 @@ class ProductRepository @Inject constructor(
             remoteLedger.forEach { entry ->
                 val old = inventoryLedgerDao.findById(entry.id)
                 val localEquivalent = if (old == null && entry.referenceId != null) {
-                    inventoryLedgerDao.findByReferenceAndMovement(entry.referenceId, entry.movementType)
+                    inventoryLedgerDao.findByReferenceAndMovement(entry.referenceId, entry.movementType, entry.productId)
                 } else {
                     null
                 }
@@ -99,13 +115,17 @@ class ProductRepository @Inject constructor(
                     if (product != null) {
                         productDao.updateStock(
                             id = product.id,
-                            stock = (product.unitsInStock + difference).toInt(),
+                            stock = product.unitsInStock + difference,
                             updatedAt = Instant.now().toString(),
                         )
                     }
                 }
             }
             inventoryLedgerDao.upsertAll(ledger)
+            productRecipeDao.deleteAll()
+            productRecipeDao.upsertAll(recipeDtos.map { recipe ->
+                ProductRecipeEntity(recipe.id, recipe.stallId, recipe.parentProductId, recipe.ingredientProductId, recipe.quantity, recipe.updatedAt)
+            })
             val nextProductCursor = (listOfNotNull(productCursor) + productDtos.map { it.updatedAt }).maxOrNull()
             val nextLedgerCursor = (listOfNotNull(ledgerCursor) + remoteLedger.map { it.updatedAt }).maxOrNull()
             val now = Instant.now().toString()

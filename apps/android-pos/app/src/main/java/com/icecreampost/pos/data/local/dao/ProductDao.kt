@@ -24,5 +24,5 @@ interface ProductDao {
     suspend fun upsert(product: ProductEntity)
 
     @Query("UPDATE products SET unitsInStock = :stock, localUpdatedAt = :updatedAt WHERE id = :id")
-    suspend fun updateStock(id: String, stock: Int, updatedAt: String)
+    suspend fun updateStock(id: String, stock: Double, updatedAt: String)
 }

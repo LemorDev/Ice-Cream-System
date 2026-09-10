@@ -4,6 +4,8 @@ import com.icecreampost.pos.core.logging.AppLogger
 import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.dao.TransactionDao
 import com.icecreampost.pos.data.local.dao.BusinessDayDao
+import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
+import com.icecreampost.pos.data.local.dao.DailyStoreClosingDao
 import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
 import com.icecreampost.pos.data.local.entity.TransactionItemEntity
@@ -31,6 +33,8 @@ class SyncRepositoryTest {
     private val transactionDao = mockk<TransactionDao>()
     private val syncStateDao = mockk<SyncStateDao>()
     private val businessDayDao = mockk<BusinessDayDao>()
+    private val inventoryLedgerDao = mockk<InventoryLedgerDao>(relaxed = true)
+    private val dailyStoreClosingDao = mockk<DailyStoreClosingDao>(relaxed = true)
     private val api = mockk<SupabaseApi>()
     private val productRepository = mockk<ProductRepository>()
     private val logger = mockk<AppLogger>(relaxed = true)
@@ -65,6 +69,8 @@ class SyncRepositoryTest {
         coEvery { businessDayDao.getUnsynced() } returns emptyList()
         coEvery { businessDayDao.markSynced(any()) } just runs
         coEvery { businessDayDao.markSyncError(any(), any()) } just runs
+        coEvery { inventoryLedgerDao.getUnsynced() } returns emptyList()
+        coEvery { dailyStoreClosingDao.getUnsynced() } returns emptyList()
         coEvery { transactionDao.getItems(transaction.id) } returns listOf(item)
         coEvery { transactionDao.markSyncAttempt(any(), any()) } just runs
         coEvery { transactionDao.markSynced(any()) } just runs
@@ -72,7 +78,7 @@ class SyncRepositoryTest {
         coEvery { syncStateDao.find(any()) } returns null
         coEvery { syncStateDao.upsert(any()) } just runs
         coEvery { productRepository.refreshFromCloud() } just runs
-        repository = SyncRepository(transactionDao, businessDayDao, syncStateDao, api, productRepository, logger)
+        repository = SyncRepository(transactionDao, businessDayDao, inventoryLedgerDao, dailyStoreClosingDao, syncStateDao, api, productRepository, logger)
     }
 
     @Test

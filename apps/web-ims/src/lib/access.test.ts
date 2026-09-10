@@ -16,7 +16,7 @@ test('owners cannot open or navigate to system administration', () => {
 
 test('owners receive monitoring views without management modules', () => {
   const ownerViews = getNavigation('owner').flatMap((group) => group.items)
-  assert.deepEqual(ownerViews, ['overview', 'reports', 'productReport', 'days'])
+  assert.deepEqual(ownerViews, ['overview', 'reports', 'productReport', 'dailyClose', 'days'])
   for (const managementView of ['stall', 'staff', 'products', 'receiving', 'adjustments', 'pricing', 'transactions'] as const) {
     assert.equal(canAccessWebView('owner', managementView), false)
   }

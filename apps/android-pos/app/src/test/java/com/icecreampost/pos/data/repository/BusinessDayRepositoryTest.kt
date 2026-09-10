@@ -3,6 +3,10 @@ package com.icecreampost.pos.data.repository
 import com.icecreampost.pos.data.local.dao.BusinessDayDao
 import com.icecreampost.pos.data.local.dao.SessionDao
 import com.icecreampost.pos.data.local.dao.TransactionDao
+import com.icecreampost.pos.data.local.dao.DailyStoreClosingDao
+import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
+import com.icecreampost.pos.data.local.database.CoolerzDatabase
+import androidx.room.withTransaction
 import com.icecreampost.pos.data.local.entity.AppSessionEntity
 import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.sync.SyncTrigger
@@ -10,6 +14,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
+import io.mockk.mockkStatic
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -26,6 +31,9 @@ class BusinessDayRepositoryTest {
     private val transactionDao = mockk<TransactionDao>()
     private val sessionDao = mockk<SessionDao>()
     private val syncTrigger = mockk<SyncTrigger>(relaxed = true)
+    private val database = mockk<CoolerzDatabase>()
+    private val closingDao = mockk<DailyStoreClosingDao>(relaxed = true)
+    private val ledgerDao = mockk<InventoryLedgerDao>()
     private lateinit var repository: BusinessDayRepository
 
     private val session = AppSessionEntity(
@@ -40,7 +48,11 @@ class BusinessDayRepositoryTest {
     @Before
     fun setUp() {
         coEvery { sessionDao.getCurrent() } returns session
-        repository = BusinessDayRepository(businessDayDao, transactionDao, sessionDao, syncTrigger)
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction<Unit>(any()) } coAnswers { secondArg<suspend () -> Unit>().invoke() }
+        coEvery { transactionDao.getCompletedCogsBetween(any(), any(), any()) } returns 0
+        coEvery { ledgerDao.getWasteCostBetween(any(), any(), any()) } returns 0
+        repository = BusinessDayRepository(businessDayDao, transactionDao, sessionDao, syncTrigger, database, closingDao, ledgerDao)
     }
 
     @Test

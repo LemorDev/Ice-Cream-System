@@ -15,4 +15,6 @@ data class InventoryLedgerEntity(
     val occurredAt: String,
     val updatedAt: String,
     val deletedAt: String? = null,
+    val isSynced: Boolean = false,
+    val syncError: String? = null,
 )

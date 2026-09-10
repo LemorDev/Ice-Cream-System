@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createClient } from '@supabase/supabase-js'
-import { archiveProduct, getOverheadForStall, updateStall } from './api.ts'
+import { archiveCategory, archiveProduct, getOverheadForStall, updateStall } from './api.ts'
 
 test('archiving succeeds when the database returns a successful empty response', async () => {
   const client = createClient('https://example.invalid', 'test-key', {
@@ -24,6 +24,23 @@ test('archiving still reports database errors', async () => {
   })
 
   await assert.rejects(archiveProduct(client, 'product-1'), /Permission denied/)
+})
+
+test('deleting a flavor soft-deletes its database category', async () => {
+  let requestBody: Record<string, unknown> = {}
+  const client = createClient('https://example.invalid', 'test-key', {
+    auth: { persistSession: false },
+    global: {
+      fetch: async (_input, init) => {
+        requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return new Response(null, { status: 204 })
+      },
+    },
+  })
+
+  await archiveCategory(client, 'flavor-1')
+
+  assert.equal(typeof requestBody.deleted_at, 'string')
 })
 
 test('a failed overhead update is reported instead of falling back to a partial save', async () => {

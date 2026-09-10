@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
 import com.icecreampost.pos.data.local.dao.ProductDao
 import com.icecreampost.pos.data.local.dao.SyncStateDao
+import com.icecreampost.pos.data.local.dao.ProductRecipeDao
 import com.icecreampost.pos.data.local.database.CoolerzDatabase
 import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
 import com.icecreampost.pos.data.local.entity.ProductEntity
@@ -17,17 +18,22 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import kotlinx.coroutines.test.runTest
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import retrofit2.HttpException
+import retrofit2.Response
 
 class ProductRepositoryTest {
     private val database = mockk<CoolerzDatabase>()
     private val productDao = mockk<ProductDao>()
     private val ledgerDao = mockk<InventoryLedgerDao>()
     private val stateDao = mockk<SyncStateDao>()
+    private val recipeDao = mockk<ProductRecipeDao>(relaxed = true)
     private val api = mockk<SupabaseApi>()
     private val products = mutableMapOf<String, ProductEntity>()
     private val ledger = mutableMapOf<String, InventoryLedgerEntity>()
@@ -78,8 +84,8 @@ class ProductRepositoryTest {
             products[id] = products.getValue(id).copy(unitsInStock = secondArg())
         }
         coEvery { ledgerDao.findById(any()) } coAnswers { ledger[firstArg<String>()] }
-        coEvery { ledgerDao.findByReferenceAndMovement(any(), any()) } coAnswers {
-            ledger.values.firstOrNull { it.referenceId == firstArg<String>() && it.movementType == secondArg<String>() }
+        coEvery { ledgerDao.findByReferenceAndMovement(any(), any(), any()) } coAnswers {
+            ledger.values.firstOrNull { it.referenceId == firstArg<String>() && it.movementType == secondArg<String>() && it.productId == thirdArg<String>() }
         }
         coEvery { ledgerDao.upsertAll(any()) } coAnswers {
             assertTrue(inTransaction)
@@ -94,7 +100,8 @@ class ProductRepositoryTest {
         }
         coEvery { api.getInventoryLedger(any(), any()) } returns listOf(receipt)
         coEvery { api.getProducts(any()) } returns listOf(remoteProduct)
-        repository = ProductRepository(database, productDao, ledgerDao, stateDao, api)
+        coEvery { api.getRecipes(any()) } returns emptyList()
+        repository = ProductRepository(database, productDao, ledgerDao, stateDao, recipeDao, api)
     }
 
     @After
@@ -105,8 +112,18 @@ class ProductRepositoryTest {
     @Test
     fun `first pull counts opening inventory once`() = runTest {
         repository.refreshFromCloud()
-        assertEquals(10, products.getValue("product-1").unitsInStock)
+        assertEquals(10.0, products.getValue("product-1").unitsInStock, 0.001)
         assertEquals(firstTime, states["catalog-ledger"]?.cursorUpdatedAt)
+    }
+
+    @Test
+    fun `legacy server without recipe RPC still refreshes products`() = runTest {
+        coEvery { api.getRecipes(any()) } throws httpError(404)
+
+        repository.refreshFromCloud()
+
+        assertEquals("Vanilla", products.getValue("product-1").name)
+        assertEquals(10.0, products.getValue("product-1").unitsInStock, 0.001)
     }
 
     @Test
@@ -118,7 +135,7 @@ class ProductRepositoryTest {
 
         repository.refreshFromCloud()
 
-        assertEquals(1, products.getValue("product-1").unitsInStock)
+        assertEquals(1.0, products.getValue("product-1").unitsInStock, 0.001)
     }
 
     @Test
@@ -129,7 +146,7 @@ class ProductRepositoryTest {
 
         repository.refreshFromCloud()
 
-        assertEquals(10, products.getValue("product-1").unitsInStock)
+        assertEquals(10.0, products.getValue("product-1").unitsInStock, 0.001)
         coVerify { api.getProducts(match { it.updatedAfter == firstTime }) }
         coVerify { api.getInventoryLedger(updatedAtFilter = "gt.$firstTime") }
     }
@@ -147,7 +164,7 @@ class ProductRepositoryTest {
 
         coVerify { api.getInventoryLedger(updatedAtFilter = "gt.$firstTime") }
         coVerify { api.getProducts(match { it.updatedAfter == thirdTime }) }
-        assertEquals(12, products.getValue("product-1").unitsInStock)
+        assertEquals(12.0, products.getValue("product-1").unitsInStock, 0.001)
         assertEquals(secondTime, states["catalog-ledger"]?.cursorUpdatedAt)
     }
 
@@ -155,7 +172,7 @@ class ProductRepositoryTest {
     fun `replayed response does not add inventory again`() = runTest {
         repository.refreshFromCloud()
         repository.refreshFromCloud()
-        assertEquals(10, products.getValue("product-1").unitsInStock)
+        assertEquals(10.0, products.getValue("product-1").unitsInStock, 0.001)
     }
 
     @Test
@@ -168,7 +185,7 @@ class ProductRepositoryTest {
 
         failLedgerWrite = false
         repository.refreshFromCloud()
-        assertEquals(10, products.getValue("product-1").unitsInStock)
+        assertEquals(10.0, products.getValue("product-1").unitsInStock, 0.001)
     }
 
     @Test
@@ -176,13 +193,18 @@ class ProductRepositoryTest {
         repository.refreshFromCloud()
         coEvery { api.getInventoryLedger(any(), any()) } returns emptyList()
         coEvery { api.getProducts(any()) } coAnswers {
-            products["product-1"] = products.getValue("product-1").copy(unitsInStock = 7)
+            products["product-1"] = products.getValue("product-1").copy(unitsInStock = 7.0)
             listOf(remoteProduct.copy(salePrice = 50.0, updatedAt = secondTime))
         }
 
         repository.refreshFromCloud()
 
-        assertEquals(7, products.getValue("product-1").unitsInStock)
+        assertEquals(7.0, products.getValue("product-1").unitsInStock, 0.001)
         assertEquals(5_000L, products.getValue("product-1").priceCents)
+    }
+
+    private fun httpError(code: Int): HttpException {
+        val body = "{\"message\":\"Not found\"}".toResponseBody("application/json".toMediaType())
+        return HttpException(Response.error<Any>(code, body))
     }
 }

@@ -34,6 +34,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import com.icecreampost.pos.ui.screen.checkout.toCentsOrNull
 
 @Composable
 fun HomeScreen(
@@ -60,6 +61,7 @@ fun HomeScreen(
     val salesTotal = completedSales.sumOf { it.totalCents }
     var showCloseDialog by remember { mutableStateOf(false) }
     var closingNotes by remember { mutableStateOf("") }
+    var collectedCash by remember { mutableStateOf("") }
 
     if (showCloseDialog) {
         AlertDialog(
@@ -67,9 +69,10 @@ fun HomeScreen(
             title = { Text("Close operating day?") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Cash sales recorded on this device: ${formatMoney(salesTotal, amountsVisible)}")
+                OutlinedTextField(collectedCash, { collectedCash = it.filter { char -> char.isDigit() || char == '.' } }, label = { Text("Collected cash") }, placeholder = { Text("Expected ${(salesTotal / 100.0)}") })
                 OutlinedTextField(closingNotes, { closingNotes = it }, label = { Text("Closing notes (optional)") })
             } },
-            confirmButton = { Button(onClick = { viewModel.closeDay(closingNotes); closingNotes = ""; showCloseDialog = false }, enabled = !busy) { Text("Close day") } },
+            confirmButton = { Button(onClick = { viewModel.closeDay(closingNotes, collectedCash.toCentsOrNull() ?: salesTotal); closingNotes = ""; collectedCash = ""; showCloseDialog = false }, enabled = !busy) { Text("Close day") } },
             dismissButton = { OutlinedButton(onClick = { showCloseDialog = false }) { Text("Cancel") } },
         )
     }

@@ -20,6 +20,10 @@ import com.icecreampost.pos.data.local.entity.TransactionEntity
 import com.icecreampost.pos.data.local.entity.AppSessionEntity
 import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.data.local.dao.BusinessDayDao
+import com.icecreampost.pos.data.local.dao.ProductRecipeDao
+import com.icecreampost.pos.data.local.dao.DailyStoreClosingDao
+import com.icecreampost.pos.data.local.entity.ProductRecipeEntity
+import com.icecreampost.pos.data.local.entity.DailyStoreClosingEntity
 
 @Database(
     entities = [
@@ -32,8 +36,10 @@ import com.icecreampost.pos.data.local.dao.BusinessDayDao
         SyncStateEntity::class,
         AppSessionEntity::class,
         BusinessDayEntity::class,
+        ProductRecipeEntity::class,
+        DailyStoreClosingEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class CoolerzDatabase : RoomDatabase() {
@@ -44,6 +50,8 @@ abstract class CoolerzDatabase : RoomDatabase() {
     abstract fun syncStateDao(): SyncStateDao
     abstract fun sessionDao(): SessionDao
     abstract fun businessDayDao(): BusinessDayDao
+    abstract fun productRecipeDao(): ProductRecipeDao
+    abstract fun dailyStoreClosingDao(): DailyStoreClosingDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -90,6 +98,20 @@ abstract class CoolerzDatabase : RoomDatabase() {
                 db.execSQL("UPDATE app_session SET isActivated = 0")
                 db.execSQL("CREATE TABLE IF NOT EXISTS business_days (id TEXT NOT NULL PRIMARY KEY, stallId TEXT NOT NULL, deviceId TEXT NOT NULL, cashierId TEXT NOT NULL, businessDate TEXT NOT NULL, openedAt TEXT NOT NULL, openingNotes TEXT, closedAt TEXT, closingCashCents INTEGER, closingNotes TEXT, updatedAt TEXT NOT NULL, isSynced INTEGER NOT NULL DEFAULT 0, syncError TEXT)")
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_business_days_stallId_businessDate ON business_days (stallId, businessDate)")
+            }
+        }
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE products_new (id TEXT NOT NULL PRIMARY KEY, stallId TEXT NOT NULL, categoryId TEXT, sku TEXT NOT NULL, name TEXT NOT NULL, category TEXT NOT NULL, unit TEXT NOT NULL, priceCents INTEGER NOT NULL, costPriceCents INTEGER NOT NULL, lowStockThreshold REAL NOT NULL, packSize REAL NOT NULL, conversionRate REAL NOT NULL, isSellable INTEGER NOT NULL, productType TEXT NOT NULL DEFAULT 'sellable', baseUnit TEXT NOT NULL DEFAULT 'piece', unitsInStock REAL NOT NULL, updatedAt TEXT NOT NULL, deletedAt TEXT, localUpdatedAt TEXT NOT NULL)")
+                db.execSQL("INSERT INTO products_new (id,stallId,categoryId,sku,name,category,unit,priceCents,costPriceCents,lowStockThreshold,packSize,conversionRate,isSellable,productType,baseUnit,unitsInStock,updatedAt,deletedAt,localUpdatedAt) SELECT id,stallId,categoryId,sku,name,category,unit,priceCents,costPriceCents,lowStockThreshold,packSize,conversionRate,isSellable,CASE WHEN isSellable = 1 THEN 'sellable' ELSE 'raw' END,CASE WHEN lower(unit) = 'g' THEN 'g' WHEN lower(unit) = 'ml' THEN 'ml' ELSE 'piece' END,CAST(unitsInStock AS REAL),updatedAt,deletedAt,localUpdatedAt FROM products")
+                db.execSQL("DROP TABLE products")
+                db.execSQL("ALTER TABLE products_new RENAME TO products")
+                db.execSQL("ALTER TABLE inventory_ledger ADD COLUMN isSynced INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE inventory_ledger ADD COLUMN syncError TEXT")
+                db.execSQL("CREATE TABLE IF NOT EXISTS product_recipes (id TEXT NOT NULL PRIMARY KEY, stallId TEXT NOT NULL, parentProductId TEXT NOT NULL, ingredientProductId TEXT NOT NULL, quantity REAL NOT NULL, updatedAt TEXT NOT NULL)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_product_recipes_parentProductId_ingredientProductId ON product_recipes (parentProductId, ingredientProductId)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS daily_store_closings (id TEXT NOT NULL PRIMARY KEY, stallId TEXT NOT NULL, businessDayId TEXT NOT NULL, businessDate TEXT NOT NULL, grossSalesCents INTEGER NOT NULL, cogsCents INTEGER NOT NULL, wasteCostCents INTEGER NOT NULL, overheadCostCents INTEGER NOT NULL, netProfitCents INTEGER NOT NULL, expectedCashCents INTEGER NOT NULL, collectedCashCents INTEGER NOT NULL, deviceId TEXT NOT NULL, closedAt TEXT NOT NULL, isSynced INTEGER NOT NULL DEFAULT 0, syncError TEXT)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_daily_store_closings_stallId_businessDate ON daily_store_closings (stallId, businessDate)")
             }
         }
     }

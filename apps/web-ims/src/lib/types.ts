@@ -35,8 +35,35 @@ export type Product = {
   pack_size: number
   conversion_rate: number
   is_sellable: boolean
+  product_type: 'raw' | 'packaging' | 'sellable'
+  base_unit: 'g' | 'ml' | 'piece'
   updated_at: string
   deleted_at: string | null
+}
+
+export type ProductRecipe = {
+  id: string
+  stall_id: string
+  parent_product_id: string
+  ingredient_product_id: string
+  quantity: number
+  updated_at: string
+}
+
+export type DailyStoreClosing = {
+  id: string
+  stall_id: string
+  business_day_id: string | null
+  business_date: string
+  gross_sales: number
+  cogs: number
+  waste_cost: number
+  overhead_cost: number
+  net_profit: number
+  expected_cash: number
+  collected_cash: number
+  device_id: string | null
+  closed_at: string
 }
 
 export type InventoryEntry = {
@@ -114,6 +141,8 @@ export type WorkspaceData = {
   transactions: Transaction[]
   transactionItems: TransactionItem[]
   businessDays: BusinessDay[]
+  recipes: ProductRecipe[]
+  dailyClosings: DailyStoreClosing[]
 }
 
 export type StockMap = Record<string, number>

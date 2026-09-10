@@ -65,6 +65,7 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
     val cartLines by viewModel.cartLines.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
+    val lowStockProducts by viewModel.lowStockProducts.collectAsStateWithLifecycle()
     val cartQuantity = cartLines.sumOf { it.quantity }
     val cartTotal = cartLines.sumOf { it.lineTotalCents }
     var showOrderSheet by rememberSaveable { mutableStateOf(false) }
@@ -140,6 +141,16 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
                 }
             }
             error?.let { ErrorMessage(it, Modifier.padding(horizontal = 20.dp)) }
+            if (lowStockProducts.isNotEmpty()) {
+                Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.tertiaryContainer, shape = MaterialTheme.shapes.medium) {
+                    Text(
+                        "Low stock: " + lowStockProducts.take(3).joinToString { "${it.name} ${it.unitsInStock.toInt()} ${it.baseUnit}" } + if (lowStockProducts.size > 3) " +${lowStockProducts.size - 3} more" else "",
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                }
+            }
             if (products.isEmpty()) {
                 EmptyCatalog(query = query, modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp))
             } else {
@@ -162,6 +173,7 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
                             quantityInCart = quantityInCart,
                             onAdd = { viewModel.addToCart(product) },
                             onRemove = { viewModel.removeFromCart(product.id) },
+                            recipeBacked = viewModel.hasRecipe(product),
                         )
                     }
                 }
@@ -190,6 +202,7 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
                 error = error,
                 onDecrease = viewModel::removeFromCart,
                 onIncrease = viewModel::addToCart,
+                canIncrease = { product, quantity -> viewModel.hasRecipe(product) || quantity < product.unitsInStock },
                 onClear = { showClearConfirmation = true },
                 onComplete = { showCheckoutConfirmation = true },
                 onBack = { if (!busy) showOrderSheet = false },
@@ -249,6 +262,7 @@ private fun ProductRow(
     quantityInCart: Int,
     onAdd: () -> Unit,
     onRemove: () -> Unit,
+    recipeBacked: Boolean,
 ) {
     val remainingStock = product.unitsInStock - quantityInCart
     val lowStock = remainingStock <= product.lowStockThreshold
@@ -273,19 +287,17 @@ private fun ProductRow(
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(formatMoney(product.priceCents), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                    Text("  ·  ", color = MaterialTheme.colorScheme.outline)
-                    Text(
-                        "$remainingStock left",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (lowStock) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
-                    )
+                    if (!recipeBacked) {
+                        Text("  ·  ", color = MaterialTheme.colorScheme.outline)
+                        Text("${remainingStock.toInt()} left", style = MaterialTheme.typography.labelSmall, color = if (lowStock) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary)
+                    }
                 }
             }
             Spacer(Modifier.width(8.dp))
             if (quantityInCart == 0) {
                 Button(
                     onClick = onAdd,
-                    enabled = product.unitsInStock > 0,
+                    enabled = recipeBacked || product.unitsInStock > 0,
                     contentPadding = PaddingValues(horizontal = 16.dp),
                 ) { Text("Add") }
             } else {
@@ -293,7 +305,7 @@ private fun ProductRow(
                     quantity = quantityInCart,
                     onDecrease = onRemove,
                     onIncrease = onAdd,
-                    canIncrease = quantityInCart < product.unitsInStock,
+                    canIncrease = recipeBacked || quantityInCart < product.unitsInStock,
                 )
             }
         }
@@ -312,6 +324,7 @@ private fun OrderAndPaymentSheet(
     error: String?,
     onDecrease: (String) -> Unit,
     onIncrease: (ProductEntity) -> Unit,
+    canIncrease: (ProductEntity, Int) -> Boolean,
     onClear: () -> Unit,
     onComplete: () -> Unit,
     onBack: () -> Unit,
@@ -358,7 +371,7 @@ private fun OrderAndPaymentSheet(
                             quantity = line.quantity,
                             onDecrease = { onDecrease(line.product.id) },
                             onIncrease = { onIncrease(line.product) },
-                            canIncrease = line.quantity < line.product.unitsInStock,
+                            canIncrease = canIncrease(line.product, line.quantity),
                         )
                     }
                 }

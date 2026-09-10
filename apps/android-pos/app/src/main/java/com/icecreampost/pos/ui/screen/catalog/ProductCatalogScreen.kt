@@ -31,6 +31,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -170,9 +171,13 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
 
     if (showOrderSheet && cartLines.isNotEmpty()) {
         ModalBottomSheet(
-            onDismissRequest = { if (!busy) showOrderSheet = false },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            onDismissRequest = {},
+            sheetState = rememberModalBottomSheetState(
+                skipPartiallyExpanded = true,
+                confirmValueChange = { it != SheetValue.Hidden },
+            ),
             containerColor = MaterialTheme.colorScheme.background,
+            dragHandle = null,
         ) {
             OrderAndPaymentSheet(
                 lines = cartLines,
@@ -187,6 +192,7 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
                 onIncrease = viewModel::addToCart,
                 onClear = { showClearConfirmation = true },
                 onComplete = { showCheckoutConfirmation = true },
+                onBack = { if (!busy) showOrderSheet = false },
             )
         }
     }
@@ -308,6 +314,7 @@ private fun OrderAndPaymentSheet(
     onIncrease: (ProductEntity) -> Unit,
     onClear: () -> Unit,
     onComplete: () -> Unit,
+    onBack: () -> Unit,
 ) {
     val quantity = lines.sumOf { it.quantity }
     Column(
@@ -315,6 +322,10 @@ private fun OrderAndPaymentSheet(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onBack, enabled = !busy, contentPadding = PaddingValues(horizontal = 12.dp)) {
+                Text("‹ Back")
+            }
+            Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text("Order details", style = MaterialTheme.typography.headlineSmall)
                 Text("$quantity ${if (quantity == 1) "item" else "items"}", color = MaterialTheme.colorScheme.onSurfaceVariant)

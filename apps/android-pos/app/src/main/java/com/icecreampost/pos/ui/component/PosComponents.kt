@@ -1,6 +1,7 @@
 package com.icecreampost.pos.ui.component
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,11 +15,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -27,7 +32,36 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.icecreampost.pos.data.local.entity.SyncStateEntity
 
-fun formatMoney(cents: Long): String = "₱${cents / 100}.${(cents % 100).toString().padStart(2, '0')}"
+fun formatMoney(cents: Long, visible: Boolean = true): String =
+    if (visible) "₱${cents / 100}.${(cents % 100).toString().padStart(2, '0')}" else "₱••••"
+
+@Composable
+fun AmountVisibilityButton(visible: Boolean, onToggle: () -> Unit) {
+    val color = MaterialTheme.colorScheme.primary
+    IconButton(onClick = onToggle) {
+        Canvas(
+            modifier = Modifier.size(24.dp).semantics {
+                contentDescription = if (visible) "Hide sales amounts" else "Show sales amounts"
+            },
+        ) {
+            drawOval(
+                color = color,
+                topLeft = Offset(2.dp.toPx(), 6.dp.toPx()),
+                size = Size(20.dp.toPx(), 12.dp.toPx()),
+                style = Stroke(width = 1.8.dp.toPx()),
+            )
+            drawCircle(color = color, radius = 3.dp.toPx(), center = center)
+            if (!visible) {
+                drawLine(
+                    color = color,
+                    start = Offset(3.dp.toPx(), 3.dp.toPx()),
+                    end = Offset(21.dp.toPx(), 21.dp.toPx()),
+                    strokeWidth = 2.dp.toPx(),
+                )
+            }
+        }
+    }
+}
 
 @Composable
 fun ScreenHeader(

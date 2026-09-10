@@ -28,11 +28,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.icecreampost.pos.ui.PosViewModel
+import com.icecreampost.pos.ui.component.AmountVisibilityButton
 import com.icecreampost.pos.ui.component.formatMoney
 
 @Composable
 fun ReceiptScreen(viewModel: PosViewModel, onDone: () -> Unit) {
     val receipt by viewModel.receipt.collectAsStateWithLifecycle()
+    val amountsVisible by viewModel.amountsVisible.collectAsStateWithLifecycle()
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -52,6 +54,9 @@ fun ReceiptScreen(viewModel: PosViewModel, onDone: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                AmountVisibilityButton(visible = amountsVisible, onToggle = viewModel::toggleAmountsVisible)
+            }
             Surface(modifier = Modifier.size(72.dp), shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
                 Box(contentAlignment = Alignment.Center) {
                     Text("✓", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.secondary)
@@ -74,10 +79,10 @@ fun ReceiptScreen(viewModel: PosViewModel, onDone: () -> Unit) {
                 ) {
                     Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(it.receiptNumber, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        ReceiptRow("Total", formatMoney(it.subtotalCents), emphasized = true)
+                        ReceiptRow("Total", formatMoney(it.subtotalCents, amountsVisible), emphasized = true)
                         Surface(modifier = Modifier.fillMaxWidth().height(1.dp), color = MaterialTheme.colorScheme.outlineVariant) {}
-                        ReceiptRow("Cash received", formatMoney(it.cashReceivedCents))
-                        ReceiptRow("Change", formatMoney(it.changeAmountCents))
+                        ReceiptRow("Cash received", formatMoney(it.cashReceivedCents, amountsVisible))
+                        ReceiptRow("Change", formatMoney(it.changeAmountCents, amountsVisible))
                     }
                 }
             } ?: Text("Receipt details are no longer available.", color = MaterialTheme.colorScheme.onSurfaceVariant)

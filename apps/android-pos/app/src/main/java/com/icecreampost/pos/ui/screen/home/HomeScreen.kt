@@ -27,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.icecreampost.pos.ui.PosViewModel
+import com.icecreampost.pos.ui.component.AmountVisibilityButton
 import com.icecreampost.pos.ui.component.SyncStatusCard
 import com.icecreampost.pos.ui.component.formatMoney
 import java.time.Instant
@@ -47,6 +48,7 @@ fun HomeScreen(
     val businessDay by viewModel.businessDay.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
+    val amountsVisible by viewModel.amountsVisible.collectAsStateWithLifecycle()
     val isOpen = businessDay?.closedAt == null && businessDay != null
     val today = LocalDate.now(ZoneId.of("Asia/Manila")).toString()
     val alreadyOperatedToday = businessDay?.businessDate == today
@@ -64,7 +66,7 @@ fun HomeScreen(
             onDismissRequest = { showCloseDialog = false },
             title = { Text("Close operating day?") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Cash sales recorded on this device: ${formatMoney(salesTotal)}")
+                Text("Cash sales recorded on this device: ${formatMoney(salesTotal, amountsVisible)}")
                 OutlinedTextField(closingNotes, { closingNotes = it }, label = { Text("Closing notes (optional)") })
             } },
             confirmButton = { Button(onClick = { viewModel.closeDay(closingNotes); closingNotes = ""; showCloseDialog = false }, enabled = !busy) { Text("Close day") } },
@@ -73,9 +75,11 @@ fun HomeScreen(
     }
     LazyColumn(modifier = Modifier.fillMaxSize().safeDrawingPadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
-            Text("COOLERZ POS", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("COOLERZ POS", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                AmountVisibilityButton(visible = amountsVisible, onToggle = viewModel::toggleAmountsVisible)
+            }
             Text("Good day, ${session?.displayName ?: "Cashier"}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Ready for the next scoop?", style = MaterialTheme.typography.headlineMedium)
         }
         item { SyncStatusCard(syncState) }
         error?.let { message ->
@@ -128,7 +132,7 @@ fun HomeScreen(
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                MetricCard("Sales", formatMoney(salesTotal), Modifier.weight(1f))
+                MetricCard("Sales", formatMoney(salesTotal, amountsVisible), Modifier.weight(1f))
                 MetricCard("Orders", completedSales.size.toString(), Modifier.weight(1f))
             }
         }

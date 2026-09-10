@@ -36,7 +36,6 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
       />
       <div>
         <p className={`text-xs font-semibold uppercase tracking-[0.28em] ${compact ? 'text-[#5a1bb0]' : 'text-[#f4dcff]'}`}>Coolerz IMS</p>
-        <p className={`mt-1 ${compact ? 'text-sm text-[#6b4d89]' : 'text-sm text-[#f8eefe]'}`}>Business control center</p>
       </div>
     </div>
   )
@@ -69,34 +68,10 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_#fff8ea_0%,_#efe1ff_38%,_#220046_100%)] p-6 text-slate-900">
-      <div className="grid w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/20 bg-white shadow-[0_30px_80px_rgba(34,0,70,0.28)] md:grid-cols-2">
-        <section className="relative hidden overflow-hidden bg-[linear-gradient(180deg,_#4f0fb0_0%,_#2a005c_100%)] p-10 text-white md:block">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.22),_transparent_40%)]" />
-          <div className="relative">
-            <BrandMark />
-            <div className="mt-16 max-w-sm">
-              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-[#f5deff]">The calm center of your stall</p>
-              <h1 className="mt-5 text-4xl font-black leading-tight text-[#fff8ea]">See and run the business from one clear workspace.</h1>
-              <p className="mt-5 text-base leading-7 text-[#f6ebff]">
-                Separate administration and owner workspaces built around the Coolerz Ice Cream brand.
-              </p>
-            </div>
-            <div className="mt-14 rounded-3xl border border-white/15 bg-white/10 p-4 shadow-2xl shadow-black/10">
-              <img
-                alt="Coolerz Ice Cream logo preview"
-                className="aspect-square w-full rounded-[1.5rem] object-cover"
-                src={brandLogo}
-              />
-            </div>
-          </div>
-        </section>
-
-        <form className="bg-[linear-gradient(180deg,_#fffdf8_0%,_#f9f3ff_100%)] p-7 sm:p-10" onSubmit={submit}>
-          <div className="md:hidden">
-            <BrandMark compact />
-          </div>
-          <h2 className="mt-7 text-3xl font-black tracking-tight text-[#220046]">Management sign in</h2>
+    <main className="flex min-h-screen items-center justify-center bg-[#f7f5f9] p-4 text-slate-900 sm:p-6">
+        <form className="w-full max-w-md rounded-2xl border border-[#e6deed] bg-white p-6 shadow-[0_18px_50px_rgba(34,0,70,0.10)] sm:p-8" onSubmit={submit}>
+          <BrandMark compact />
+          <h2 className="mt-6 text-2xl font-black tracking-tight text-[#220046]">Management sign in</h2>
           <p className="mt-2 max-w-md text-slate-500">Owners and system administrators can use this dashboard.</p>
 
           <label className="mt-7 block text-sm font-medium text-[#39235f]">
@@ -133,7 +108,6 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void
             This dashboard uses the shop's custom password login and a short-lived Supabase session token.
           </p>
         </form>
-      </div>
     </main>
   )
 }
@@ -147,6 +121,34 @@ function MenuIcon({ open = false }: { open?: boolean }) {
     <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
       <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
     </svg>
+  )
+}
+
+function EyeIcon({ visible }: { visible: boolean }) {
+  return visible ? (
+    <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2.8 12s3.4-6 9.2-6 9.2 6 9.2 6-3.4 6-9.2 6-9.2-6-9.2-6Z" />
+      <circle cx="12" cy="12" r="2.5" />
+    </svg>
+  ) : (
+    <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18M10.6 6.1A9.8 9.8 0 0 1 12 6c5.8 0 9.2 6 9.2 6a15 15 0 0 1-2.7 3.4M6.2 6.2C4 7.7 2.8 12 2.8 12s3.4 6 9.2 6c1.3 0 2.5-.3 3.5-.8M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+    </svg>
+  )
+}
+
+function SignOutDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <div aria-modal="true" className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 p-4" role="dialog">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
+        <h2 className="text-lg font-bold text-[#220046]">Sign out?</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600">You will need your email and password to open the dashboard again.</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+          <Button onClick={onConfirm}>Sign out</Button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -172,11 +174,11 @@ function Sidebar({ activeView, onNavigate, onSignOut, session, open, onClose }: 
         {navigation.map((group) => (
           <div key={group.label}>
             <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-widest text-[#cfb5ff]">{group.label}</p>
-            <div>
+            <div className="space-y-1">
               {group.items.map((view) => (
                 <button
                   key={view}
-                  className={`mb-1 block min-h-11 w-full rounded-xl px-3 py-2 text-left text-sm transition ${
+                  className={`block min-h-11 w-full rounded-xl px-3 py-2 text-left text-sm transition ${
                     activeView === view
                       ? 'bg-[#f5d68c] font-semibold text-[#220046]'
                       : 'text-[#efe1ff] hover:bg-white/10 hover:text-white'
@@ -215,6 +217,8 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
+  const [amountsVisible, setAmountsVisible] = useState(true)
+  const [showSignOutDialog, setShowSignOutDialog] = useState(false)
   const refreshInFlight = useRef<Promise<void> | null>(null)
   const client = useMemo(() => createSupabaseClient(session.token), [session.token])
 
@@ -301,7 +305,7 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
     )
   }
 
-  const screenProps = { client, data, onRefresh: refresh, onError: setError, stalls }
+  const screenProps = { client, data, onRefresh: refresh, onError: setError, stalls, amountsVisible }
   const screen =
     view === 'admin' && session.role === 'system_admin' ? (
       <SystemAdminOverviewScreen {...screenProps} onNavigate={setView} />
@@ -333,7 +337,7 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,_#fbf6ff_0%,_#fffdf8_100%)] text-slate-900 lg:flex">
-      <Sidebar activeView={view} onNavigate={setView} onSignOut={onSignOut} session={session} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar activeView={view} onNavigate={setView} onSignOut={() => setShowSignOutDialog(true)} session={session} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <main className="min-w-0 flex-1 overflow-x-hidden">
         <header className="sticky top-0 z-30 border-b border-[#eadcff] bg-white/90 px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))] backdrop-blur sm:px-8 sm:py-6">
           <div className="mx-auto max-w-7xl">
@@ -354,15 +358,21 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
                 <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <h1 className="text-xl font-black tracking-tight text-[#220046] min-[390px]:text-2xl sm:text-3xl">{getViewLabel(session.role, view)}</h1>
-                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${session.role === 'system_admin' ? 'bg-[#220046] text-[#f5d68c]' : 'bg-[#efe5ff] text-[#5a1bb0]'}`}>
-                      {session.role === 'system_admin' ? 'Global administration' : 'Read-only monitoring'}
-                    </span>
                   </div>
                   {stalls.length > 1 && (
                     <Select aria-label="Active stall" className="mt-0 min-w-0 sm:min-w-48" value={selectedStallId} onChange={(event) => setSelectedStallId(event.target.value)}>
                       {stalls.map((stall) => <option key={stall.id} value={stall.id}>{stall.name}</option>)}
                     </Select>
                   )}
+                  <button
+                    aria-label={amountsVisible ? 'Hide financial amounts' : 'Show financial amounts'}
+                    className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl border border-[#dfd4f3] bg-white text-[#4b2a7a] transition hover:bg-[#f7f3fb]"
+                    onClick={() => setAmountsVisible((visible) => !visible)}
+                    title={amountsVisible ? 'Hide financial amounts' : 'Show financial amounts'}
+                    type="button"
+                  >
+                    <EyeIcon visible={amountsVisible} />
+                  </button>
                   <p className="hidden text-sm text-slate-500 sm:block">
                     Live updates on{lastUpdatedAt ? ` · updated ${lastUpdatedAt.toLocaleTimeString()}` : ''}
                   </p>
@@ -385,6 +395,7 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
           {screen}
         </div>
       </main>
+      {showSignOutDialog && <SignOutDialog onCancel={() => setShowSignOutDialog(false)} onConfirm={onSignOut} />}
     </div>
   )
 }

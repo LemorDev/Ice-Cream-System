@@ -3,13 +3,13 @@ import type { FormEvent } from 'react'
 import type { DbClient } from './lib/api'
 import { addInventoryEntry, archiveProduct, createCategory, createDeviceActivation, createManagedStall, getOverheadForStall, getStockByProduct, listManagedUsers, reverseTransaction, saveManagedUser, saveProduct, setOwnerStalls, updateStall } from './lib/api'
 import type { WebView } from './lib/access'
-import { getDashboardMetrics, getDailyProfitReport, calculateDailyOverhead, DEFAULT_OVERHEAD_ITEMS, getBusinessDateKey, getProductPerformance, getRevenueTrend, shiftDateKey } from './lib/dashboard'
+import { getDashboardMetrics, getDailyProfitReport, calculateDailyOverhead, DEFAULT_OVERHEAD_ITEMS, formatDateRangeLabel, getBusinessDateKey, getProductPerformance, getRevenueTrend, shiftDateKey } from './lib/dashboard'
 import { downloadCsv } from './lib/export'
+import { formatFinancialAmount } from './lib/privacy'
 import type { ManagedUser, OverheadItem, Product, Stall, WorkspaceData } from './lib/types'
 import { Badge, Button, EmptyState, Input, Notice, OverheadIcon, Panel, Select, Table, TableCell, TableHead, Textarea } from './components/ui'
 import { HorizontalBarChart, RevenueTrendChart } from './components/charts'
 
-const peso = new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' })
 const dateTime = new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
 
 export type ScreenProps = {
@@ -18,20 +18,22 @@ export type ScreenProps = {
   onRefresh: () => Promise<void>
   onError: (message: string) => void
   stalls: Stall[]
+  amountsVisible: boolean
 }
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'The operation could not be completed.'
 }
 
-export function OverviewScreen({ data, onNavigate }: ScreenProps & { onNavigate: (view: string) => void }) {
+export function OverviewScreen({ data, onNavigate, amountsVisible }: ScreenProps & { onNavigate: (view: string) => void }) {
+  const money = (value: number) => formatFinancialAmount(value, amountsVisible)
   const today = new Date().toISOString().slice(0, 10)
   const metrics = getDashboardMetrics(data.products, data.inventory, data.transactions, today)
   const stock = metrics.stock
   const lowStock = data.products.filter((product) => metrics.lowStock.includes(product.id))
 
   const cards = [
-    { label: 'Sales today', value: peso.format(metrics.sales), detail: `${metrics.completedSales} completed sale${metrics.completedSales === 1 ? '' : 's'}`, action: () => onNavigate('reports') },
+    { label: 'Sales today', value: money(metrics.sales), detail: `${metrics.completedSales} completed sale${metrics.completedSales === 1 ? '' : 's'}`, action: () => onNavigate('reports') },
     { label: 'Low-stock items', value: String(lowStock.length), detail: lowStock.length ? 'Review stock levels' : 'Everything is above threshold', action: () => onNavigate('adjustments') },
     { label: 'Active products', value: String(data.products.filter((product) => product.is_sellable).length), detail: `${data.products.length} total catalog items`, action: () => onNavigate('products') },
     { label: 'Transactions', value: String(data.transactions.length), detail: 'Latest 1,000 records loaded', action: () => onNavigate('transactions') },
@@ -40,7 +42,8 @@ export function OverviewScreen({ data, onNavigate }: ScreenProps & { onNavigate:
   return <div className="space-y-6"><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{cards.map((card) => <button key={card.label} className="rounded-2xl border border-[#eadcff] bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[#caa8ff]" onClick={card.action}><p className="text-sm text-slate-500">{card.label}</p><p className="mt-2 text-2xl font-bold text-slate-900">{card.value}</p><p className="mt-1 text-xs text-slate-400">{card.detail}</p></button>)}</div><div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]"><Panel title="Stock watchlist" description="Products at or below their configured threshold."><Table><TableHead><th className="px-3 py-3">Product</th><th className="px-3 py-3">On hand</th><th className="px-3 py-3">Threshold</th><th className="px-3 py-3">Status</th></TableHead><tbody>{lowStock.slice(0, 8).map((product) => { const onHand = stock[product.id] ?? 0; return <tr key={product.id} className="border-b border-slate-100"><TableCell><p className="font-medium">{product.name}</p><p className="text-xs text-slate-400">{product.sku}</p></TableCell><TableCell>{onHand.toLocaleString()} {product.unit}</TableCell><TableCell>{product.low_stock_threshold.toLocaleString()} {product.unit}</TableCell><TableCell><Badge tone={onHand <= 0 ? 'danger' : 'warning'}>{onHand <= 0 ? 'Out of stock' : 'Low stock'}</Badge></TableCell></tr> })}</tbody></Table>{lowStock.length === 0 && <EmptyState title="No stock alerts" description="All active products are above their configured thresholds." />}</Panel><Panel title="Quick actions" description="Common selected-stall operations."><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">{[['Receive stock', 'receiving'], ['Adjust inventory', 'adjustments'], ['Edit prices', 'pricing'], ['Download sales report', 'reports']].map(([label, view]) => <Button key={view} variant="secondary" className="text-left" onClick={() => onNavigate(view)}>{label}</Button>)}</div></Panel></div></div>
 }
 
-export function OwnerDashboardScreen({ data, onNavigate }: ScreenProps & { onNavigate: (view: WebView) => void }) {
+export function OwnerDashboardScreen({ data, onNavigate, amountsVisible }: ScreenProps & { onNavigate: (view: WebView) => void }) {
+  const money = (value: number) => formatFinancialAmount(value, amountsVisible)
   const today = getBusinessDateKey()
   const yesterday = shiftDateKey(today, -1)
   const weekStart = shiftDateKey(today, -6)
@@ -73,40 +76,44 @@ export function OwnerDashboardScreen({ data, onNavigate }: ScreenProps & { onNav
         </div>
         <div className="mt-7">
           <p className="text-sm text-[#e7d9f8]">Today’s revenue</p>
-          <p className="mt-1 text-4xl font-black tracking-tight text-[#fff8ea] sm:text-5xl">{peso.format(todayPoint.revenue)}</p>
+          <p className="mt-1 text-4xl font-black tracking-tight text-[#fff8ea] sm:text-5xl">{money(todayPoint.revenue)}</p>
           <p className="mt-2 text-xs text-[#e7d9f8]">{todayPoint.orders} completed order{todayPoint.orders === 1 ? '' : 's'}{change === null ? '' : ` · ${change >= 0 ? '+' : ''}${change.toFixed(0)}% vs yesterday`}</p>
         </div>
       </section>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[['Orders today', todayPoint.orders.toLocaleString(), 'Completed sales'], ['7-day revenue', peso.format(weekRevenue), `${weekOrders} orders`], ['Average sale', peso.format(averageSale), 'Last 7 days'], ['Top product', products[0]?.name ?? '—', products[0] ? `${products[0].unitsSold.toLocaleString()} units` : 'No sales yet']].map(([label, value, detail]) => <div className="min-w-0 rounded-2xl border border-[#eadcff] bg-white p-3 shadow-sm min-[390px]:p-4" key={label}><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-2 break-words text-lg font-black leading-tight text-[#220046] min-[390px]:text-xl">{value}</p><p className="mt-1 text-xs text-slate-400">{detail}</p></div>)}
+        {[['Orders today', todayPoint.orders.toLocaleString(), 'Completed sales'], ['7-day revenue', money(weekRevenue), `${weekOrders} orders`], ['Average sale', money(averageSale), 'Last 7 days'], ['Top product', products[0]?.name ?? '—', products[0] ? `${products[0].unitsSold.toLocaleString()} units` : 'No sales yet']].map(([label, value, detail]) => <div className="min-w-0 rounded-2xl border border-[#eadcff] bg-white p-3 shadow-sm min-[390px]:p-4" key={label}><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-2 break-words text-lg font-black leading-tight text-[#220046] min-[390px]:text-xl">{value}</p><p className="mt-1 text-xs text-slate-400">{detail}</p></div>)}
       </div>
 
       <Panel title="Revenue trend" description="Completed sales over the last seven days." action={<Button variant="ghost" onClick={() => onNavigate('reports')}>View analytics</Button>}>
-        <RevenueTrendChart points={trend.map((point) => ({ date: point.date, value: point.revenue }))} formatValue={(value) => peso.format(value)} />
+        <RevenueTrendChart points={trend.map((point) => ({ date: point.date, value: point.revenue }))} formatValue={(value) => money(value)} />
       </Panel>
 
       <div className="grid gap-5 lg:grid-cols-2">
         <Panel title="Top products" description="Highest product revenue in the last seven days." action={<Button variant="ghost" onClick={() => onNavigate('productReport')}>Full report</Button>}>
-          <HorizontalBarChart items={products.slice(0, 5).map((product) => ({ label: product.name, value: product.revenue, detail: `${product.unitsSold.toLocaleString()} units` }))} formatValue={(value) => peso.format(value)} />
+          <HorizontalBarChart items={products.slice(0, 5).map((product) => ({ label: product.name, value: product.revenue, detail: `${product.unitsSold.toLocaleString()} units` }))} formatValue={(value) => money(value)} />
         </Panel>
         <Panel title="Recent sales" description="Latest POS activity after synchronization.">
-          {recentSales.length === 0 ? <EmptyState title="No sales yet" description="Transactions will appear after the POS completes and syncs a sale." /> : <div className="divide-y divide-slate-100">{recentSales.map((transaction) => <div className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0" key={transaction.id}><div className="min-w-0"><p className="truncate text-sm font-semibold text-[#39235f]">{transaction.receipt_number}</p><p className="mt-0.5 text-xs text-slate-400">{dateTime.format(new Date(transaction.occurred_at))}</p></div><div className="text-right"><p className="text-sm font-bold text-[#220046]">{peso.format(transaction.total_amount)}</p><Badge tone={transaction.status === 'completed' ? 'success' : 'warning'}>{transaction.status}</Badge></div></div>)}</div>}
+          {recentSales.length === 0 ? <EmptyState title="No sales yet" description="Transactions will appear after the POS completes and syncs a sale." /> : <div className="divide-y divide-slate-100">{recentSales.map((transaction) => <div className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0" key={transaction.id}><div className="min-w-0"><p className="truncate text-sm font-semibold text-[#39235f]">{transaction.receipt_number}</p><p className="mt-0.5 text-xs text-slate-400">{dateTime.format(new Date(transaction.occurred_at))}</p></div><div className="text-right"><p className="text-sm font-bold text-[#220046]">{money(transaction.total_amount)}</p><Badge tone={transaction.status === 'completed' ? 'success' : 'warning'}>{transaction.status}</Badge></div></div>)}</div>}
         </Panel>
       </div>
     </div>
   )
 }
 
-export function SystemAdminOverviewScreen({ client, data, stalls, onError, onNavigate }: ScreenProps & { onNavigate: (view: WebView) => void }) {
+export function SystemAdminOverviewScreen({ client, data, stalls, onError, onNavigate, amountsVisible }: ScreenProps & { onNavigate: (view: WebView) => void }) {
   const [directory, setDirectory] = useState<ManagedUser[]>([])
   const [loadingDirectory, setLoadingDirectory] = useState(true)
   const stallKey = stalls.map((stall) => stall.id).join(',')
+  const money = (value: number) => formatFinancialAmount(value, amountsVisible)
+  const today = getBusinessDateKey()
+  const weekStart = shiftDateKey(today, -6)
+  const revenueTrend = useMemo(() => getRevenueTrend(data.transactions, weekStart, today), [data.transactions, today, weekStart])
 
   useEffect(() => {
     let active = true
-    setLoadingDirectory(true)
-    void Promise.all(stalls.map((stall) => listManagedUsers(client, stall.id)))
+    const stallIds = stallKey ? stallKey.split(',') : []
+    void Promise.all(stallIds.map((stallId) => listManagedUsers(client, stallId)))
       .then((usersByStall) => {
         if (!active) return
         const uniqueUsers = new Map(usersByStall.flat().map((user) => [user.id, user]))
@@ -115,7 +122,7 @@ export function SystemAdminOverviewScreen({ client, data, stalls, onError, onNav
       .catch((error) => { if (active) onError(getErrorMessage(error)) })
       .finally(() => { if (active) setLoadingDirectory(false) })
     return () => { active = false }
-  }, [client, onError, stallKey, stalls])
+  }, [client, onError, stallKey])
 
   const ownerCount = directory.filter((user) => user.role === 'owner').length
   const cashierCount = directory.filter((user) => user.role === 'cashier').length
@@ -142,13 +149,17 @@ export function SystemAdminOverviewScreen({ client, data, stalls, onError, onNav
         {cards.map((card) => <button key={card.label} className="rounded-2xl border border-[#eadcff] bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[#caa8ff]" onClick={() => onNavigate(card.view)}><p className="text-sm text-slate-500">{card.label}</p><p className="mt-2 text-2xl font-bold text-slate-900">{card.value}</p><p className="mt-1 text-xs text-slate-400">{card.detail}</p></button>)}
       </div>
 
+      <Panel title="Selected stall revenue" description={`Completed sales · ${formatDateRangeLabel(weekStart, today)}`} action={<Button variant="ghost" onClick={() => onNavigate('reports')}>Open sales reports</Button>}>
+        <RevenueTrendChart points={revenueTrend.map((point) => ({ date: point.date, value: point.revenue }))} formatValue={money} />
+      </Panel>
+
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel title="System Administrator access" description="Platform-level responsibilities across every stall.">
           <ul className="space-y-3 text-sm text-slate-600">
             {['View and select every active stall', 'Create stalls and maintain stall identity', 'Create Owner or Cashier accounts', 'Assign Owners to one or several stalls', 'Perform operational support for any stall'].map((item) => <li className="flex gap-3" key={item}><span className="mt-0.5 text-emerald-600">✓</span><span>{item}</span></li>)}
           </ul>
         </Panel>
-        <Panel title="Owner monitoring" description="Owners receive a read-only phone workspace scoped by assignment.">
+        <Panel title="Owner monitoring" description="Owners receive a phone workspace scoped by stall assignment.">
           <ul className="space-y-3 text-sm text-slate-600">
             {['View revenue, profit, and sales activity for assigned stalls', 'Monitor product performance and operating days', 'Cannot change products, stock, prices, staff, POS devices, or stall settings', 'Cannot assign stalls or open another stall’s records'].map((item) => <li className="flex gap-3" key={item}><span className="mt-0.5 text-[#7c3aed]">•</span><span>{item}</span></li>)}
           </ul>
@@ -158,7 +169,8 @@ export function SystemAdminOverviewScreen({ client, data, stalls, onError, onNav
   )
 }
 
-export function StallScreen({ client, data, onRefresh, onError }: ScreenProps) {
+export function StallScreen({ client, data, onRefresh, onError, amountsVisible }: ScreenProps) {
+  const money = (value: number) => formatFinancialAmount(value, amountsVisible)
   const stall = data.stall
   const [name, setName] = useState(stall?.name ?? '')
   const [code, setCode] = useState(stall?.code ?? '')
@@ -361,7 +373,7 @@ export function StallScreen({ client, data, onRefresh, onError }: ScreenProps) {
                   <p className="text-xs font-semibold uppercase tracking-widest text-[#cfb5ff]">Configured Daily Fixed Overhead</p>
                   <p className="text-xs text-[#ebd8ff]">This total is dynamically subtracted from sales for each operating day</p>
                 </div>
-                <p className="text-2xl font-black text-[#f5d68c]">{peso.format(totalDailyOverhead)} / day</p>
+                <p className="text-2xl font-black text-[#f5d68c]">{money(totalDailyOverhead)} / day</p>
               </div>
             </div>
 
@@ -478,7 +490,8 @@ export function StaffScreen({ client, data, onError, stalls }: ScreenProps) {
   </div>
 }
 
-export function ProductsScreen({ client, data, onRefresh, onError }: ScreenProps) {
+export function ProductsScreen({ client, data, onRefresh, onError, amountsVisible }: ScreenProps) {
+  const money = (value: number) => formatFinancialAmount(value, amountsVisible)
   const [form, setForm] = useState(emptyProduct)
   const [editingId, setEditingId] = useState<string>()
   const [productModalOpen, setProductModalOpen] = useState(false)
@@ -510,7 +523,7 @@ export function ProductsScreen({ client, data, onRefresh, onError }: ScreenProps
     return () => { document.removeEventListener('keydown', closeOnEscape); document.body.style.overflow = '' }
   }, [productModalOpen, closeProductModal])
   return <><Panel title="Product catalog" description="Manage menu items, packaging, prices, thresholds, and conversions." action={<div className="flex flex-col gap-2 sm:flex-row"><Input aria-label="Search products" placeholder="Search name or SKU" value={search} onChange={(event) => setSearch(event.target.value)} /><Button className="shrink-0" onClick={openAddProduct}>Add product</Button></div>}>
-    {filtered.length === 0 ? <EmptyState title="No products found" description={search ? 'Try a different search.' : 'Add your first product to begin building the catalog.'} /> : <Table><TableHead><th className="px-3 py-3">Product</th><th className="px-3 py-3">Price</th><th className="px-3 py-3">On hand</th><th className="px-3 py-3">Status</th><th className="px-3 py-3" /></TableHead><tbody>{filtered.map((product) => { const onHand = stock[product.id] ?? 0; return <tr key={product.id} className="border-b border-slate-100"><TableCell><p className="font-medium">{product.name}</p><p className="text-xs text-slate-400">{product.sku} · {product.unit}</p></TableCell><TableCell>{peso.format(product.sale_price)}</TableCell><TableCell>{onHand.toLocaleString()}</TableCell><TableCell><Badge tone={!product.is_sellable ? 'neutral' : onHand <= product.low_stock_threshold ? 'warning' : 'success'}>{!product.is_sellable ? 'Archived' : onHand <= product.low_stock_threshold ? 'Low stock' : 'Active'}</Badge></TableCell><TableCell><div className="flex gap-2"><Button variant="ghost" onClick={() => edit(product)}>Edit</Button>{product.is_sellable && <Button variant="danger" onClick={() => void archive(product)}>Archive</Button>}</div></TableCell></tr> })}</tbody></Table>}
+    {filtered.length === 0 ? <EmptyState title="No products found" description={search ? 'Try a different search.' : 'Add your first product to begin building the catalog.'} /> : <Table><TableHead><th className="px-3 py-3">Product</th><th className="px-3 py-3">Price</th><th className="px-3 py-3">On hand</th><th className="px-3 py-3">Status</th><th className="px-3 py-3" /></TableHead><tbody>{filtered.map((product) => { const onHand = stock[product.id] ?? 0; return <tr key={product.id} className="border-b border-slate-100"><TableCell><p className="font-medium">{product.name}</p><p className="text-xs text-slate-400">{product.sku} · {product.unit}</p></TableCell><TableCell>{money(product.sale_price)}</TableCell><TableCell>{onHand.toLocaleString()}</TableCell><TableCell><Badge tone={!product.is_sellable ? 'neutral' : onHand <= product.low_stock_threshold ? 'warning' : 'success'}>{!product.is_sellable ? 'Archived' : onHand <= product.low_stock_threshold ? 'Low stock' : 'Active'}</Badge></TableCell><TableCell><div className="flex gap-2"><Button variant="ghost" onClick={() => edit(product)}>Edit</Button>{product.is_sellable && <Button variant="danger" onClick={() => void archive(product)}>Archive</Button>}</div></TableCell></tr> })}</tbody></Table>}
   </Panel>{productModalOpen && <div className="fixed inset-0 z-50 flex items-end bg-[#18002f]/55 p-0 backdrop-blur-[2px] sm:items-center sm:justify-center sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) closeProductModal() }}><section aria-labelledby="product-modal-title" aria-modal="true" className="max-h-[92vh] w-full overflow-y-auto rounded-t-3xl bg-[#fffdf8] shadow-2xl sm:max-w-2xl sm:rounded-3xl" role="dialog"><div className="sticky top-0 flex items-start justify-between gap-4 border-b border-[#eadcff] bg-[#fffdf8]/95 p-5 backdrop-blur"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#5a1bb0]">Product catalog</p><h2 id="product-modal-title" className="mt-1 text-xl font-black text-[#220046]">{editingId ? 'Edit product' : 'Add product'}</h2><p className="mt-1 text-sm text-slate-500">Prices and conversions are used by the POS and reports.</p></div><button aria-label="Close product form" className="rounded-lg p-2 text-[#4b2a7a] transition hover:bg-[#f5ebff]" onClick={closeProductModal} type="button">×</button></div><form className="space-y-4 p-5" onSubmit={submit}><ProductFormFields categories={data.categories} form={form} setField={setField} />{message && <Notice>{message}</Notice>}<div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4"><Button type="button" variant="ghost" onClick={closeProductModal}>Cancel</Button><Button disabled={saving}>{saving ? 'Saving…' : editingId ? 'Save changes' : 'Add product'}</Button></div></form><form className="border-t border-slate-100 p-5" onSubmit={addNewCategory}><p className="text-sm font-semibold text-[#39235f]">Add a category</p><div className="mt-2 flex flex-col gap-2 sm:flex-row"><Input aria-label="New category name" placeholder="e.g. Ice cream" value={categoryName} onChange={(event) => setCategoryName(event.target.value)} /><Button type="submit">Add category</Button></div></form></section></div>}</>
 }
 
@@ -537,7 +550,8 @@ export function PricingScreen({ client, data, onRefresh, onError }: ScreenProps)
   return <Panel title="Price and conversion management" description="Update retail prices, raw costs, and pack-to-usable-unit conversions without an app release.">{data.products.length === 0 ? <EmptyState title="No products yet" description="Add products before changing their prices." /> : <Table><TableHead><th className="px-3 py-3">Product</th><th className="px-3 py-3">Sale price</th><th className="px-3 py-3">Cost price</th><th className="px-3 py-3">Pack size</th><th className="px-3 py-3">Usable units / pack</th><th className="px-3 py-3" /></TableHead><tbody>{data.products.map((product) => { const values = draft(product); const set = (field: keyof typeof values, value: string) => setDrafts((current) => ({ ...current, [product.id]: { ...values, [field]: value } })); return <tr key={product.id} className="border-b border-slate-100"><TableCell><p className="font-medium">{product.name}</p><p className="text-xs text-slate-400">{product.unit}</p></TableCell><TableCell><input className="w-28 rounded border border-slate-300 px-2 py-1" type="number" min="0" step="0.01" value={values.sale_price} onChange={(event) => set('sale_price', event.target.value)} /></TableCell><TableCell><input className="w-28 rounded border border-slate-300 px-2 py-1" type="number" min="0" step="0.01" value={values.cost_price} onChange={(event) => set('cost_price', event.target.value)} /></TableCell><TableCell><input className="w-24 rounded border border-slate-300 px-2 py-1" type="number" min="0.001" step="0.001" value={values.pack_size} onChange={(event) => set('pack_size', event.target.value)} /></TableCell><TableCell><input className="w-28 rounded border border-slate-300 px-2 py-1" type="number" min="0.001" step="0.001" value={values.conversion_rate} onChange={(event) => set('conversion_rate', event.target.value)} /></TableCell><TableCell><Button disabled={savingId === product.id} onClick={() => void save(product)}>{savingId === product.id ? 'Saving…' : 'Save'}</Button></TableCell></tr> })}</tbody></Table>}</Panel>
 }
 
-export function TransactionsScreen({ client, data, onRefresh, onError }: ScreenProps) {
+export function TransactionsScreen({ client, data, onRefresh, onError, amountsVisible }: ScreenProps) {
+  const money = (value: number) => formatFinancialAmount(value, amountsVisible)
   const [status, setStatus] = useState('all')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string>()
@@ -545,10 +559,11 @@ export function TransactionsScreen({ client, data, onRefresh, onError }: ScreenP
   const [restock, setRestock] = useState(true)
   const filtered = data.transactions.filter((transaction) => (status === 'all' || transaction.status === status) && transaction.receipt_number.toLowerCase().includes(search.toLowerCase()))
   async function reverse() { if (!selectedId || !reason.trim()) return; try { await reverseTransaction(client, selectedId, reason.trim(), restock); setSelectedId(undefined); await onRefresh() } catch (error) { onError(getErrorMessage(error)) } }
-  return <Panel title="Transaction history" description="Review sales and reverse an eligible transaction with an audit reason." action={<div className="flex gap-2"><Input aria-label="Search receipts" placeholder="Receipt number" value={search} onChange={(event) => setSearch(event.target.value)} /><Select aria-label="Filter status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="completed">Completed</option><option value="voided">Voided</option><option value="refunded">Refunded</option></Select></div>}>{filtered.length === 0 ? <EmptyState title="No transactions found" description="Sales will appear here after the POS syncs them." /> : <Table><TableHead><th className="px-3 py-3">Receipt</th><th className="px-3 py-3">Date</th><th className="px-3 py-3">Total</th><th className="px-3 py-3">Status</th><th className="px-3 py-3" /></TableHead><tbody>{filtered.map((transaction) => <tr key={transaction.id} className="border-b border-slate-100"><TableCell className="font-medium">{transaction.receipt_number}</TableCell><TableCell>{dateTime.format(new Date(transaction.occurred_at))}</TableCell><TableCell>{peso.format(transaction.total_amount)}</TableCell><TableCell><Badge tone={transaction.status === 'completed' ? 'success' : transaction.status === 'voided' ? 'danger' : 'warning'}>{transaction.status}</Badge></TableCell><TableCell>{transaction.status === 'completed' && <Button variant="danger" onClick={() => setSelectedId(transaction.id)}>Void / reverse</Button>}</TableCell></tr>)}</tbody></Table>}{selectedId && <div className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4"><p className="font-semibold text-red-800">Reverse transaction</p><p className="mt-1 text-sm text-red-700">Choose whether the sold stock should return to inventory.</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><Select label="Reason" value={reason} onChange={(event) => setReason(event.target.value)}><option>Customer changed mind</option><option>Incorrect order</option><option>Quality issue</option></Select><Select label="Stock action" value={restock ? 'restock' : 'waste'} onChange={(event) => setRestock(event.target.value === 'restock')}><option value="restock">Restock items</option><option value="waste">Waste stock</option></Select></div><div className="mt-3 flex gap-2"><Button variant="danger" onClick={() => void reverse()}>Confirm reversal</Button><Button variant="ghost" onClick={() => setSelectedId(undefined)}>Cancel</Button></div></div>}</Panel>
+  return <Panel title="Transaction history" description="Review sales and reverse an eligible transaction with an audit reason." action={<div className="flex gap-2"><Input aria-label="Search receipts" placeholder="Receipt number" value={search} onChange={(event) => setSearch(event.target.value)} /><Select aria-label="Filter status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="completed">Completed</option><option value="voided">Voided</option><option value="refunded">Refunded</option></Select></div>}>{filtered.length === 0 ? <EmptyState title="No transactions found" description="Sales will appear here after the POS syncs them." /> : <Table><TableHead><th className="px-3 py-3">Receipt</th><th className="px-3 py-3">Date</th><th className="px-3 py-3">Total</th><th className="px-3 py-3">Status</th><th className="px-3 py-3" /></TableHead><tbody>{filtered.map((transaction) => <tr key={transaction.id} className="border-b border-slate-100"><TableCell className="font-medium">{transaction.receipt_number}</TableCell><TableCell>{dateTime.format(new Date(transaction.occurred_at))}</TableCell><TableCell>{money(transaction.total_amount)}</TableCell><TableCell><Badge tone={transaction.status === 'completed' ? 'success' : transaction.status === 'voided' ? 'danger' : 'warning'}>{transaction.status}</Badge></TableCell><TableCell>{transaction.status === 'completed' && <Button variant="danger" onClick={() => setSelectedId(transaction.id)}>Void / reverse</Button>}</TableCell></tr>)}</tbody></Table>}{selectedId && <div className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4"><p className="font-semibold text-red-800">Reverse transaction</p><p className="mt-1 text-sm text-red-700">Choose whether the sold stock should return to inventory.</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><Select label="Reason" value={reason} onChange={(event) => setReason(event.target.value)}><option>Customer changed mind</option><option>Incorrect order</option><option>Quality issue</option></Select><Select label="Stock action" value={restock ? 'restock' : 'waste'} onChange={(event) => setRestock(event.target.value === 'restock')}><option value="restock">Restock items</option><option value="waste">Waste stock</option></Select></div><div className="mt-3 flex gap-2"><Button variant="danger" onClick={() => void reverse()}>Confirm reversal</Button><Button variant="ghost" onClick={() => setSelectedId(undefined)}>Cancel</Button></div></div>}</Panel>
 }
 
-export function ProductPerformanceScreen({ data }: ScreenProps) {
+export function ProductPerformanceScreen({ data, amountsVisible }: ScreenProps) {
+  const money = (value: number) => formatFinancialAmount(value, amountsVisible)
   const today = getBusinessDateKey()
   const [from, setFrom] = useState(shiftDateKey(today, -29))
   const [to, setTo] = useState(today)
@@ -564,25 +579,26 @@ export function ProductPerformanceScreen({ data }: ScreenProps) {
     <div className="space-y-5">
       <Panel title="Product performance" description="See which products drive unit sales and revenue. This report is read-only." action={<div className="grid w-full grid-cols-2 gap-2 sm:w-auto"><Input label="From" type="date" value={from} onChange={(event) => setFrom(event.target.value)} /><Input label="To" type="date" value={to} onChange={(event) => setTo(event.target.value)} /></div>}>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {[['Product revenue', peso.format(productRevenue)], ['Units sold', unitsSold.toLocaleString()], ['Products sold', products.length.toLocaleString()], ['Top product share', `${topShare.toFixed(0)}%`]].map(([label, value]) => <div className="rounded-2xl bg-[#f7f1ff] p-4" key={label}><p className="text-xs font-semibold text-[#6b4d89]">{label}</p><p className="mt-2 text-xl font-black text-[#220046]">{value}</p></div>)}
+          {[['Product revenue', money(productRevenue)], ['Units sold', unitsSold.toLocaleString()], ['Products sold', products.length.toLocaleString()], ['Top product share', `${topShare.toFixed(0)}%`]].map(([label, value]) => <div className="rounded-2xl bg-[#f7f1ff] p-4" key={label}><p className="text-xs font-semibold text-[#6b4d89]">{label}</p><p className="mt-2 text-xl font-black text-[#220046]">{value}</p></div>)}
         </div>
       </Panel>
 
       <Panel title="Top products by revenue" description={`${from} to ${to}`}>
-        <HorizontalBarChart items={products.slice(0, 8).map((product) => ({ label: product.name, value: product.revenue, detail: `${product.unitsSold.toLocaleString()} units · ${product.orders} orders` }))} formatValue={(value) => peso.format(value)} />
+        <HorizontalBarChart items={products.slice(0, 8).map((product) => ({ label: product.name, value: product.revenue, detail: `${product.unitsSold.toLocaleString()} units · ${product.orders} orders` }))} formatValue={(value) => money(value)} />
       </Panel>
 
       <Panel title="Product detail" description="Completed POS sales in the selected period.">
         {products.length === 0 ? <EmptyState title="No product sales" description="Try a wider date range or wait for completed sales to sync." /> : <>
-          <div className="space-y-3 md:hidden">{products.map((product, index) => <article className="rounded-2xl border border-[#eadcff] bg-[#fffdf8] p-4" key={product.name}><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold text-[#8b6ca8]">#{index + 1}</p><h3 className="mt-1 font-bold text-[#220046]">{product.name}</h3></div><p className="font-black text-[#5a1bb0]">{peso.format(product.revenue)}</p></div><div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500"><span>{product.unitsSold.toLocaleString()} units sold</span><span className="text-right">{product.orders} orders</span></div></article>)}</div>
-          <div className="hidden md:block"><Table><TableHead><th className="px-3 py-3">Rank</th><th className="px-3 py-3">Product</th><th className="px-3 py-3 text-right">Units sold</th><th className="px-3 py-3 text-right">Orders</th><th className="px-3 py-3 text-right">Revenue</th></TableHead><tbody>{products.map((product, index) => <tr className="border-b border-slate-100" key={product.name}><TableCell>#{index + 1}</TableCell><TableCell className="font-semibold">{product.name}</TableCell><TableCell className="text-right">{product.unitsSold.toLocaleString()}</TableCell><TableCell className="text-right">{product.orders}</TableCell><TableCell className="text-right font-bold text-[#5a1bb0]">{peso.format(product.revenue)}</TableCell></tr>)}</tbody></Table></div>
+          <div className="space-y-3 md:hidden">{products.map((product, index) => <article className="rounded-2xl border border-[#eadcff] bg-[#fffdf8] p-4" key={product.name}><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold text-[#8b6ca8]">#{index + 1}</p><h3 className="mt-1 font-bold text-[#220046]">{product.name}</h3></div><p className="font-black text-[#5a1bb0]">{money(product.revenue)}</p></div><div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500"><span>{product.unitsSold.toLocaleString()} units sold</span><span className="text-right">{product.orders} orders</span></div></article>)}</div>
+          <div className="hidden md:block"><Table><TableHead><th className="px-3 py-3">Rank</th><th className="px-3 py-3">Product</th><th className="px-3 py-3 text-right">Units sold</th><th className="px-3 py-3 text-right">Orders</th><th className="px-3 py-3 text-right">Revenue</th></TableHead><tbody>{products.map((product, index) => <tr className="border-b border-slate-100" key={product.name}><TableCell>#{index + 1}</TableCell><TableCell className="font-semibold">{product.name}</TableCell><TableCell className="text-right">{product.unitsSold.toLocaleString()}</TableCell><TableCell className="text-right">{product.orders}</TableCell><TableCell className="text-right font-bold text-[#5a1bb0]">{money(product.revenue)}</TableCell></tr>)}</tbody></Table></div>
         </>}
       </Panel>
     </div>
   )
 }
 
-export function ReportsScreen({ data }: ScreenProps) {
+export function ReportsScreen({ data, amountsVisible }: ScreenProps) {
+  const money = (value: number) => formatFinancialAmount(value, amountsVisible)
   const today = getBusinessDateKey()
   const [from, setFrom] = useState(shiftDateKey(today, -6))
   const [to, setTo] = useState(today)
@@ -646,15 +662,15 @@ export function ReportsScreen({ data }: ScreenProps) {
     <div className="space-y-5">
       <Panel title="Sales analytics" description="Revenue and profit monitoring for completed POS sales." action={<div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-[minmax(0,9rem)_minmax(0,9rem)_auto] sm:items-end"><Input label="From" type="date" value={from} onChange={(event) => setFrom(event.target.value)} /><Input label="To" type="date" value={to} onChange={(event) => setTo(event.target.value)} /><Button className="col-span-2 w-full sm:col-span-1 sm:w-auto" onClick={exportReport} disabled={report.transactions.length === 0}>Download CSV</Button></div>}>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <div className="rounded-2xl bg-[#f4ecff] p-4"><p className="text-xs font-semibold text-[#5a1bb0]">Revenue</p><p className="mt-2 text-xl font-black text-[#220046] sm:text-2xl">{peso.format(totals.revenue)}</p><p className="mt-1 text-xs text-slate-500">{report.completed.length} completed sales</p></div>
-          <div className={`rounded-2xl p-4 ${totals.netProfit >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}><p className={`text-xs font-semibold ${totals.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>Net profit</p><p className={`mt-2 text-xl font-black sm:text-2xl ${totals.netProfit >= 0 ? 'text-emerald-900' : 'text-red-900'}`}>{peso.format(totals.netProfit)}</p><p className="mt-1 text-xs text-slate-500">After reported costs</p></div>
-          <div className="rounded-2xl bg-[#fff7e8] p-4"><p className="text-xs font-semibold text-amber-700">Average sale</p><p className="mt-2 text-xl font-black text-amber-950 sm:text-2xl">{peso.format(averageSale)}</p><p className="mt-1 text-xs text-slate-500">Per completed order</p></div>
+          <div className="rounded-2xl bg-[#f4ecff] p-4"><p className="text-xs font-semibold text-[#5a1bb0]">Revenue</p><p className="mt-2 text-xl font-black text-[#220046] sm:text-2xl">{money(totals.revenue)}</p><p className="mt-1 text-xs text-slate-500">{report.completed.length} completed sales</p></div>
+          <div className={`rounded-2xl p-4 ${totals.netProfit >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}><p className={`text-xs font-semibold ${totals.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>Net profit</p><p className={`mt-2 text-xl font-black sm:text-2xl ${totals.netProfit >= 0 ? 'text-emerald-900' : 'text-red-900'}`}>{money(totals.netProfit)}</p><p className="mt-1 text-xs text-slate-500">After reported costs</p></div>
+          <div className="rounded-2xl bg-[#fff7e8] p-4"><p className="text-xs font-semibold text-amber-700">Average sale</p><p className="mt-2 text-xl font-black text-amber-950 sm:text-2xl">{money(averageSale)}</p><p className="mt-1 text-xs text-slate-500">Per completed order</p></div>
           <div className="rounded-2xl bg-slate-100 p-4"><p className="text-xs font-semibold text-slate-600">Voided sales</p><p className="mt-2 text-xl font-black text-slate-900 sm:text-2xl">{report.voided.length}</p><p className="mt-1 text-xs text-slate-500">In selected period</p></div>
         </div>
       </Panel>
 
-      <Panel title="Revenue by day" description="Completed sales in the selected period.">
-        <RevenueTrendChart points={revenueTrend.map((day) => ({ date: day.date, value: day.revenue }))} formatValue={(value) => peso.format(value)} />
+      <Panel title={`Revenue by day · ${formatDateRangeLabel(from, to)}`} description="Completed sales in the selected period.">
+        <RevenueTrendChart points={revenueTrend.map((day) => ({ date: day.date, value: day.revenue }))} formatValue={(value) => money(value)} />
       </Panel>
 
       <div className="grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
@@ -663,35 +679,36 @@ export function ReportsScreen({ data }: ScreenProps) {
             { label: 'Cost of goods sold', value: totals.cogs },
             { label: 'Fixed overhead', value: totals.overhead },
             { label: 'Waste', value: totals.wasteCost },
-          ]} formatValue={(value) => peso.format(value)} />
+          ]} formatValue={(value) => money(value)} />
         </Panel>
         <Panel title="Recent activity" description="Latest transactions in this date range.">
-          {report.transactions.length === 0 ? <EmptyState title="No transactions" description="Choose a different date range or wait for POS synchronization." /> : <div className="divide-y divide-slate-100">{report.transactions.slice(0, 8).map((transaction) => <div className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0" key={transaction.id}><div className="min-w-0"><p className="truncate text-sm font-semibold text-[#39235f]">{transaction.receipt_number}</p><p className="mt-0.5 text-xs text-slate-400">{dateTime.format(new Date(transaction.occurred_at))}</p></div><div className="text-right"><p className="text-sm font-bold">{peso.format(transaction.total_amount)}</p><Badge tone={transaction.status === 'completed' ? 'success' : 'warning'}>{transaction.status}</Badge></div></div>)}</div>}
+          {report.transactions.length === 0 ? <EmptyState title="No transactions" description="Choose a different date range or wait for POS synchronization." /> : <div className="divide-y divide-slate-100">{report.transactions.slice(0, 8).map((transaction) => <div className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0" key={transaction.id}><div className="min-w-0"><p className="truncate text-sm font-semibold text-[#39235f]">{transaction.receipt_number}</p><p className="mt-0.5 text-xs text-slate-400">{dateTime.format(new Date(transaction.occurred_at))}</p></div><div className="text-right"><p className="text-sm font-bold">{money(transaction.total_amount)}</p><Badge tone={transaction.status === 'completed' ? 'success' : 'warning'}>{transaction.status}</Badge></div></div>)}</div>}
         </Panel>
       </div>
 
       {profitDays.length > 0 && <Panel title="Daily breakdown" description="Revenue, costs, and net profit for each active day.">
-        <div className="space-y-3 md:hidden">{profitDays.map((day) => <article className="rounded-2xl border border-[#eadcff] bg-[#fffdf8] p-4" key={day.businessDate}><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-slate-500">{day.businessDate}</p><p className="mt-1 text-lg font-black text-[#220046]">{peso.format(day.revenue)}</p><p className="text-xs text-slate-400">{day.completedSales} sales</p></div><p className={`font-black ${day.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{peso.format(day.netProfit)}</p></div><div className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-100 pt-3 text-xs text-slate-500"><span>COGS<br/><strong>{peso.format(day.cogs)}</strong></span><span>Waste<br/><strong>{peso.format(day.wasteCost)}</strong></span><span>Overhead<br/><strong>{peso.format(day.fixedOverhead)}</strong></span></div></article>)}</div>
-        <div className="hidden md:block"><Table><TableHead><th className="px-3 py-3">Date</th><th className="px-3 py-3 text-right">Revenue</th><th className="px-3 py-3 text-right">COGS</th><th className="px-3 py-3 text-right">Waste</th><th className="px-3 py-3 text-right">Overhead</th><th className="px-3 py-3 text-right">Net profit</th><th className="px-3 py-3 text-right">Sales</th></TableHead><tbody>{profitDays.map((day) => <tr className="border-b border-slate-100" key={day.businessDate}><TableCell className="font-medium">{day.businessDate}</TableCell><TableCell className="text-right">{peso.format(day.revenue)}</TableCell><TableCell className="text-right">{peso.format(day.cogs)}</TableCell><TableCell className="text-right">{peso.format(day.wasteCost)}</TableCell><TableCell className="text-right">{peso.format(day.fixedOverhead)}</TableCell><TableCell className={`text-right font-semibold ${day.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{peso.format(day.netProfit)}</TableCell><TableCell className="text-right">{day.completedSales}</TableCell></tr>)}</tbody></Table></div>
+        <div className="space-y-3 md:hidden">{profitDays.map((day) => <article className="rounded-2xl border border-[#eadcff] bg-[#fffdf8] p-4" key={day.businessDate}><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-slate-500">{day.businessDate}</p><p className="mt-1 text-lg font-black text-[#220046]">{money(day.revenue)}</p><p className="text-xs text-slate-400">{day.completedSales} sales</p></div><p className={`font-black ${day.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{money(day.netProfit)}</p></div><div className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-100 pt-3 text-xs text-slate-500"><span>COGS<br/><strong>{money(day.cogs)}</strong></span><span>Waste<br/><strong>{money(day.wasteCost)}</strong></span><span>Overhead<br/><strong>{money(day.fixedOverhead)}</strong></span></div></article>)}</div>
+        <div className="hidden md:block"><Table><TableHead><th className="px-3 py-3">Date</th><th className="px-3 py-3 text-right">Revenue</th><th className="px-3 py-3 text-right">COGS</th><th className="px-3 py-3 text-right">Waste</th><th className="px-3 py-3 text-right">Overhead</th><th className="px-3 py-3 text-right">Net profit</th><th className="px-3 py-3 text-right">Sales</th></TableHead><tbody>{profitDays.map((day) => <tr className="border-b border-slate-100" key={day.businessDate}><TableCell className="font-medium">{day.businessDate}</TableCell><TableCell className="text-right">{money(day.revenue)}</TableCell><TableCell className="text-right">{money(day.cogs)}</TableCell><TableCell className="text-right">{money(day.wasteCost)}</TableCell><TableCell className="text-right">{money(day.fixedOverhead)}</TableCell><TableCell className={`text-right font-semibold ${day.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{money(day.netProfit)}</TableCell><TableCell className="text-right">{day.completedSales}</TableCell></tr>)}</tbody></Table></div>
       </Panel>}
     </div>
   )
 }
 
-export function OperatingDaysScreen({ data }: ScreenProps) {
+export function OperatingDaysScreen({ data, amountsVisible }: ScreenProps) {
+  const money = (value: number) => formatFinancialAmount(value, amountsVisible)
   const openDay = data.businessDays.find((day) => day.closed_at === null)
   return <div className="space-y-6">
     {openDay && <Notice tone="info">This stall is open. It was opened {dateTime.format(new Date(openDay.opened_at))}.</Notice>}
     <Panel title="Opening and closing history" description="Times are recorded by the Cashier POS and shown in your local time.">
       {data.businessDays.length === 0 ? <EmptyState title="No operating days yet" description="The first day will appear after a Cashier opens the Android POS and it syncs." /> : <>
-        <div className="space-y-3 md:hidden">{data.businessDays.map((day) => <article className="rounded-2xl border border-[#eadcff] bg-[#fffdf8] p-4" key={day.id}><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-slate-500">Business date</p><p className="mt-1 font-black text-[#220046]">{day.business_date}</p></div>{day.closed_at ? <Badge tone="neutral">Closed</Badge> : <Badge tone="success">Open</Badge>}</div><dl className="mt-4 grid grid-cols-2 gap-3 text-xs"><div><dt className="text-slate-400">Opened</dt><dd className="mt-1 font-semibold text-slate-700">{dateTime.format(new Date(day.opened_at))}</dd></div><div><dt className="text-slate-400">Closed</dt><dd className="mt-1 font-semibold text-slate-700">{day.closed_at ? dateTime.format(new Date(day.closed_at)) : 'Still open'}</dd></div><div><dt className="text-slate-400">Closing cash</dt><dd className="mt-1 font-semibold text-slate-700">{day.closing_cash_total === null ? '—' : peso.format(day.closing_cash_total)}</dd></div><div><dt className="text-slate-400">Notes</dt><dd className="mt-1 font-semibold text-slate-700">{[day.opening_notes, day.closing_notes].filter(Boolean).join(' · ') || '—'}</dd></div></dl></article>)}</div>
+        <div className="space-y-3 md:hidden">{data.businessDays.map((day) => <article className="rounded-2xl border border-[#eadcff] bg-[#fffdf8] p-4" key={day.id}><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-slate-500">Business date</p><p className="mt-1 font-black text-[#220046]">{day.business_date}</p></div>{day.closed_at ? <Badge tone="neutral">Closed</Badge> : <Badge tone="success">Open</Badge>}</div><dl className="mt-4 grid grid-cols-2 gap-3 text-xs"><div><dt className="text-slate-400">Opened</dt><dd className="mt-1 font-semibold text-slate-700">{dateTime.format(new Date(day.opened_at))}</dd></div><div><dt className="text-slate-400">Closed</dt><dd className="mt-1 font-semibold text-slate-700">{day.closed_at ? dateTime.format(new Date(day.closed_at)) : 'Still open'}</dd></div><div><dt className="text-slate-400">Closing cash</dt><dd className="mt-1 font-semibold text-slate-700">{day.closing_cash_total === null ? '—' : money(day.closing_cash_total)}</dd></div><div><dt className="text-slate-400">Notes</dt><dd className="mt-1 font-semibold text-slate-700">{[day.opening_notes, day.closing_notes].filter(Boolean).join(' · ') || '—'}</dd></div></dl></article>)}</div>
         <div className="hidden md:block"><Table>
         <TableHead><th className="px-3 py-3">Business date</th><th className="px-3 py-3">Opened</th><th className="px-3 py-3">Closed</th><th className="px-3 py-3 text-right">Closing cash</th><th className="px-3 py-3">Notes</th></TableHead>
         <tbody>{data.businessDays.map((day) => <tr className="border-b border-slate-100" key={day.id}>
           <TableCell className="font-medium">{day.business_date}</TableCell>
           <TableCell>{dateTime.format(new Date(day.opened_at))}</TableCell>
           <TableCell>{day.closed_at ? dateTime.format(new Date(day.closed_at)) : <Badge tone="success">Open</Badge>}</TableCell>
-          <TableCell className="text-right">{day.closing_cash_total === null ? '—' : peso.format(day.closing_cash_total)}</TableCell>
+          <TableCell className="text-right">{day.closing_cash_total === null ? '—' : money(day.closing_cash_total)}</TableCell>
           <TableCell className="max-w-xs text-xs text-slate-500">{[day.opening_notes, day.closing_notes].filter(Boolean).join(' · ') || '—'}</TableCell>
         </tr>)}</tbody>
         </Table></div>

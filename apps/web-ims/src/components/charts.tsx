@@ -1,11 +1,8 @@
-import { useId } from 'react'
-
 export type TrendPoint = {
   date: string
   value: number
 }
 
-const compactNumber = new Intl.NumberFormat('en-PH', { notation: 'compact', maximumFractionDigits: 1 })
 const shortDate = new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', timeZone: 'UTC' })
 
 function displayDate(date: string) {
@@ -13,45 +10,35 @@ function displayDate(date: string) {
 }
 
 export function RevenueTrendChart({ points, formatValue }: { points: TrendPoint[]; formatValue: (value: number) => string }) {
-  const gradientId = useId().replaceAll(':', '')
-  const width = 560
-  const height = 240
-  const paddingX = 46
-  const paddingTop = 22
-  const paddingBottom = 38
-  const chartWidth = width - paddingX * 2
+  const width = 720
+  const height = 300
+  const paddingLeft = 82
+  const paddingRight = 18
+  const paddingTop = 20
+  const paddingBottom = 46
+  const chartWidth = width - paddingLeft - paddingRight
   const chartHeight = height - paddingTop - paddingBottom
   const highestValue = Math.max(...points.map((point) => point.value), 0)
   const maxValue = Math.max(highestValue, 1)
-  const coordinates = points.map((point, index) => ({
-    ...point,
-    x: paddingX + (points.length === 1 ? chartWidth / 2 : (index / (points.length - 1)) * chartWidth),
-    y: paddingTop + chartHeight - (point.value / maxValue) * chartHeight,
-  }))
-  const line = coordinates.map((point) => `${point.x},${point.y}`).join(' ')
-  const area = coordinates.length > 0
-    ? `${paddingX},${paddingTop + chartHeight} ${line} ${paddingX + chartWidth},${paddingTop + chartHeight}`
-    : ''
-  const labelIndexes = [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])]
+  const slotWidth = points.length > 0 ? chartWidth / points.length : chartWidth
+  const barWidth = Math.max(2, Math.min(34, slotWidth * 0.62))
+  const labelIndexes = [...new Set([0, Math.floor((points.length - 1) / 4), Math.floor((points.length - 1) / 2), Math.floor(((points.length - 1) * 3) / 4), points.length - 1])]
 
   return (
-    <div className="relative min-h-56 w-full" role="img" aria-label={`Revenue trend. Highest value ${formatValue(highestValue)}.`}>
-      <svg className="h-auto w-full overflow-visible" viewBox={`0 0 ${width} ${height}`}>
-        <defs>
-          <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="#7c3aed" stopOpacity="0.3" />
-            <stop offset="100%" stopColor="#7c3aed" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        {[0, 0.5, 1].map((ratio) => {
+    <div className="relative min-h-60 w-full" role="img" aria-label={`Daily revenue chart. Highest value ${formatValue(highestValue)}.`}>
+      <svg className="h-auto w-full" viewBox={`0 0 ${width} ${height}`}>
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
           const y = paddingTop + chartHeight * ratio
           const value = maxValue * (1 - ratio)
-          return <g key={ratio}><line stroke="#eadcff" strokeDasharray="5 6" x1={paddingX} x2={paddingX + chartWidth} y1={y} y2={y} /><text fill="#8b7b9e" fontSize="13" textAnchor="end" x={paddingX - 8} y={y + 4}>{compactNumber.format(value)}</text></g>
+          return <g key={ratio}><line stroke="#e5e7eb" x1={paddingLeft} x2={paddingLeft + chartWidth} y1={y} y2={y} /><text fill="#64748b" fontSize="12" textAnchor="end" x={paddingLeft - 10} y={y + 4}>{formatValue(value)}</text></g>
         })}
-        {area && <polygon fill={`url(#${gradientId})`} points={area} />}
-        {line && <polyline fill="none" points={line} stroke="#6d28d9" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" />}
-        {coordinates.map((point) => <circle key={point.date} cx={point.x} cy={point.y} fill="#fffdf8" r="5" stroke="#6d28d9" strokeWidth="3"><title>{displayDate(point.date)}: {formatValue(point.value)}</title></circle>)}
-        {labelIndexes.map((index) => points[index] && <text fill="#746681" fontSize="14" key={points[index].date} textAnchor={index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'} x={coordinates[index].x} y={height - 8}>{displayDate(points[index].date)}</text>)}
+        {points.map((point, index) => {
+          const barHeight = point.value === 0 ? 0 : Math.max(3, (point.value / maxValue) * chartHeight)
+          const x = paddingLeft + index * slotWidth + (slotWidth - barWidth) / 2
+          const y = paddingTop + chartHeight - barHeight
+          return <rect key={point.date} x={x} y={y} width={barWidth} height={barHeight} rx={Math.min(5, barWidth / 3)} fill="#6d28d9"><title>{displayDate(point.date)}: {formatValue(point.value)}</title></rect>
+        })}
+        {labelIndexes.map((index) => points[index] && <text fill="#64748b" fontSize="12" key={points[index].date} textAnchor="middle" x={paddingLeft + index * slotWidth + slotWidth / 2} y={height - 12}>{displayDate(points[index].date)}</text>)}
       </svg>
       {points.every((point) => point.value === 0) && <p className="absolute inset-0 flex items-center justify-center text-sm text-slate-400">No completed sales in this period</p>}
     </div>

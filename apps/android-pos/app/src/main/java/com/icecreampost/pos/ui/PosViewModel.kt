@@ -57,12 +57,14 @@ class PosViewModel @Inject constructor(
     private val _receipt = MutableStateFlow<CheckoutReceipt?>(null)
     private val _syncMessage = MutableStateFlow<String?>(null)
     private val _sessionReady = MutableStateFlow(false)
+    private val _amountsVisible = MutableStateFlow(true)
 
     val isBusy = _busy.asStateFlow()
     val error = _error.asStateFlow()
     val receipt = _receipt.asStateFlow()
     val syncMessage = _syncMessage.asStateFlow()
     val sessionReady = _sessionReady.asStateFlow()
+    val amountsVisible = _amountsVisible.asStateFlow()
     val query: StateFlow<String> = searchQuery.asStateFlow()
     val category: StateFlow<String?> = selectedCategory.asStateFlow()
 
@@ -154,6 +156,7 @@ class PosViewModel @Inject constructor(
 
     fun dismissError() { _error.value = null }
     fun dismissReceipt() { _receipt.value = null }
+    fun toggleAmountsVisible() { _amountsVisible.value = !_amountsVisible.value }
 
     fun syncToIms() {
         runAction {

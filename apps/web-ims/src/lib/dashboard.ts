@@ -30,6 +30,15 @@ export function shiftDateKey(date: string, days: number): string {
   return value.toISOString().slice(0, 10)
 }
 
+export function formatDateRangeLabel(from: string, to: string): string {
+  const dateKeyPattern = /^\d{4}-\d{2}-\d{2}$/
+  if (!dateKeyPattern.test(from) || !dateKeyPattern.test(to) || from > to) return 'Selected period'
+  const format = new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+  const start = format.format(new Date(`${from}T00:00:00Z`))
+  const end = format.format(new Date(`${to}T00:00:00Z`))
+  return from === to ? start : `${start} – ${end}`
+}
+
 export function getRevenueTrend(transactions: Transaction[], from: string, to: string) {
   const dateKeyPattern = /^\d{4}-\d{2}-\d{2}$/
   if (!dateKeyPattern.test(from) || !dateKeyPattern.test(to) || from > to) return []

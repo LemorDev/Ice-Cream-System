@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getBusinessDateKey, getDailyProfitReport, getDashboardMetrics, getProductPerformance, getRevenueTrend } from './dashboard.ts'
+import { formatDateRangeLabel, getBusinessDateKey, getDailyProfitReport, getDashboardMetrics, getProductPerformance, getRevenueTrend } from './dashboard.ts'
 import type { InventoryEntry, Product, Transaction, TransactionItem } from './types'
 
 const products = [
@@ -44,6 +44,12 @@ test('revenue trend includes zero-sales days and completed transactions only', (
     { date: '2026-08-04', revenue: 40, orders: 1 },
     { date: '2026-08-05', revenue: 0, orders: 0 },
   ])
+})
+
+test('report date label follows the selected range', () => {
+  assert.equal(formatDateRangeLabel('2026-09-01', '2026-09-10'), 'Sep 1, 2026 – Sep 10, 2026')
+  assert.equal(formatDateRangeLabel('2026-09-10', '2026-09-10'), 'Sep 10, 2026')
+  assert.equal(formatDateRangeLabel('', '2026-09-10'), 'Selected period')
 })
 
 test('product performance ranks completed-sale revenue and excludes voided sales', () => {

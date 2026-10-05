@@ -96,7 +96,7 @@ begin
 
   perform set_config('request.headers', jsonb_build_object('x-session-token', admin_token)::text, true);
   activation := public.create_device_activation(stall_a, 'RBAC test POS');
-  perform set_config('request.headers', jsonb_build_object('x-session-token', cashier_token)::text, true);
+  perform set_config('request.headers', jsonb_build_object('x-session-token', cashier_token, 'x-device-id', 'rbac-test-hardware')::text, true);
   activation_result := public.activate_pos_device(activation ->> 'activation_code', 'rbac-test-hardware');
   if activation_result ->> 'stall_id' <> stall_a::text then
     raise exception 'Cashier activation returned the wrong stall';
@@ -145,12 +145,13 @@ begin
     raise exception 'Closing the operating day was not recorded';
   end if;
 
+  perform public.prepare_pos_replacement((activation_result ->> 'device_id')::uuid);
   perform set_config('request.headers', jsonb_build_object('x-session-token', admin_token)::text, true);
   replacement_activation := public.create_device_activation(stall_a, 'Replacement POS');
   if not exists (select 1 from public.devices where id = (activation_result ->> 'device_id')::uuid and is_active) then
     raise exception 'Creating a replacement code disabled the working POS too early';
   end if;
-  perform set_config('request.headers', jsonb_build_object('x-session-token', cashier_token)::text, true);
+  perform set_config('request.headers', jsonb_build_object('x-session-token', cashier_token, 'x-device-id', 'rbac-replacement-hardware')::text, true);
   perform public.activate_pos_device(replacement_activation ->> 'activation_code', 'rbac-replacement-hardware');
   if exists (select 1 from public.devices where id = (activation_result ->> 'device_id')::uuid and is_active) then
     raise exception 'Redeeming a replacement code did not deactivate the previous POS';

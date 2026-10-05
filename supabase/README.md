@@ -1,10 +1,36 @@
 # Supabase
 
+## CLI connection for development
+
+Use only the **development** and **production** environments. The development
+Supabase project is `fhyqrgxwdqlyzxsnpthr`; production has a different project
+reference. Keep URLs and publishable keys in ignored local configuration files.
+Never put a CLI access token, database password, or secret/service-role key in
+chat, source files, or Git.
+
+From the repository root, authenticate the pinned CLI locally and explicitly
+link the development project:
+
+```powershell
+$env:SUPABASE_TELEMETRY_DISABLED = '1'
+.\node_modules\.bin\supabase.cmd login
+.\node_modules\.bin\supabase.cmd link --project-ref fhyqrgxwdqlyzxsnpthr
+.\node_modules\.bin\supabase.cmd migration list --linked
+.\node_modules\.bin\supabase.cmd db push --dry-run
+```
+
+Confirm the linked project reference is the development project and the preview
+contains only the expected pending migrations before running
+`.\node_modules\.bin\supabase.cmd db push`. The development schema was first
+installed from all repository migrations on 2026-10-03. Never use
+`db reset --linked`; rollback-only fixtures in `tests/` are for a disposable
+database, never a live sales database. The linked project reference is kept in
+ignored `supabase/.temp/` files.
+
 ## Apply the database schema
 
-1. Create a Supabase project and open **SQL Editor**.
-2. For a fresh database, apply every SQL file in `migrations/` once, in filename order. For an existing database, apply only migrations that have not already been applied.
-3. Create the first System admin and active stall by running the following as the database owner with your own values:
+1. Apply migrations to the development project using the CLI workflow above. The push includes no seed data.
+2. In the development project's **SQL Editor**, create the first System admin and active stall by running the following as the database owner with your own values:
 
    ```sql
    select public.create_initial_system_admin(
@@ -17,8 +43,9 @@
    ```
 
    Client roles cannot execute this bootstrap helper. From the web dashboard, the System admin can then create the regular Owner and Cashier accounts.
-4. In **Project Settings → API**, copy the Project URL and **anon/publishable** key into `apps/web-ims/.env.local` and the Android `local.properties`. Never ship the `service_role` key to either client.
-5. Start the web application with `pnpm --filter ice-cream-ims dev`, then sign in with the System admin account.
+3. Start the web application with `pnpm --dir apps/web-ims dev`, then sign in with the System admin account. Create test-only Owners, Cashiers, products, and inventory from development IMS.
+
+Never ship a `service_role` or secret key to either client. Keep development and production URL/key pairs separate in their ignored local configuration files.
 
 For an existing database, the role migration automatically renames every `manager` account to `owner` and gives it access to its existing stall. Promote one chosen account to System admin after applying all migrations.
 
@@ -32,12 +59,20 @@ This project does not use Supabase Auth providers. The web uses `login_with_pass
 - `owner` has read-only web monitoring for assigned stalls: revenue, profit, sales activity, product performance, and opening/closing history. Owners cannot mutate operational data or access an unassigned stall.
 - `cashier` can sign in to an assigned Android POS, open and close its operating day, make sales while that day is open, and sync the cost-free POS catalog and own-stall inventory. Cashiers cannot use the Owner dashboard or read product costs and profit data.
 
-One POS device can be active for a stall at a time. `MAIN-001` is a stall code used during sign-in, while the System Administrator-generated POS code is a separate one-time activation credential. Redeeming a replacement activation code deactivates the previous device. The code is stored only as a hash, works once, and is bound to the Android hardware identifier when redeemed. Subsequent Cashier sign-ins on that phone restore the active binding without asking for another activation code.
+One POS device can be active for a stall at a time. `MAIN-001` is a stall code used during sign-in, while the System Administrator-generated POS code is a separate one-time activation credential. The code is stored only as a hash, works once, and is bound to the Android hardware identifier when redeemed. First activation codes expire after 24 hours; replacement codes expire after 30 minutes to match the old phone's prepared handover window. Subsequent Cashier sign-ins on that phone restore the active binding without asking for another activation code.
+
+For a planned replacement, close the operating day on the old phone, sync until every queued sale, stock change, deduction, and closing is accepted, then use **Device information → Prepare for replacement**. The System Administrator can create a code during the following 30 minutes. Redeeming it deactivates the old phone; inactive devices cannot upload new sales or deductions. Signing in again on the old phone cancels its preparation, so repeat the steps if needed. A different operating-day ID for a date already on the server is rejected rather than silently accepted.
+
+If the old phone may still be recovered, connect it and sync before authorizing replacement. If it is lost, the System Administrator can authorize recovery in **Users & access → Cashier POS activation** and record why. The replacement resumes an open server day using its existing day ID and displays the sales, deductions, COGS, and waste known to IMS at recovery time. The cashier counts the cash and receipts physically, records the actual closing count, then the administrator records a reconciliation review in IMS. Recount physical stock and enter adjustments for missing stock movements.
+
+The Android queue is stored locally in Room. Sales, deductions, stock receipts, or other records that existed only in the lost phone's queue cannot be recovered by IMS; recovery marks the incident for review and preserves known server data, but does not recreate unknown records or declare them synced. If the phone is later found, connect and sync it before activating the replacement. If activation already happened, the old phone is disabled and its old queue needs a separate controlled reconciliation; do not discard or reset it.
+
+POS deductions lower expected cash. Only deductions marked **Additional expense in profit** lower profit again; cash used to pay a fixed IMS overhead expense should leave that option off. Apply `202610010002_pos_activation_and_deduction_alignment.sql` before releasing the matching Android and web builds, or deduction accounting and replacement controls will disagree between clients and server.
 
 The current business has one active stall. The schema and Owner dashboard already support assigning several stalls without changing the one-stall workflow.
 
 ## Migration verification
 
-The rollback-only SQL fixtures in `tests/` cover sale/reversal behavior and the RBAC, stall assignment, device activation, and operating-day contracts. Run them only against a disposable database after applying every migration. They have been prepared locally but were not executed during this implementation because no local PostgreSQL runtime is configured.
+The rollback-only SQL fixtures in `tests/` cover sale/reversal behavior and the RBAC, stall assignment, device activation, operating-day, and deduction contracts. Run them only against a disposable database after applying every migration. The PGlite regression runner can exercise the activation and deduction fixtures locally with `node supabase/tests/pos_stock_receiving.integration.mjs --activation`; still validate the migrations on a development Supabase project before production.
 
 Before production, also add login rate limiting and an account recovery process, validate the migrations against a development Supabase project, and complete the release checks in `docs/PROJECT_REVIEW.md`.

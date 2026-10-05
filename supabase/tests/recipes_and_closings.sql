@@ -50,12 +50,26 @@ begin
     'id', close_id, 'stall_id', stall_id, 'business_day_id', day_id,
     'business_date', (now() at time zone 'Asia/Manila')::date,
     'gross_sales', 0, 'cogs', 0, 'waste_cost', 0, 'overhead_cost', 0, 'net_profit', 0,
-    'expected_cash', 100, 'collected_cash', 95, 'device_id', device_id, 'closed_at', now()
+    'expected_cash', 85, 'collected_cash', 85, 'device_id', device_id, 'closed_at', now(),
+    'revenue_deduction', 15, 'deduction_reason', 'Customer refund'
   ));
   if response ->> 'status' <> 'accepted' or not exists (
     select 1 from public.daily_store_closings where id = close_id and gross_sales = 100 and cogs = 42
-      and overhead_cost = 10 and net_profit = 48 and expected_cash = 100 and collected_cash = 95
+      and overhead_cost = 10 and revenue_deduction = 15 and deduction_reason = 'Customer refund'
+      and net_profit = 33 and expected_cash = 85 and collected_cash = 85
   ) then raise exception 'Daily closing did not use authoritative profit totals'; end if;
+
+  begin
+    perform public.push_daily_store_closing(jsonb_build_object(
+      'id', gen_random_uuid(), 'stall_id', stall_id, 'business_day_id', day_id,
+      'business_date', (now() at time zone 'Asia/Manila')::date,
+      'collected_cash', 100, 'device_id', device_id, 'closed_at', now(),
+      'revenue_deduction', 1, 'deduction_reason', ''
+    ));
+    raise exception 'A reasonless revenue deduction was accepted';
+  exception when sqlstate '22023' then
+    null;
+  end;
 end;
 $$;
 

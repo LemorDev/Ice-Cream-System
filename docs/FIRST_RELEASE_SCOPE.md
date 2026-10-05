@@ -1,6 +1,6 @@
 # First-release scope and operating rules
 
-Status: **draft for Owner and Cashier acceptance**, 5 October 2026. This defines the intended one-stall release; it does not certify that the current software passes these rules. Use [R05–R12](FIRST_RELEASE_TASKS.md) to implement and test them before real sales.
+Status: **Owner and Cashier acceptance reported for scope revision `0bba1be`**, 5 October 2026. This defines the intended one-stall release; it does not certify that the current software passes these rules. Use [R05–R12](FIRST_RELEASE_TASKS.md) to implement and test them before real sales.
 
 ## Release boundary
 
@@ -32,15 +32,15 @@ The Owner and Cashier accept the unit and recipe rule in R02. The actual catalog
 
 ## Sign-off and change control
 
-The Developer walks the Owner and Cashier through each row using representative menu items and concrete examples. Record disagreements as changes here before sign-off. R02 is complete only when every row is accepted and both people sign the **same document revision**. The System administrator prepares the actual catalog and the Owner approves it in R17/R21. The Developer prepares the paper sheet and the Cashier reviews it in R18. Sign-off here accepts intended behavior; later UAT signs off on the tested implementation and figures.
+The Owner and Cashier acceptance of scope revision `0bba1be` was reported by the user in this task on 5 October 2026; individual names were not provided. The System administrator prepares the actual catalog and the Owner approves it in R17/R21. The Developer prepares the paper sheet and the Cashier reviews it in R18. Scope acceptance confirms intended behavior; later UAT signs off on the tested implementation and figures.
 
 | Role | Name | Accepted revision/commit | Date | Status |
 | --- | --- | --- | --- | --- |
-| Owner | Pending | Pending | Pending | **Pending** |
-| Cashier | Pending | Pending | Pending | **Pending** |
-| Developer (scope recorded) | Pending | Pending | Pending | **Pending** |
+| Owner | Not provided | `0bba1be` | 2026-10-05 | **Accepted, as reported by user** |
+| Cashier | Not provided | `0bba1be` | 2026-10-05 | **Accepted, as reported by user** |
+| Developer (scope recorded) | Codex | `0bba1be` | 2026-10-05 | **Recorded** |
 
-Open decisions before sign-off:
+Follow-through after scope acceptance:
 
 1. Confirm the original-day correction and current-till cash record in UAT, including a Cashier action without prior approval.
 2. Name the support person and agree on specific stop conditions for paper sales in R18.

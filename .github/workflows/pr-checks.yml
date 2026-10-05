@@ -22,6 +22,7 @@ jobs:
           node-version: 24.19.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level=moderate
       - run: pnpm --dir apps/web-ims lint
       - run: pnpm --dir apps/web-ims test
       - run: pnpm --dir apps/web-ims build:development
@@ -30,6 +31,18 @@ jobs:
           VITE_SUPABASE_URL: https://ci-development.invalid
           VITE_SUPABASE_ANON_KEY: ci-public-placeholder
           VITE_SUPABASE_PRODUCTION_URL: https://ci-production.invalid
+
+  database:
+    name: Database checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+      - name: Install isolated PostgreSQL test runtime
+        run: npm install --prefix apps/android-pos/app/build/sql-test-runtime --no-audit --no-fund --package-lock=false @electric-sql/pglite@0.5.8
+      - run: node supabase/tests/pos_stock_receiving.integration.mjs --activation
 
   android:
     name: Android checks

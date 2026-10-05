@@ -113,11 +113,11 @@ begin
   if not restored_login.is_activated or restored_login.device_id::text <> activation_result ->> 'device_id' then
     raise exception 'Cashier login did not restore the active device';
   end if;
-  begin
-    perform public.login_pos_with_password('WRONG-STALL', cashier_id::text || '@example.invalid', 'cashier-password');
+  if exists (select 1 from public.login_pos_with_password(
+    'WRONG-STALL', cashier_id::text || '@example.invalid', 'cashier-password'
+  )) then
     raise exception 'Cashier login accepted the wrong stall code';
-  exception when invalid_authorization_specification then null;
-  end;
+  end if;
 
   day_result := public.push_business_day(jsonb_build_object(
     'id', day_id,

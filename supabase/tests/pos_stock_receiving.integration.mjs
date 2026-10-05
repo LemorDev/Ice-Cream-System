@@ -3,7 +3,8 @@ import { readFile, readdir } from 'node:fs/promises';
 // npm install --prefix apps/android-pos/app/build/sql-test-runtime --no-audit --no-fund --package-lock=false @electric-sql/pglite@0.5.8
 // This test uses in-memory PostgreSQL; it never connects to Supabase.
 // pgcrypto is unavailable in PGlite: fixtures use native SHA-256 for token hashes
-// and UUID bytes for test token generation. Password-login/crypto behavior is outside this test.
+// and UUID bytes for test token generation. The login fixture uses a stand-in
+// password hash to verify lockout state, not bcrypt strength.
 import { createRequire } from 'node:module';
 const requireRuntime = createRequire(new URL('../../apps/android-pos/app/build/sql-test-runtime/package.json', import.meta.url));
 const { PGlite } = requireRuntime('@electric-sql/pglite');
@@ -44,7 +45,7 @@ try {
   await db.exec(await readFile('supabase/migrations/202609300002_fix_pos_inventory_movement_enum.sql','utf8'));
   await db.exec(fixture);
   console.log('PASS: corrected receipt integration fixture (stock totals, repeat deliveries, retry idempotency, input validation, permissions)');
-  const regressionFiles = ['stockable_product_classification.sql', 'set_stock_on_hand.sql'];
+  const regressionFiles = ['stockable_product_classification.sql', 'set_stock_on_hand.sql', 'password_login_limits.sql'];
   if (process.argv.includes('--extended')) regressionFiles.push('recipes_and_closings.sql');
   if (process.argv.includes('--activation')) regressionFiles.push('activation_alignment.sql', 'separate_revenue_deductions.sql', 'system_admin_data_reset.sql', 'admin_close_open_business_day.sql');
   for (const file of regressionFiles) {

@@ -71,8 +71,10 @@ POS deductions lower expected cash. Only deductions marked **Additional expense 
 
 The current business has one active stall. The schema and Owner dashboard already support assigning several stalls without changing the one-stall workflow.
 
+The password login RPCs share a per-account limit: after five incorrect passwords within fifteen minutes, both web and POS sign-in return no session for fifteen minutes, even with the correct password. Unknown accounts and wrong stall codes return the same no-session result. The counter is stored in the private schema and is cleared after a successful sign-in. Apply `202610050001_limit_password_login_attempts.sql` to each environment before exposing a release; client builds alone cannot enforce this protection. An administrator should help a locked-out user wait for the cooldown and then reset the password using the existing managed-user workflow. A dedicated account recovery process remains a release task.
+
 ## Migration verification
 
 The rollback-only SQL fixtures in `tests/` cover sale/reversal behavior and the RBAC, stall assignment, device activation, operating-day, and deduction contracts. Run them only against a disposable database after applying every migration. The PGlite regression runner can exercise the activation and deduction fixtures locally with `node supabase/tests/pos_stock_receiving.integration.mjs --activation`; still validate the migrations on a development Supabase project before production.
 
-Before production, also add login rate limiting and an account recovery process, validate the migrations against a development Supabase project, and complete the release checks in `docs/PROJECT_REVIEW.md`.
+Before production, validate the login limit and other migrations against the development Supabase project, define the account recovery process, and complete the release checks in `docs/PROJECT_REVIEW.md`.

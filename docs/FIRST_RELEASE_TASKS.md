@@ -1,6 +1,6 @@
 # First-release task tracker
 
-Updated: 4 October 2026. Source plan: [First-release deployment plan](FIRST_RELEASE_DEPLOYMENT_PLAN.md).
+Updated: 5 October 2026. Source plan: [First-release deployment plan](FIRST_RELEASE_DEPLOYMENT_PLAN.md).
 
 This is the working checklist for the first IMS, Owner dashboard, and Android POS release. Complete one numbered task at a time, record its evidence in this file, and start the next ready task. `Done` means the stated completion check passed; a command merely running is not enough. Keep development test data out of production. Real sales begin only in the supervised production pilot.
 
@@ -15,7 +15,7 @@ The 4 October local check found the branch `codex/inventory-recipes-ui` with man
 ## 1. Establish the release baseline
 
 - [x] **R01 — Inventory current source and deployments** (Developer). Record the current commit/branch, changed and untracked files grouped into web, Android, database, docs, and generated files; check which files may contain credentials before staging anything. Read-only inventory of the existing production Supabase migration history, current web URL/revision if any, installed POS package/version/signature, and pending POS queue when access is available. **Done when:** `Release baseline` below has verified values or explicitly says `unknown` for each production item; no current work was lost.
-- [ ] **R02 — Agree on first-release scope** (Owner + Developer + Cashier; needs R01). Write the supported one-stall workflows and acceptance rules for recipes/units, refund or void handling, operating-day cutoff, cash deductions versus profit deductions, inventory corrections, and what the cashier does when the POS is unavailable. **Done when:** each item is marked `in v1` or `deferred with procedure`, and the Owner and Cashier accept the scope.
+- [-] **R02 — Agree on first-release scope** (Owner + Developer + Cashier; needs R01). Write the supported one-stall workflows and acceptance rules for recipes/units, refund or void handling, operating-day cutoff, cash deductions versus profit deductions, inventory corrections, and what the cashier does when the POS is unavailable. **Done when:** each item is marked `in v1` or `deferred with procedure`, and the Owner and Cashier accept the scope.
 - [x] **R03 — Preserve and organize the current work** (Developer; needs R01). Review every changed/untracked file, keep secrets and generated output out of Git, group intended work into understandable commits on the current branch, and record the resulting commit IDs. **Done when:** the feature work is committed safely, unrelated changes are preserved, and the source used for testing is identifiable.
 - [ ] **R04 — Establish the branch and review flow** (Developer; needs R03). Fetch the remote state; create or verify `develop` from the reviewed `main` baseline; open the feature PR into `develop`; add practical protections for `develop` and `main` and prevent unintended production auto-deploys while configuring them. **Done when:** branch ancestry, PR base, required checks, and production deployment trigger are documented and verified.
 
@@ -23,16 +23,16 @@ The 4 October local check found the branch `codex/inventory-recipes-ui` with man
 
 ### R02 scope decision sheet
 
-Mark each row `in v1` or `deferred with procedure`, then write the exact acceptance rule before R02 is complete.
+The detailed rules, acceptance checks, implementation gaps, and sign-off fields are in the [first-release scope](FIRST_RELEASE_SCOPE.md). The current planning choices require a tested POS refund/void flow and a day that can cross midnight; both are release blockers until implemented and verified. The remaining rows are proposed defaults. R02 stays in progress until the Owner and Cashier accept the same revision.
 
 | Decision | v1 choice / acceptance rule |
 | --- | --- |
-| Products, recipes, ingredient units, and opening stock | Pending Owner/Cashier agreement |
-| Refunds, voids, and mistaken sales | Pending Owner/Cashier agreement |
-| Operating day that crosses midnight | Pending Owner/Cashier agreement |
-| Cash deductions versus profit deductions | Pending Owner/Cashier agreement |
-| Stock receiving, waste, and corrections | Pending Owner/Cashier agreement |
-| Cashier procedure during internet/POS failure | Pending Owner/Cashier agreement |
+| Products, recipes, ingredient units, and opening stock | **In v1**; draft rule in scope document; name catalog preparer and obtain Cashier acceptance |
+| Refunds, voids, and mistaken sales | **In v1**; tested POS flow required; Cashier may correct a closed day with audit trail and no prior approval; Cashier acceptance pending |
+| Operating day that crosses midnight | **In v1**; one day spans midnight until deliberate close; Cashier acceptance pending |
+| Cash deductions versus profit deductions | **In v1**; till cash and new expense handled separately; Cashier acceptance pending |
+| Stock receiving, waste, and corrections | **In v1**; Cashier receives, administrator corrects; Cashier acceptance pending |
+| Cashier procedure during internet/POS failure | Offline POS sales **in v1**; unavailable POS **deferred with numbered-paper procedure**; pilot support/stop details belong to R18; Cashier acceptance pending |
 
 ## 2. Make the development candidate trustworthy
 
@@ -90,7 +90,7 @@ Fill this in during R01; do not infer production values from local files.
 | Production Supabase project and migration history | Unknown; verify read-only in R01/R15 |
 | Currently deployed web URL and revision | Unknown; verify in R01/R15 |
 | Installed production POS package, version, certificate, queue | Unknown; verify in R01/R15 |
-| Approved v1 scope and UAT testers | Pending R02 |
+| Approved v1 scope and UAT testers | [Draft scope](FIRST_RELEASE_SCOPE.md) recorded; Owner and Cashier sign-off pending R02 |
 | Backup and recovery target | Pending R16 |
 
 ## Progress log
@@ -100,3 +100,4 @@ Fill this in during R01; do not infer production values from local files.
 | 2026-10-04 | Planning | Created the numbered tracker from the deployment plan; checked local branch, dirty working tree, and absence of local `develop`/`.github` workflows. | R01: inventory and sort current changes. |
 | 2026-10-04 | R01 done | Grouped 125 status paths and checked that local credential/config paths are ignored. Production web, database, and installed POS details remain explicitly unknown pending production access. | R02: agree on v1 scope and acceptance rules. |
 | 2026-10-05 | R03 done | Reviewed path inventory and staged content, screened for credential patterns, excluded ignored local configuration and the unrelated screenshot, and saved five grouped commits (`02cedcf` through `9f41023`). Web tests/lint/development build and Android unit tests passed on `9f41023`. | R02 remains next for Owner/Cashier scope decisions; R04 is independently ready after R03. |
+| 2026-10-05 | R02 in progress | Drafted the [scope and acceptance rules](FIRST_RELEASE_SCOPE.md). Planning choices are a tested POS refund/void flow, midnight-spanning operating day, original-day refund correction by the Cashier without prior approval, numbered-paper outage sales, and the proposed defaults for the remaining workflows. Current POS reversal and cross-midnight reporting are unverified release blockers. | Obtain Owner and Cashier acceptance of the same scope revision; detail the paper sheet and support contact in R18. |

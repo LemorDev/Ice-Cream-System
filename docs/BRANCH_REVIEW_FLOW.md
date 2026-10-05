@@ -8,7 +8,7 @@ Verified 5 October 2026. Repository: [LemorDev/Ice-Cream-System](https://github.
 | --- | --- | --- |
 | `main` / `origin/main` | `c90835f` | Reviewed starting baseline; future production releases only |
 | `develop` / `origin/develop` | `c90835f` | Created from the freshly fetched `origin/main`; development integration |
-| `codex/inventory-recipes-ui` | `65284df` when [draft PR #1](https://github.com/LemorDev/Ice-Cream-System/pull/1) opened | First-release feature work; PR base is `develop` |
+| `codex/inventory-recipes-ui` | `65284df` when [draft PR #1](https://github.com/LemorDev/Ice-Cream-System/pull/1) opened; subsequent R04 check commits are on the same branch | First-release feature work; PR base is `develop` |
 
 `main` is an ancestor of the feature branch. The feature PR was verified as `codex/inventory-recipes-ui` → `develop`, with the expected base and head commits. Do not merge the draft until its required checks and review gates pass. Feature PRs may be squash-merged into `develop`; promote an accepted candidate from `develop` into `main` with a separate release PR and a merge commit so the two long-lived branches retain shared ancestry.
 
@@ -16,7 +16,9 @@ Verified 5 October 2026. Repository: [LemorDev/Ice-Cream-System](https://github.
 
 The repository was made public at the user's request to enable branch protection on the current GitHub plan. A history scan found no private-key or service-role token patterns; old example files contain one Supabase `anon` JWT, which is a client-publishable key. Publishing also exposes the repository's commit-author email and previous commits.
 
-Both `develop` and `main` have branch protection enabled and enforced for administrators: a PR is required, force pushes and branch deletion are disabled, and review conversations must be resolved. The approving-review count is zero because a sole maintainer cannot approve their own PR; obtain a second person's review when one is available. GitHub does not yet require status checks until the new `Web checks` and `Android checks` jobs have run and their exact names are verified. [R07](FIRST_RELEASE_TASKS.md) expands CI with isolated database checks and pinned tool versions. Once those checks exist, add them to both branch rules before merging a release candidate.
+Both `develop` and `main` have branch protection enabled and enforced for administrators: a PR is required, force pushes and branch deletion are disabled, and review conversations must be resolved. The approving-review count is zero because a sole maintainer cannot approve their own PR; obtain a second person's review when one is available. Both rules require the exact GitHub job names `Web checks` and `Android checks`, with the PR branch up to date before merge. The [PR checks workflow](../.github/workflows/pr-checks.yml) runs web lint/tests/development build and Android development unit tests/build using inert CI endpoints. [R07](FIRST_RELEASE_TASKS.md) expands CI with isolated database checks and tighter toolchain pinning; add its database check to both rules before merging a release candidate.
+
+The first run exposed a removed Android SDK `tools` package in the older setup action; the workflow now uses the current action. On commit `d39525e`, both required jobs completed successfully in [GitHub Actions run 37280302762](https://github.com/LemorDev/Ice-Cream-System/actions/runs/37280302762). Verify them again after each new PR commit; the branch rules require a fresh passing result.
 
 ## Deployment trigger
 

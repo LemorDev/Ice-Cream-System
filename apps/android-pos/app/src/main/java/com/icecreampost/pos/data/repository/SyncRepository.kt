@@ -6,6 +6,7 @@ import com.icecreampost.pos.data.local.dao.TransactionDao
 import com.icecreampost.pos.data.local.dao.BusinessDayDao
 import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
 import com.icecreampost.pos.data.local.dao.DailyStoreClosingDao
+import com.icecreampost.pos.data.local.dao.RevenueDeductionDao
 import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.data.local.entity.SyncStateEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
@@ -19,7 +20,12 @@ import com.icecreampost.pos.data.remote.dto.PushInventoryEntryPayload
 import com.icecreampost.pos.data.remote.dto.PushInventoryEntryRequest
 import com.icecreampost.pos.data.remote.dto.PushDailyClosingPayload
 import com.icecreampost.pos.data.remote.dto.PushDailyClosingRequest
+import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionPayload
+import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionRequest
 import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import retrofit2.HttpException
 import java.io.IOException
 import java.time.Instant
@@ -29,7 +35,7 @@ import javax.inject.Singleton
 class RetryableSyncException(message: String, cause: Throwable? = null) : Exception(message, cause)
 class PosAuthorizationException(message: String, cause: Throwable) : Exception(message, cause)
 
-data class SyncReport(val pushed: Int, val permanentFailures: Int, val businessDaysSynced: Int = 0, val ledgerEntriesSynced: Int = 0, val closingsSynced: Int = 0)
+data class SyncReport(val pushed: Int, val permanentFailures: Int, val businessDaysSynced: Int = 0, val ledgerEntriesSynced: Int = 0, val closingsSynced: Int = 0, val deductionsSynced: Int = 0, val failureMessage: String? = null)
 
 @Singleton
 class SyncRepository @Inject constructor(
@@ -37,6 +43,7 @@ class SyncRepository @Inject constructor(
     private val businessDayDao: BusinessDayDao,
     private val inventoryLedgerDao: InventoryLedgerDao,
     private val dailyStoreClosingDao: DailyStoreClosingDao,
+    private val revenueDeductionDao: RevenueDeductionDao,
     private val syncStateDao: SyncStateDao,
     private val api: SupabaseApi,
     private val productRepository: ProductRepository,
@@ -48,6 +55,10 @@ class SyncRepository @Inject constructor(
         setState("offline-ready", null)
     }
 
+    suspend fun hasPendingWork(): Boolean = businessDayDao.getUnsynced().isNotEmpty() ||
+        transactionDao.getUnsynced().isNotEmpty() || inventoryLedgerDao.countPending() > 0 ||
+        revenueDeductionDao.getUnsynced().isNotEmpty() || dailyStoreClosingDao.getUnsynced().isNotEmpty()
+
     suspend fun sync(): SyncReport {
         setState("running", null)
         var pushed = 0
@@ -55,6 +66,8 @@ class SyncRepository @Inject constructor(
         var businessDaysSynced = 0
         var ledgerEntriesSynced = 0
         var closingsSynced = 0
+        var deductionsSynced = 0
+        val failureMessages = mutableListOf<String>()
 
         for (day in businessDayDao.getUnsynced()) {
             try {
@@ -66,12 +79,13 @@ class SyncRepository @Inject constructor(
                     setState("error", it.message)
                     throw it
                 }
-                val message = error.message ?: "Unable to upload operating day."
+                val message = describeSyncError("Operating day", error)
                 if (isRetryable(error)) {
                     setState("retrying", message)
                     throw RetryableSyncException(message, error)
                 }
                 businessDayDao.markSyncError(day.id, message)
+                failureMessages += message
                 permanentFailures += 1
             }
         }
@@ -86,12 +100,13 @@ class SyncRepository @Inject constructor(
                     setState("error", it.message)
                     throw it
                 }
-                val message = error.message ?: "Unable to upload transaction."
+                val message = describeSyncError("Sale", error)
                 if (isRetryable(error)) {
                     setState("retrying", message)
                     throw RetryableSyncException(message, error)
                 }
                 transactionDao.markSyncError(transaction.id, message, Instant.now().toString())
+                failureMessages += message
                 permanentFailures += 1
                 logger.error("Permanent sync failure for ${transaction.id}: $message")
             }
@@ -104,42 +119,73 @@ class SyncRepository @Inject constructor(
                     entry.reason, entry.referenceId, entry.occurredAt,
                 )))
                 check(response.status == "accepted" || response.status == "duplicate") { "IMS rejected an inventory movement." }
+                check(entry.movementType != "receive" || response.ledgerId == entry.id) { "IMS did not acknowledge this stock receipt." }
                 inventoryLedgerDao.markSynced(entry.id)
                 ledgerEntriesSynced += 1
             } catch (error: Exception) {
                 authorizationError(error)?.let { setState("error", it.message); throw it }
                 // Legacy servers post the sale ledger as part of push_pos_transaction
                 // but do not expose the dedicated inventory-entry RPC yet.
-                if (isMissingOptionalRpc(error)) {
+                if (isMissingOptionalRpc(error) && entry.movementType == "sale") {
                     inventoryLedgerDao.markSynced(entry.id)
                     ledgerEntriesSynced += 1
                     continue
                 }
-                val message = error.message ?: "Unable to upload inventory movement."
+                val message = describeSyncError("Inventory movement", error)
                 if (isRetryable(error)) { setState("retrying", message); throw RetryableSyncException(message, error) }
-                inventoryLedgerDao.markSyncError(entry.id, message); permanentFailures += 1
+                if (entry.movementType != "receive") inventoryLedgerDao.markSyncError(entry.id, message)
+                failureMessages += message; permanentFailures += 1
+            }
+        }
+
+        for (deduction in revenueDeductionDao.getUnsynced()) {
+            if (businessDayDao.getUnsynced().any { it.id == deduction.businessDayId }) continue
+            try {
+                val response = api.pushRevenueDeduction(PushRevenueDeductionRequest(PushRevenueDeductionPayload(
+                    deduction.id, deduction.stallId, deduction.businessDayId, deduction.businessDate,
+                    deduction.amountCents / 100.0, deduction.reason, deduction.affectsProfit, deduction.cashierId, deduction.occurredAt,
+                )))
+                check(response.status == "accepted" || response.status == "duplicate") { "IMS rejected the revenue deduction." }
+                revenueDeductionDao.markSynced(deduction.id)
+                deductionsSynced += 1
+            } catch (error: Exception) {
+                authorizationError(error)?.let { setState("error", it.message); throw it }
+                val message = describeSyncError("Revenue deduction", error)
+                if (isRetryable(error)) { setState("retrying", message); throw RetryableSyncException(message, error) }
+                revenueDeductionDao.markSyncError(deduction.id, message)
+                failureMessages += message
+                permanentFailures += 1
             }
         }
 
         for (closing in dailyStoreClosingDao.getUnsynced()) {
+            if (businessDayDao.getUnsynced().any { it.id == closing.businessDayId }) continue
+            if (revenueDeductionDao.getUnsynced().any { it.businessDayId == closing.businessDayId }) continue
             try {
                 val response = api.pushDailyClosing(PushDailyClosingRequest(PushDailyClosingPayload(
-                    closing.id, closing.stallId, closing.businessDayId, closing.businessDate,
-                    closing.grossSalesCents / 100.0, closing.cogsCents / 100.0, closing.wasteCostCents / 100.0,
-                    closing.overheadCostCents / 100.0, closing.netProfitCents / 100.0,
-                    closing.expectedCashCents / 100.0, closing.collectedCashCents / 100.0,
-                    closing.deviceId, closing.closedAt,
+                    id = closing.id,
+                    stallId = closing.stallId,
+                    businessDayId = closing.businessDayId,
+                    businessDate = closing.businessDate,
+                    grossSales = closing.grossSalesCents / 100.0,
+                    cogs = closing.cogsCents / 100.0,
+                    wasteCost = closing.wasteCostCents / 100.0,
+                    overheadCost = closing.overheadCostCents / 100.0,
+                    netProfit = closing.netProfitCents / 100.0,
+                    expectedCash = closing.expectedCashCents / 100.0,
+                    collectedCash = closing.collectedCashCents / 100.0,
+                    deviceId = closing.deviceId,
+                    closedAt = closing.closedAt,
+                    revenueDeduction = closing.revenueDeductionCents / 100.0,
+                    deductionReason = closing.deductionReason,
                 )))
                 check(response.status == "accepted" || response.status == "duplicate") { "IMS rejected the daily closing." }
                 dailyStoreClosingDao.markSynced(closing.id); closingsSynced += 1
             } catch (error: Exception) {
                 authorizationError(error)?.let { setState("error", it.message); throw it }
-                // Keep the local close queued for a later retry after the optional
-                // daily-closing migration is deployed, without breaking POS sync.
-                if (isMissingOptionalRpc(error)) continue
-                val message = error.message ?: "Unable to upload daily closing."
+                val message = describeSyncError("Daily closing", error)
                 if (isRetryable(error)) { setState("retrying", message); throw RetryableSyncException(message, error) }
-                dailyStoreClosingDao.markSyncError(closing.id, message); permanentFailures += 1
+                dailyStoreClosingDao.markSyncError(closing.id, message); failureMessages += message; permanentFailures += 1
             }
         }
 
@@ -160,8 +206,9 @@ class SyncRepository @Inject constructor(
         }
 
         val status = if (permanentFailures == 0) "success" else "error"
-        setState(status, if (permanentFailures == 0) null else "$permanentFailures queued record(s) need attention.")
-        return SyncReport(pushed, permanentFailures, businessDaysSynced, ledgerEntriesSynced, closingsSynced)
+        val failureMessage = failureMessages.firstOrNull()
+        setState(status, if (permanentFailures == 0) null else "$permanentFailures queued record(s) need attention. ${failureMessage.orEmpty()}".trim())
+        return SyncReport(pushed, permanentFailures, businessDaysSynced, ledgerEntriesSynced, closingsSynced, deductionsSynced, failureMessage)
     }
 
     private suspend fun pushBusinessDay(day: BusinessDayEntity) {
@@ -243,6 +290,12 @@ class SyncRepository @Inject constructor(
 
     private fun isMissingOptionalRpc(error: Exception): Boolean =
         error is HttpException && error.code() == 404
+
+    private fun describeSyncError(label: String, error: Exception): String {
+        val serverMessage = (error as? HttpException)?.response()?.errorBody()?.string()
+            ?.let { body -> runCatching { Json.parseToJsonElement(body).jsonObject["message"]?.jsonPrimitive?.content }.getOrNull() }
+        return "$label: ${serverMessage ?: error.message ?: "Unable to synchronize."}"
+    }
 
     private fun authorizationError(error: Exception): PosAuthorizationException? {
         val status = (error as? HttpException)?.code() ?: return null

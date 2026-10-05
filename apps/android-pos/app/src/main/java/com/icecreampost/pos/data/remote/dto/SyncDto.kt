@@ -101,7 +101,25 @@ data class PushDailyClosingPayload(
     @SerialName("collected_cash") val collectedCash: Double,
     @SerialName("device_id") val deviceId: String,
     @SerialName("closed_at") val closedAt: String,
+    @SerialName("revenue_deduction") val revenueDeduction: Double = 0.0,
+    @SerialName("deduction_reason") val deductionReason: String? = null,
 )
 
 @Serializable data class PushDailyClosingRequest(@SerialName("p_closing") val closing: PushDailyClosingPayload)
 @Serializable data class PushDailyClosingResponse(val status: String, @SerialName("closing_id") val closingId: String)
+
+@Serializable
+data class PushRevenueDeductionPayload(
+    val id: String,
+    @SerialName("stall_id") val stallId: String,
+    @SerialName("business_day_id") val businessDayId: String,
+    @SerialName("business_date") val businessDate: String,
+    @SerialName("amount") val amount: Double,
+    val reason: String,
+    @SerialName("affects_profit") val affectsProfit: Boolean = true,
+    @SerialName("cashier_id") val cashierId: String,
+    @SerialName("occurred_at") val occurredAt: String,
+)
+
+@Serializable data class PushRevenueDeductionRequest(@SerialName("p_deduction") val deduction: PushRevenueDeductionPayload)
+@Serializable data class PushRevenueDeductionResponse(val status: String, @SerialName("deduction_id") val deductionId: String)

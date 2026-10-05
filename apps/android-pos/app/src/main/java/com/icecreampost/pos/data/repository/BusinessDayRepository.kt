@@ -7,6 +7,8 @@ import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.data.local.entity.DailyStoreClosingEntity
 import com.icecreampost.pos.data.local.dao.DailyStoreClosingDao
 import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
+import com.icecreampost.pos.data.local.dao.RevenueDeductionDao
+import com.icecreampost.pos.data.local.entity.RevenueDeductionEntity
 import com.icecreampost.pos.data.local.database.CoolerzDatabase
 import androidx.room.withTransaction
 import com.icecreampost.pos.sync.SyncTrigger
@@ -27,12 +29,44 @@ class BusinessDayRepository @Inject constructor(
     private val database: CoolerzDatabase,
     private val dailyStoreClosingDao: DailyStoreClosingDao,
     private val inventoryLedgerDao: InventoryLedgerDao,
+    private val revenueDeductionDao: RevenueDeductionDao,
 ) {
     fun observeLatest(): Flow<BusinessDayEntity?> = businessDayDao.observeLatest()
+    fun observeDeductions(): Flow<List<RevenueDeductionEntity>> = revenueDeductionDao.observeAll()
+
+    suspend fun hasOpenDay(stallId: String): Boolean = businessDayDao.findOpen(stallId) != null
+
+    suspend fun recordDeduction(amountCents: Long, reason: String, affectsProfit: Boolean = true) {
+        val session = sessionDao.getCurrent() ?: error("Sign in before recording a deduction.")
+        require(session.role == "cashier" && session.isActivated) { "An activated Cashier account is required." }
+        check(!session.transferReady) { "This POS is prepared for replacement. Sign in again to resume operations." }
+        val stallId = requireNotNull(session.stallId) { "This Cashier has no assigned stall." }
+        val cashierId = requireNotNull(session.userId) { "The Cashier identity is missing." }
+        val openDay = businessDayDao.findOpen(stallId) ?: error("Open the operating day before recording a deduction.")
+        require(openDay.deviceId == session.deviceId) { "Record deductions on the POS that opened the day." }
+        require(amountCents > 0) { "Enter a deduction greater than zero." }
+        val normalizedReason = reason.trim()
+        require(normalizedReason.isNotEmpty()) { "Provide a reason for the deduction." }
+        database.withTransaction {
+            val now = Instant.now().toString()
+            val localGross = transactionDao.getCompletedTotalBetween(stallId, openDay.openedAt, now)
+            val gross = localGross + openDay.recoveryKnownSalesCents
+            val existing = revenueDeductionDao.totalForDay(openDay.id)
+            require(amountCents <= gross - existing) { "Deduction cannot exceed remaining sales revenue." }
+            revenueDeductionDao.upsert(RevenueDeductionEntity(
+                id = UUID.randomUUID().toString(), stallId = stallId, businessDayId = openDay.id,
+                businessDate = openDay.businessDate,
+                amountCents = amountCents, reason = normalizedReason, cashierId = cashierId, occurredAt = now,
+                affectsProfit = affectsProfit,
+            ))
+        }
+        syncTrigger.triggerNow()
+    }
 
     suspend fun openDay(notes: String = "") {
         val session = sessionDao.getCurrent() ?: error("Sign in before opening the stall.")
         require(session.role == "cashier" && session.isActivated) { "An activated Cashier account is required." }
+        check(!session.transferReady) { "This POS is prepared for replacement. Sign in again to resume operations." }
         val stallId = requireNotNull(session.stallId) { "This Cashier has no assigned stall." }
         val deviceId = requireNotNull(session.deviceId) { "This POS has not been activated." }
         val cashierId = requireNotNull(session.userId) { "The Cashier identity is missing." }
@@ -48,17 +82,24 @@ class BusinessDayRepository @Inject constructor(
         syncTrigger.triggerNow()
     }
 
-    suspend fun closeDay(notes: String = "", collectedCashCents: Long? = null) {
+    suspend fun closeDay(
+        notes: String = "",
+        collectedCashCents: Long? = null,
+    ) {
         val session = sessionDao.getCurrent() ?: error("Sign in before closing the day.")
         require(session.role == "cashier" && session.isActivated) { "An activated Cashier account is required." }
         val stallId = requireNotNull(session.stallId) { "This Cashier has no assigned stall." }
         val openDay = businessDayDao.findOpen(stallId) ?: error("Open the stall before closing the day.")
         require(openDay.deviceId == session.deviceId) { "Close the day from the POS that opened it." }
         val now = Instant.now().toString()
-        val cashTotal = transactionDao.getCompletedTotalBetween(stallId, openDay.openedAt, now)
-        val cogs = transactionDao.getCompletedCogsBetween(stallId, openDay.openedAt, now)
-        val waste = inventoryLedgerDao.getWasteCostBetween(stallId, openDay.openedAt, now)
-        val collected = collectedCashCents ?: cashTotal
+        val cashTotal = transactionDao.getCompletedTotalBetween(stallId, openDay.openedAt, now) + openDay.recoveryKnownSalesCents
+        val cogs = transactionDao.getCompletedCogsBetween(stallId, openDay.openedAt, now) + openDay.recoveryKnownCogsCents
+        val waste = inventoryLedgerDao.getWasteCostBetween(stallId, openDay.openedAt, now) + openDay.recoveryKnownWasteCents
+        val revenueDeductionCents = revenueDeductionDao.totalForDay(openDay.id) + openDay.recoveryKnownDeductionsCents
+        val profitDeductionCents = revenueDeductionDao.profitAffectingTotalForDay(openDay.id) + openDay.recoveryKnownProfitDeductionsCents
+        require(revenueDeductionCents <= cashTotal) { "Revenue deduction cannot exceed gross sales." }
+        val expectedCash = cashTotal - revenueDeductionCents
+        val collected = collectedCashCents ?: expectedCash
         require(collected >= 0) { "Collected cash cannot be negative." }
         database.withTransaction {
             businessDayDao.upsert(openDay.copy(
@@ -69,9 +110,12 @@ class BusinessDayRepository @Inject constructor(
             dailyStoreClosingDao.upsert(DailyStoreClosingEntity(
                 id = UUID.randomUUID().toString(), stallId = stallId, businessDayId = openDay.id,
                 businessDate = openDay.businessDate, grossSalesCents = cashTotal, cogsCents = cogs,
-                wasteCostCents = waste, overheadCostCents = 0, netProfitCents = cashTotal - cogs - waste,
-                expectedCashCents = cashTotal, collectedCashCents = collected,
+                wasteCostCents = waste, overheadCostCents = 0,
+                netProfitCents = cashTotal - cogs - waste - profitDeductionCents,
+                expectedCashCents = expectedCash, collectedCashCents = collected,
                 deviceId = openDay.deviceId, closedAt = now,
+                revenueDeductionCents = revenueDeductionCents,
+                deductionReason = if (revenueDeductionCents > 0) "See recorded deductions" else null,
             ))
         }
         syncTrigger.triggerNow()

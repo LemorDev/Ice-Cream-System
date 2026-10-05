@@ -31,7 +31,8 @@ class SyncWorkerTest {
             displayName = "Cashier", role = "cashier", sessionToken = "persisted-session-token",
             stallId = "stall-1", isActivated = true,
         )
-        val sessionRepository = SessionRepository(sessionDao, mockk<SupabaseApi>(), tokenStore, mockk<DeviceIdentity>())
+        val sessionRepository = SessionRepository(sessionDao, mockk<SupabaseApi>(), tokenStore, mockk<DeviceIdentity>(),
+            mockk(relaxed = true))
         coEvery { syncRepository.sync() } coAnswers {
             assertEquals("persisted-session-token", tokenStore.token)
             SyncReport(pushed = 1, permanentFailures = 0)
@@ -57,6 +58,7 @@ class SyncWorkerTest {
             mockk<SupabaseApi>(),
             SessionTokenStore(),
             mockk<DeviceIdentity>(),
+            mockk(relaxed = true),
         )
         val worker = SyncWorker(
             mockk<Context>(), mockk<WorkerParameters>(relaxed = true),
@@ -88,6 +90,7 @@ class SyncWorkerTest {
             mockk<SupabaseApi>(),
             SessionTokenStore(),
             mockk<DeviceIdentity>(),
+            mockk(relaxed = true),
         )
         val worker = SyncWorker(
             mockk<Context>(), mockk<WorkerParameters>(relaxed = true),

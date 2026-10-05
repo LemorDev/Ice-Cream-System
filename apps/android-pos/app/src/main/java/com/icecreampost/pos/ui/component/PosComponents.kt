@@ -77,7 +77,7 @@ fun ScreenHeader(
         if (onBack != null) {
             Surface(
                 onClick = onBack,
-                modifier = Modifier.size(44.dp).semantics {
+                modifier = Modifier.size(48.dp).semantics {
                     role = Role.Button
                     contentDescription = "Go back"
                 },
@@ -91,7 +91,7 @@ fun ScreenHeader(
             Spacer(Modifier.width(12.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, style = MaterialTheme.typography.headlineMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             subtitle?.let {
                 Spacer(Modifier.height(2.dp))
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -108,11 +108,13 @@ fun QuantityStepper(
     onIncrease: () -> Unit,
     modifier: Modifier = Modifier,
     canIncrease: Boolean = true,
+    canDecrease: Boolean = true,
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Surface(
-            modifier = Modifier.size(38.dp),
+            modifier = Modifier.size(48.dp),
             onClick = onDecrease,
+            enabled = canDecrease,
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surfaceVariant,
         ) {
@@ -127,7 +129,7 @@ fun QuantityStepper(
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
         Surface(
-            modifier = Modifier.size(38.dp),
+            modifier = Modifier.size(48.dp),
             onClick = onIncrease,
             enabled = canIncrease,
             shape = CircleShape,

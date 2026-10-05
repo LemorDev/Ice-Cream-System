@@ -3,5 +3,6 @@
     <style name="Theme.IceCreamPos" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/coolerz_splash</item>
         <item name="android:navigationBarColor">@android:color/black</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

@@ -14,6 +14,8 @@ import com.icecreampost.pos.data.local.entity.ProductEntity
 import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.data.local.entity.ProductRecipeEntity
 import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
+import com.icecreampost.pos.data.local.entity.TransactionEntity
+import com.icecreampost.pos.data.local.entity.TransactionItemEntity
 import com.icecreampost.pos.domain.model.CartLine
 import com.icecreampost.pos.sync.SyncTrigger
 import io.mockk.coEvery
@@ -72,6 +74,20 @@ class CheckoutRepositoryTest {
     @After
     fun tearDown() {
         unmockkStatic("androidx.room.RoomDatabaseKt")
+    }
+
+    @Test
+    fun `historical receipt loads the selected local transaction and its items`() = runTest {
+        val transaction = TransactionEntity(id = "sale-1", receiptNumber = "LOCAL-1", totalCents = 5_000, createdAt = "2026-09-29T00:00:00Z")
+        val item = TransactionItemEntity(id = "item-1", transactionId = "sale-1", productId = "product-1", productName = "Twirl", quantity = 2.0, unitPriceCents = 2_500, lineTotalCents = 5_000, updatedAt = "2026-09-29T00:00:00Z")
+        coEvery { transactionDao.findById("sale-1") } returns transaction
+        coEvery { transactionDao.getItems("sale-1") } returns listOf(item)
+
+        val receipt = repository.getHistoricalReceipt("sale-1")
+
+        assertEquals("LOCAL-1", receipt?.transaction?.receiptNumber)
+        assertEquals(listOf(item), receipt?.items)
+        coVerify(exactly = 1) { transactionDao.getItems("sale-1") }
     }
 
     @Test

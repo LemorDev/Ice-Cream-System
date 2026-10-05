@@ -1,6 +1,7 @@
 package com.icecreampost.pos.data.repository
 
 import com.icecreampost.pos.data.local.dao.SessionDao
+import com.icecreampost.pos.data.local.dao.BusinessDayDao
 import com.icecreampost.pos.data.local.entity.AppSessionEntity
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.ActivateDeviceResponse
@@ -28,7 +29,8 @@ class SessionRepositoryTest {
     @Before
     fun setUp() {
         every { deviceIdentity.id } returns "hardware-1"
-        repository = SessionRepository(sessionDao, api, tokenStore, deviceIdentity)
+        repository = SessionRepository(sessionDao, api, tokenStore, deviceIdentity,
+            mockk(relaxed = true))
     }
 
     @Test
@@ -60,6 +62,7 @@ class SessionRepositoryTest {
 
     @Test
     fun `cashier login restores an active registration for the same device`() = runTest {
+        coEvery { api.getRecoveredDay(any()) } returns null
         coEvery { api.login(any()) } returns listOf(
             login(role = "cashier", deviceId = "device-1", isActivated = true),
         )

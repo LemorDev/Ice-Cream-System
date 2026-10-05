@@ -22,6 +22,9 @@ interface InventoryLedgerDao {
     @Query("SELECT * FROM inventory_ledger WHERE isSynced = 0 AND syncError IS NULL ORDER BY occurredAt")
     suspend fun getUnsynced(): List<InventoryLedgerEntity>
 
+    @Query("SELECT COUNT(*) FROM inventory_ledger WHERE isSynced = 0")
+    suspend fun countPending(): Int
+
     @Query("UPDATE inventory_ledger SET isSynced = 1, syncError = NULL WHERE id = :id")
     suspend fun markSynced(id: String)
 

@@ -28,6 +28,11 @@ data class CheckoutReceipt(
     val changeAmountCents: Long,
 )
 
+data class HistoricalReceipt(
+    val transaction: TransactionEntity,
+    val items: List<TransactionItemEntity>,
+)
+
 @Singleton
 class CheckoutRepository @Inject constructor(
     private val database: CoolerzDatabase,
@@ -42,6 +47,11 @@ class CheckoutRepository @Inject constructor(
 ) {
     fun observeTransactions(): Flow<List<TransactionEntity>> = transactionDao.observeTransactions()
 
+    suspend fun getHistoricalReceipt(transactionId: String): HistoricalReceipt? {
+        val transaction = transactionDao.findById(transactionId) ?: return null
+        return HistoricalReceipt(transaction, transactionDao.getItems(transactionId))
+    }
+
     suspend fun checkout(
         lines: List<CartLine>,
         cashReceivedCents: Long,
@@ -54,6 +64,7 @@ class CheckoutRepository @Inject constructor(
         val activeSession = sessionDao.getCurrent()
         val resolvedStallId = stallId.ifBlank { activeSession?.stallId.orEmpty() }
         require(activeSession?.role == "cashier" && activeSession.isActivated) { "An activated Cashier account is required." }
+        check(!activeSession.transferReady) { "This POS is prepared for replacement. Sign in again to resume sales." }
         val resolvedDeviceId = deviceId ?: activeSession.deviceId
         val resolvedCashierId = cashierId ?: activeSession?.userId
         require(resolvedStallId.isNotBlank()) { "This device is not assigned to a stall." }

@@ -9,11 +9,18 @@ class SupabaseHeadersInterceptor(
     private val deviceIdentity: DeviceIdentity,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
+        val apiKey = BuildConfig.SUPABASE_ANON_KEY
         val builder = chain.request().newBuilder()
-            .addHeader("apikey", BuildConfig.SUPABASE_ANON_KEY)
-            .addHeader("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
+            .addHeader("apikey", apiKey)
             .addHeader("Accept-Profile", "public")
             .addHeader("X-Device-Id", deviceIdentity.id)
+        if (apiKey.startsWith("sb_publishable_")) {
+            // Publishable API keys are not JWTs and must not be sent as Bearer tokens.
+            builder.removeHeader("Authorization")
+        } else {
+            // Keep the legacy anon JWT behavior for the current production project.
+            builder.addHeader("Authorization", "Bearer $apiKey")
+        }
         sessionTokenStore.token?.takeIf { it.isNotBlank() }?.let {
             builder.addHeader("X-Session-Token", it)
         }

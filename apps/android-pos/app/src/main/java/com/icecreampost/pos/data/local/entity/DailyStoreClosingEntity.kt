@@ -19,6 +19,8 @@ data class DailyStoreClosingEntity(
     val collectedCashCents: Long,
     val deviceId: String,
     val closedAt: String,
+    val revenueDeductionCents: Long = 0,
+    val deductionReason: String? = null,
     val isSynced: Boolean = false,
     val syncError: String? = null,
 )

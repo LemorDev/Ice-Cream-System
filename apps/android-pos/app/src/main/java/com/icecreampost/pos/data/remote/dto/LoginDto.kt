@@ -32,4 +32,29 @@ data class ActivateDeviceRequest(
 data class ActivateDeviceResponse(
     @SerialName("device_id") val deviceId: String,
     @SerialName("stall_id") val stallId: String,
+    @SerialName("resume_day") val resumeDay: RecoveredBusinessDay? = null,
 )
+
+@Serializable
+data class RecoveredBusinessDay(
+    val id: String,
+    @SerialName("business_date") val businessDate: String,
+    @SerialName("opened_at") val openedAt: String,
+    @SerialName("cashier_id") val cashierId: String,
+    @SerialName("opening_notes") val openingNotes: String? = null,
+    @SerialName("known_sales") val knownSales: Double = 0.0,
+    @SerialName("known_orders") val knownOrders: Int = 0,
+    @SerialName("known_deductions") val knownDeductions: Double = 0.0,
+    @SerialName("known_profit_deductions") val knownProfitDeductions: Double = 0.0,
+    @SerialName("known_cogs") val knownCogs: Double = 0.0,
+    @SerialName("known_waste") val knownWaste: Double = 0.0,
+)
+
+@Serializable
+data class RecoveredDayRequest(@SerialName("p_device_id") val deviceId: String)
+
+@Serializable
+data class PrepareReplacementRequest(@SerialName("p_device_id") val deviceId: String)
+
+@Serializable
+data class PrepareReplacementResponse(val status: String)

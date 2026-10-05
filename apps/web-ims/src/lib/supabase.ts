@@ -1,5 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
 
+declare const __COOLERZ_ENV__: 'development' | 'production'
+
+export const appEnvironment = __COOLERZ_ENV__
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 

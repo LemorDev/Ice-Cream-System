@@ -1,4 +1,4 @@
-import type { DailyProfitReport, InventoryEntry, OverheadItem, Product, Transaction, TransactionItem } from './types'
+import type { DailyProfitReport, DailyStoreClosing, InventoryEntry, OverheadItem, Product, RevenueDeduction, Transaction, TransactionItem } from './types'
 
 export const DEFAULT_OVERHEAD_ITEMS: OverheadItem[] = [
   { key: 'cashier', label: 'Cashier pay', dailyRate: 500.0, icon: 'cashier', description: 'Daily cashier wage' },
@@ -117,14 +117,23 @@ function buildCostMap(products: Product[]): Record<string, number> {
   }, {})
 }
 
+/** Ledger deltas use base units; purchase costs are stored per pack. */
+function buildBaseUnitCostMap(products: Product[]): Record<string, number> {
+  return products.reduce<Record<string, number>>((map, product) => {
+    const unitsPerPack = Number(product.pack_size) * Number(product.conversion_rate)
+    map[product.id] = product.cost_price / (Number.isFinite(unitsPerPack) && unitsPerPack > 0 ? unitsPerPack : 1)
+    return map
+  }, {})
+}
+
 /**
  * Compute a daily profit report for a given date range.
  *
  * - Revenue  = sum of `total_amount` on completed transactions
  * - COGS     = sum of (item quantity × product cost_price) for completed sales
  * - Waste    = cost of items in void_waste inventory entries + adjustment removals
- * - Overhead = ₱743.33 per business day in the range
- * - Profit   = Revenue − COGS − Waste − Overhead
+ * - Overhead = configured daily fixed expenses for each operating day
+ * - Profit   = Revenue − COGS − Waste − Overhead − POS deductions marked as additional expenses
  */
 export function getDailyProfitReport(
   products: Product[],
@@ -135,9 +144,14 @@ export function getDailyProfitReport(
   to: string,
   overheadItems: OverheadItem[] = DEFAULT_OVERHEAD_ITEMS,
   operatingDates: string[] = [],
+  reportResetAt: string | null = null,
+  deductions: RevenueDeduction[] = [],
+  closings: DailyStoreClosing[] = [],
 ): DailyProfitReport[] {
   const costMap = buildCostMap(products)
+  const baseUnitCostMap = buildBaseUnitCostMap(products)
   const dailyOverhead = calculateDailyOverhead(overheadItems)
+  const resetTime = reportResetAt ? Date.parse(reportResetAt) : NaN
 
   // Group transactions by business date (YYYY-MM-DD from occurred_at)
   const dateSet = new Set(operatingDates.filter((date) => date >= from && date <= to))
@@ -166,6 +180,9 @@ export function getDailyProfitReport(
   const wasteByDate = new Map<string, InventoryEntry[]>()
   for (const entry of inventory) {
     if (entry.movement_type !== 'void_waste' && entry.movement_type !== 'adjustment') continue
+    if (Number.isFinite(resetTime) && Date.parse(entry.occurred_at) <= resetTime) continue
+    // Resetting balances is an inventory correction, not physical waste.
+    if (entry.movement_type === 'adjustment' && entry.reason === 'System administrator stock reset') continue
     // For adjustments, only count negative (removal) entries as waste
     if (entry.movement_type === 'adjustment' && entry.quantity_delta >= 0) continue
     const date = getBusinessDateKey(entry.occurred_at)
@@ -220,13 +237,22 @@ export function getDailyProfitReport(
           wasteCost += Math.abs(entry.quantity_delta) * unitCost
         }
       } else {
-        // Adjustment removal: absolute value of delta × cost
-        wasteCost += Math.abs(entry.quantity_delta) * unitCost
+        // Adjustment deltas are in base units, not purchased packs.
+        wasteCost += Math.abs(entry.quantity_delta) * (baseUnitCostMap[entry.product_id] ?? 0)
       }
     }
 
-    const fixedOverhead = dailyOverhead
-    const netProfit = revenue - cogs - wasteCost - fixedOverhead
+    const legacyClosing = closings.find((closing) => closing.business_date === date)
+    const fixedOverhead = legacyClosing?.overhead_cost ?? dailyOverhead
+    const recordedDeductions = deductions.filter((entry) => entry.business_date === date &&
+      (!Number.isFinite(resetTime) || Date.parse(entry.occurred_at) > resetTime))
+    const revenueDeduction = recordedDeductions.length > 0
+      ? recordedDeductions.reduce((sum, entry) => sum + entry.amount, 0)
+      : (legacyClosing?.revenue_deduction ?? 0)
+    const profitDeduction = recordedDeductions.length > 0
+      ? recordedDeductions.filter((entry) => entry.affects_profit).reduce((sum, entry) => sum + entry.amount, 0)
+      : revenueDeduction
+    const netProfit = revenue - cogs - wasteCost - fixedOverhead - profitDeduction
 
     return {
       businessDate: date,
@@ -234,6 +260,8 @@ export function getDailyProfitReport(
       cogs,
       wasteCost,
       fixedOverhead,
+      revenueDeduction,
+      profitDeduction,
       netProfit,
       completedSales: completed.length,
       voidedSales: voided.length,

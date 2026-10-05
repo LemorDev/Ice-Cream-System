@@ -136,6 +136,33 @@ test('stock adjustments count removals as waste and exclude restocked products',
   assert.equal(report.wasteCost, 30)
 })
 
+test('financial reset excludes old adjustments without removing later waste on the same day', () => {
+  const entries = [
+    { ...wasteMarker('old', 'vanilla'), movement_type: 'adjustment', quantity_delta: -450_000, occurred_at: '2026-08-04T10:00:00Z' },
+    { ...wasteMarker('new', 'vanilla'), movement_type: 'adjustment', quantity_delta: -3, occurred_at: '2026-08-04T12:00:00Z' },
+  ] as InventoryEntry[]
+  const [report] = getDailyProfitReport(
+    costProducts, entries, [], [], '2026-08-04', '2026-08-04', [], [], '2026-08-04T11:00:00Z',
+  )
+
+  assert.equal(report.wasteCost, 30)
+  assert.equal(report.netProfit, -30)
+})
+
+test('reset inventory corrections do not appear as waste or create report days', () => {
+  const entries = [
+    { ...wasteMarker('reset', 'vanilla'), movement_type: 'adjustment', quantity_delta: -100, reason: 'System administrator stock reset' },
+  ] as InventoryEntry[]
+  assert.deepEqual(getDailyProfitReport(costProducts, entries, [], [], '2026-08-04', '2026-08-04', []), [])
+})
+
+test('adjustment removal uses purchase cost per base unit, not per pack', () => {
+  const powder = [{ id: 'powder', cost_price: 185, pack_size: 1000, conversion_rate: 1 }] as Product[]
+  const entries = [{ ...wasteMarker('remove', 'powder'), movement_type: 'adjustment', quantity_delta: -10_000 }] as InventoryEntry[]
+  const [report] = getDailyProfitReport(powder, entries, [], [], '2026-08-04', '2026-08-04', [])
+  assert.equal(report.wasteCost, 1850)
+})
+
 test('profit report includes an opened business day even when it has no sales', () => {
   const [report] = getDailyProfitReport(
     costProducts, [], [], [], '2026-08-05', '2026-08-05', [{ key: 'rent', label: 'Rent', dailyRate: 200 }], ['2026-08-05'],
@@ -145,4 +172,47 @@ test('profit report includes an opened business day even when it has no sales', 
   assert.equal(report.revenue, 0)
   assert.equal(report.fixedOverhead, 200)
   assert.equal(report.netProfit, -200)
+})
+
+test('POS cash deductions reduce expected profit once and remain separate from fixed overhead', () => {
+  const [report] = getDailyProfitReport(
+    costProducts, [], [], [], '2026-08-05', '2026-08-05',
+    [{ key: 'rent', label: 'Rent', dailyRate: 200 }], ['2026-08-05'], null,
+    [{ id: 'deduction-1', amount: 50, affects_profit: true, business_date: '2026-08-05', occurred_at: '2026-08-05T04:00:00Z' }] as never,
+    [{ business_date: '2026-08-05', revenue_deduction: 50 }] as never,
+  )
+  assert.equal(report.fixedOverhead, 200)
+  assert.equal(report.revenueDeduction, 50)
+  assert.equal(report.profitDeduction, 50)
+  assert.equal(report.netProfit, -250)
+})
+
+test('cash taken to pay existing overhead reduces cash but not profit twice', () => {
+  const [report] = getDailyProfitReport(
+    costProducts, [], [], [], '2026-08-05', '2026-08-05',
+    [{ key: 'rent', label: 'Rent', dailyRate: 200 }], ['2026-08-05'], null,
+    [{ id: 'deduction-1', amount: 50, affects_profit: false, business_date: '2026-08-05', occurred_at: '2026-08-05T04:00:00Z' }] as never,
+  )
+  assert.equal(report.revenueDeduction, 50)
+  assert.equal(report.profitDeduction, 0)
+  assert.equal(report.netProfit, -200)
+})
+
+test('a closed day keeps its booked overhead after stall settings change', () => {
+  const [report] = getDailyProfitReport(
+    costProducts, [], [], [], '2026-08-05', '2026-08-05',
+    [{ key: 'rent', label: 'Rent', dailyRate: 300 }], ['2026-08-05'], null, [],
+    [{ business_date: '2026-08-05', overhead_cost: 200, revenue_deduction: 0 }] as never,
+  )
+  assert.equal(report.fixedOverhead, 200)
+  assert.equal(report.netProfit, -200)
+})
+
+test('clearing sales and operating history leaves no revenue, costs, or report days', () => {
+  const reports = getDailyProfitReport(
+    costProducts, [], [], [], '2026-09-07', '2026-09-13',
+    [{ key: 'overhead', label: 'Daily overhead', dailyRate: 743.33 }], [],
+  )
+
+  assert.deepEqual(reports, [])
 })

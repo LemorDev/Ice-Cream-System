@@ -5,6 +5,7 @@ import { canAccessWebView, getDefaultView, getNavigation, getViewLabel } from '.
 test('system administrators receive a separate administration landing page', () => {
   assert.equal(getDefaultView('system_admin'), 'admin')
   assert.equal(canAccessWebView('system_admin', 'admin'), true)
+  assert.equal(canAccessWebView('system_admin', 'dataReset'), true)
   assert.equal(getNavigation('system_admin')[0].label, 'Administration')
 })
 
@@ -17,7 +18,7 @@ test('owners cannot open or navigate to system administration', () => {
 test('owners receive monitoring views without management modules', () => {
   const ownerViews = getNavigation('owner').flatMap((group) => group.items)
   assert.deepEqual(ownerViews, ['overview', 'reports', 'productReport', 'dailyClose', 'days'])
-  for (const managementView of ['stall', 'staff', 'products', 'receiving', 'adjustments', 'pricing', 'transactions'] as const) {
+  for (const managementView of ['stall', 'staff', 'dataReset', 'products', 'receiving', 'adjustments', 'pricing', 'transactions'] as const) {
     assert.equal(canAccessWebView('owner', managementView), false)
   }
 })

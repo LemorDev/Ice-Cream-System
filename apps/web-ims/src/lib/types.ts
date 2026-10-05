@@ -14,6 +14,7 @@ export type Stall = {
   code: string
   updated_at: string
   overhead_config?: OverheadItem[] | null
+  financial_report_reset_at?: string | null
 }
 
 export type Category = {
@@ -26,6 +27,7 @@ export type Product = {
   id: string
   stall_id: string
   category_id: string | null
+  sell_category: string | null
   sku: string
   name: string
   unit: string
@@ -59,6 +61,7 @@ export type DailyStoreClosing = {
   cogs: number
   waste_cost: number
   overhead_cost: number
+  revenue_deduction: number
   net_profit: number
   expected_cash: number
   collected_cash: number
@@ -111,6 +114,18 @@ export type BusinessDay = {
   updated_at: string
 }
 
+export type RevenueDeduction = {
+  id: string
+  stall_id: string
+  business_day_id: string
+  business_date: string
+  amount: number
+  affects_profit: boolean
+  reason: string
+  cashier_id: string
+  occurred_at: string
+}
+
 export type ManagedUser = {
   id: string
   stall_id: string
@@ -128,6 +143,8 @@ export type DailyProfitReport = {
   cogs: number
   wasteCost: number
   fixedOverhead: number
+  revenueDeduction: number
+  profitDeduction: number
   netProfit: number
   completedSales: number
   voidedSales: number
@@ -141,6 +158,8 @@ export type WorkspaceData = {
   transactions: Transaction[]
   transactionItems: TransactionItem[]
   businessDays: BusinessDay[]
+  revenueDeductions: RevenueDeduction[]
+  deductionsAvailable: boolean
   recipes: ProductRecipe[]
   dailyClosings: DailyStoreClosing[]
 }

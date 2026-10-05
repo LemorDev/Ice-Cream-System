@@ -5,6 +5,7 @@ export type WebView =
   | 'overview'
   | 'stall'
   | 'staff'
+  | 'dataReset'
   | 'products'
   | 'receiving'
   | 'adjustments'
@@ -27,7 +28,7 @@ const commonOperations: NavigationGroup[] = [
 
 const navigationByRole: Record<'system_admin' | 'owner', NavigationGroup[]> = {
   system_admin: [
-    { label: 'Administration', items: ['admin', 'stall', 'staff'] },
+    { label: 'Administration', items: ['admin', 'stall', 'staff', 'dataReset'] },
     { label: 'Selected stall', items: ['overview'] },
     ...commonOperations,
   ],
@@ -41,6 +42,7 @@ const baseLabels: Record<WebView, string> = {
   overview: 'Overview',
   stall: 'Stall settings',
   staff: 'Staff & devices',
+  dataReset: 'Data reset',
   products: 'Products',
   receiving: 'Receive stock',
   adjustments: 'Adjust inventory',

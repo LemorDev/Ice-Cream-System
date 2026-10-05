@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { canAccessWebView, getDefaultView, getNavigation, getViewLabel, type WebView } from './lib/access'
 import { listAccessibleStalls, loadWorkspace } from './lib/api'
+import { appEnvironment } from './lib/supabase'
 import { startWorkspaceAutoRefresh } from './lib/live-sync'
 import { getStoredSession, signIn, signOut, type AppSession } from './lib/session'
 import { createSupabaseClient } from './lib/supabase'
 import type { Stall, WorkspaceData } from './lib/types'
-import { Button, LoadingState, Notice, Select } from './components/ui'
+import { Button, ConfirmationDialog, LoadingState, Notice, Select } from './components/ui'
 import {
   AdjustmentsScreen,
   OwnerDashboardScreen,
@@ -22,6 +24,7 @@ import {
   StaffScreen,
   TransactionsScreen,
   DailyCloseScreen,
+  DataResetScreen,
 } from './screens'
 import './styles.css'
 
@@ -71,9 +74,9 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#f7f5f9] p-4 text-slate-900 sm:p-6">
         <form className="w-full max-w-md rounded-2xl border border-[#e6deed] bg-white p-6 shadow-[0_18px_50px_rgba(34,0,70,0.10)] sm:p-8" onSubmit={submit}>
-          <BrandMark compact />
-          <h2 className="mt-6 text-2xl font-black tracking-tight text-[#220046]">Management sign in</h2>
-          <p className="mt-2 max-w-md text-slate-500">Owners and system administrators can use this dashboard.</p>
+          <div className="flex justify-center"><BrandMark compact /></div>
+          <h2 className="mt-6 text-center text-2xl font-black tracking-tight text-[#220046]">Management sign in</h2>
+          <p className="mt-2 text-center text-slate-500">Owners and system administrators can use this dashboard.</p>
 
           <label className="mt-7 block text-sm font-medium text-[#39235f]">
             Email
@@ -135,6 +138,10 @@ function SidebarIcon({ action }: { action: 'hide' | 'show' }) {
   )
 }
 
+function SignOutIcon() {
+  return <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5M14 7l5 5-5 5m5-5H8" /></svg>
+}
+
 function NavigationIcon({ view }: { view: WebView }) {
   const common = {
     'aria-hidden': true,
@@ -156,6 +163,8 @@ function NavigationIcon({ view }: { view: WebView }) {
       return <svg {...common}><path d="M3 9h18l-2-5H5L3 9Z" /><path d="M5 9v11h14V9M9 20v-6h6v6" /><path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0" /></svg>
     case 'staff':
       return <svg {...common}><circle cx="9" cy="8" r="3" /><path d="M3.5 20v-1.5A4.5 4.5 0 0 1 8 14h2a4.5 4.5 0 0 1 4.5 4.5V20M16 5.5a3 3 0 0 1 0 5.8M17 14a4 4 0 0 1 3.5 4v2" /></svg>
+    case 'dataReset':
+      return <svg {...common}><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7" /><path d="M10 11v5m4-5v5" /></svg>
     case 'products':
       return <svg {...common}><path d="m4 7 8-4 8 4-8 4-8-4Z" /><path d="m4 7 8 4 8-4v10l-8 4-8-4V7Z" /><path d="M12 11v10" /></svg>
     case 'receiving':
@@ -191,22 +200,18 @@ function EyeIcon({ visible }: { visible: boolean }) {
 }
 
 function SignOutDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
-  return (
-    <div aria-modal="true" className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 p-4" role="dialog">
-      <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
-        <h2 className="text-lg font-bold text-[#220046]">Sign out?</h2>
-        <p className="mt-2 text-sm leading-6 text-slate-600">You will need your email and password to open the dashboard again.</p>
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onCancel}>Cancel</Button>
-          <Button onClick={onConfirm}>Sign out</Button>
-        </div>
-      </div>
-    </div>
-  )
+  return <ConfirmationDialog confirmLabel="Sign out" description="You will need your email and password to open the dashboard again." onCancel={onCancel} onConfirm={onConfirm} title="Sign out?" tone="primary" />
 }
 
-function Sidebar({ activeView, onNavigate, onSignOut, session, open, hidden, onClose, onHide }: { activeView: WebView; onNavigate: (view: WebView) => void; onSignOut: () => void; session: AppSession; open: boolean; hidden: boolean; onClose: () => void; onHide: () => void }) {
+function Sidebar({ activeView, onNavigate, onSignOut, session, open, collapsed, onClose, onToggle }: { activeView: WebView; onNavigate: (view: WebView) => void; onSignOut: () => void; session: AppSession; open: boolean; collapsed: boolean; onClose: () => void; onToggle: () => void }) {
   const navigation = getNavigation(session.role)
+  const [tooltip, setTooltip] = useState<{ label: string; left: number; top: number } | null>(null)
+  const showTooltip = (element: HTMLElement, label: string) => {
+    if (!collapsed || !window.matchMedia('(min-width: 1024px)').matches) return
+    const bounds = element.getBoundingClientRect()
+    setTooltip({ label, left: bounds.right + 12, top: bounds.top + bounds.height / 2 })
+  }
+  const hideTooltip = () => setTooltip(null)
   return (
     <>
       <button
@@ -215,35 +220,44 @@ function Sidebar({ activeView, onNavigate, onSignOut, session, open, hidden, onC
         onClick={onClose}
         type="button"
       />
-      <aside aria-label={session.role === 'owner' ? 'Owner monitoring navigation' : 'System administration navigation'} className={`fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(86vw,18rem)] shrink-0 flex-col bg-[linear-gradient(180deg,_#220046_0%,_#3a007a_100%)] text-white shadow-2xl transition-transform duration-300 ease-out lg:sticky lg:bottom-auto lg:top-0 lg:z-auto lg:h-screen lg:min-h-0 lg:w-72 lg:self-start lg:translate-x-0 lg:shadow-none ${open ? 'translate-x-0' : '-translate-x-full'} ${hidden ? 'lg:hidden' : 'lg:flex'}`}>
-        <div className="flex shrink-0 items-center justify-between gap-2 px-5 pb-5 pt-[max(1.25rem,env(safe-area-inset-top))]">
-          <BrandMark />
+      <aside aria-label={session.role === 'owner' ? 'Owner monitoring navigation' : 'System administration navigation'} className={`fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(86vw,18rem)] shrink-0 flex-col overflow-x-clip bg-[linear-gradient(180deg,_#220046_0%,_#3a007a_100%)] text-white shadow-2xl transition-transform duration-300 ease-out lg:sticky lg:bottom-auto lg:top-0 lg:z-auto lg:h-screen lg:min-h-0 lg:self-start lg:translate-x-0 lg:shadow-none lg:transition-[width] lg:duration-200 lg:ease-in-out ${open ? 'translate-x-0' : '-translate-x-full'} ${collapsed ? 'lg:w-[72px]' : 'lg:w-72'}`}>
+        <div className={`flex shrink-0 items-center justify-between gap-2 pb-5 pt-[max(1.25rem,env(safe-area-inset-top))] ${collapsed ? 'px-5 lg:flex-col lg:px-3' : 'px-5'}`}>
+          <div className={collapsed ? 'lg:hidden' : ''}><BrandMark /></div>
+          {collapsed && <div aria-label="Coolerz IMS" className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white shadow-md lg:flex" onMouseEnter={(event) => showTooltip(event.currentTarget, 'Coolerz IMS')} onMouseLeave={hideTooltip}>
+            <img alt="" className="h-10 w-10 rounded-lg object-cover" src={brandLogo} />
+          </div>}
           <button aria-label="Close navigation" className="rounded-lg p-2 text-[#f5deff] transition hover:bg-white/10 hover:text-white lg:hidden" onClick={onClose} type="button">
             <MenuIcon open />
           </button>
-          <button aria-label="Hide sidebar" className="hidden min-h-10 min-w-10 items-center justify-center rounded-xl text-[#f5deff] transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f5d68c] lg:inline-flex" onClick={onHide} title="Hide sidebar" type="button">
-            <SidebarIcon action="hide" />
+          <button aria-expanded={!collapsed} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} className="hidden min-h-10 min-w-10 items-center justify-center rounded-xl text-[#f5deff] transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f5d68c] lg:inline-flex" onClick={() => { hideTooltip(); onToggle() }} onMouseEnter={(event) => showTooltip(event.currentTarget, 'Expand sidebar')} onMouseLeave={hideTooltip} onFocus={(event) => showTooltip(event.currentTarget, 'Expand sidebar')} onBlur={hideTooltip} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} type="button">
+            <SidebarIcon action={collapsed ? 'show' : 'hide'} />
           </button>
         </div>
 
-        <nav className="sidebar-scrollbar min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-3 pb-4" aria-label="Primary navigation">
+        <nav className="sidebar-scrollbar min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-3 pb-4" aria-label="Primary navigation" onScroll={hideTooltip}>
           {navigation.map((group) => (
             <div key={group.label}>
-              <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-widest text-[#cfb5ff]">{group.label}</p>
+              <p className={`px-3 pb-2 text-[11px] font-semibold uppercase tracking-widest text-[#cfb5ff] ${collapsed ? 'lg:sr-only' : ''}`}>{group.label}</p>
               <div className="space-y-1">
                 {group.items.map((view) => (
                   <button
                     key={view}
-                    className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
+                    aria-label={getViewLabel(session.role, view)}
+                    aria-current={activeView === view ? 'page' : undefined}
+                    className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${collapsed ? 'lg:justify-center lg:gap-0 lg:px-0' : ''} ${
                       activeView === view
                         ? 'bg-[#f5d68c] font-semibold text-[#220046]'
                         : 'text-[#efe1ff] hover:bg-white/10 hover:text-white'
                     }`}
-                    onClick={() => { onNavigate(view); onClose() }}
+                    onClick={() => { hideTooltip(); onNavigate(view); onClose() }}
+                    onMouseEnter={(event) => showTooltip(event.currentTarget, getViewLabel(session.role, view))}
+                    onMouseLeave={hideTooltip}
+                    onFocus={(event) => showTooltip(event.currentTarget, getViewLabel(session.role, view))}
+                    onBlur={hideTooltip}
                     type="button"
                   >
                     <NavigationIcon view={view} />
-                    <span>{getViewLabel(session.role, view)}</span>
+                    <span className={collapsed ? 'lg:sr-only' : ''}>{getViewLabel(session.role, view)}</span>
                   </button>
                 ))}
               </div>
@@ -251,16 +265,19 @@ function Sidebar({ activeView, onNavigate, onSignOut, session, open, hidden, onC
           ))}
         </nav>
 
-        <div className="shrink-0 border-t border-white/10 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4">
-          <p className="truncate text-sm font-medium">{session.displayName}</p>
-          <p className="mt-1 text-xs text-[#d9c2ff]">
-            {session.role === 'system_admin' ? 'System admin' : 'Owner'}
-          </p>
-          <button className="mt-4 text-sm font-semibold text-[#f5d68c] hover:text-white" onClick={onSignOut} type="button">
-            Sign out
-          </button>
+        <div className={`shrink-0 border-t border-white/10 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 ${collapsed ? 'px-4 lg:px-3' : 'px-4'}`}>
+          <div className={collapsed ? 'lg:hidden' : ''}>
+            <p className="truncate text-sm font-medium">{session.displayName}</p>
+            <p className="mt-1 text-xs text-[#d9c2ff]">{session.role === 'system_admin' ? 'System admin' : 'Owner'}</p>
+            <button className="mt-4 text-sm font-semibold text-[#f5d68c] hover:text-white" onClick={onSignOut} type="button">Sign out</button>
+          </div>
+          {collapsed && <div className="hidden flex-col items-center gap-2 lg:flex">
+            <div aria-label={session.displayName} className="flex h-11 w-11 items-center justify-center rounded-full bg-[#eadcff] text-sm font-bold text-[#220046]" onMouseEnter={(event) => showTooltip(event.currentTarget, session.displayName)} onMouseLeave={hideTooltip}>{session.displayName.trim().charAt(0).toUpperCase() || '?'}</div>
+            <button aria-label="Sign out" className="flex h-11 w-11 items-center justify-center rounded-xl text-[#f5d68c] transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f5d68c]" onClick={() => { hideTooltip(); onSignOut() }} onMouseEnter={(event) => showTooltip(event.currentTarget, 'Sign out')} onMouseLeave={hideTooltip} onFocus={(event) => showTooltip(event.currentTarget, 'Sign out')} onBlur={hideTooltip} type="button"><SignOutIcon /></button>
+          </div>}
         </div>
       </aside>
+      {collapsed && tooltip && createPortal(<div role="tooltip" className="pointer-events-none fixed z-[100] rounded-lg border border-[#eadcff] bg-white px-3 py-1.5 text-xs font-semibold text-[#220046] shadow-lg" style={{ left: tooltip.left, top: tooltip.top, transform: 'translateY(-50%)' }}>{tooltip.label}</div>, document.body)}
     </>
   )
 }
@@ -268,7 +285,7 @@ function Sidebar({ activeView, onNavigate, onSignOut, session, open, hidden, onC
 function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () => void }) {
   const [view, setView] = useState<WebView>(() => getDefaultView(session.role))
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [sidebarHidden, setSidebarHidden] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [data, setData] = useState<WorkspaceData | null>(null)
   const [stalls, setStalls] = useState<Stall[]>([])
   const [selectedStallId, setSelectedStallId] = useState(session.stallId)
@@ -314,7 +331,16 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
     return request
   }, [client, selectedStallId])
 
-  const refresh = useCallback(() => refreshWorkspace(false), [refreshWorkspace])
+  const refresh = useCallback(async () => {
+    // A save must fetch again after any auto-refresh that started before the
+    // write; reusing that older request can leave the new product invisible.
+    const previous = refreshInFlight.current
+    if (previous) {
+      await previous
+      if (refreshInFlight.current === previous) refreshInFlight.current = null
+    }
+    await refreshWorkspace(false)
+  }, [refreshWorkspace])
 
   useEffect(() => {
     void refresh()
@@ -363,7 +389,8 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
     )
   }
 
-  const screenProps = { client, data, onRefresh: refresh, onError: setError, stalls, amountsVisible }
+  const screenProps = { client, data, onRefresh: refresh, onError: setError, stalls, amountsVisible,
+    canManageOperatingDays: session.role === 'system_admin' || session.role === 'owner' }
   const screen =
     view === 'admin' && session.role === 'system_admin' ? (
       <SystemAdminOverviewScreen {...screenProps} onNavigate={setView} />
@@ -375,6 +402,8 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
       <StallScreen {...screenProps} />
     ) : view === 'staff' ? (
       <StaffScreen {...screenProps} />
+    ) : view === 'dataReset' && session.role === 'system_admin' ? (
+      <DataResetScreen {...screenProps} />
     ) : view === 'products' ? (
       <ProductsScreen {...screenProps} />
     ) : view === 'receiving' ? (
@@ -397,7 +426,7 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,_#fbf6ff_0%,_#fffdf8_100%)] text-slate-900 lg:flex">
-      <Sidebar activeView={view} onNavigate={setView} onSignOut={() => setShowSignOutDialog(true)} session={session} open={sidebarOpen} hidden={sidebarHidden} onClose={() => setSidebarOpen(false)} onHide={() => setSidebarHidden(true)} />
+      <Sidebar activeView={view} onNavigate={setView} onSignOut={() => setShowSignOutDialog(true)} session={session} open={sidebarOpen} collapsed={sidebarCollapsed} onClose={() => setSidebarOpen(false)} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <main className="min-w-0 flex-1 overflow-x-clip">
         <header className="sticky top-0 z-30 border-b border-[#eadcff] bg-white/90 px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))] backdrop-blur sm:px-8 sm:py-6">
           <div className="mx-auto max-w-7xl">
@@ -411,17 +440,6 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
               >
                 <MenuIcon open={sidebarOpen} />
               </button>
-              {sidebarHidden && (
-                <button
-                  aria-label="Show sidebar"
-                  className="mt-0.5 hidden min-h-11 min-w-11 shrink-0 items-center justify-center rounded-xl border border-[#eadcff] bg-white text-[#4b2a7a] shadow-sm transition hover:border-[#caa8ff] hover:bg-[#fbf7ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 lg:inline-flex"
-                  onClick={() => setSidebarHidden(false)}
-                  title="Show sidebar"
-                  type="button"
-                >
-                  <SidebarIcon action="show" />
-                </button>
-              )}
               <div className="min-w-0 flex-1">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-5">
                   <div className="min-w-0">
@@ -430,6 +448,9 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
                     <p className="mt-1 text-xs text-slate-500 sm:text-sm">
                       Live updates on{lastUpdatedAt ? ` · updated ${lastUpdatedAt.toLocaleTimeString()}` : ''}
                     </p>
+                    <span className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-extrabold tracking-wide ${appEnvironment === 'production' ? 'bg-red-100 text-red-800 ring-1 ring-red-300' : 'bg-emerald-100 text-emerald-900 ring-1 ring-emerald-300'}`}>
+                      {appEnvironment === 'production' ? 'PRODUCTION DATABASE' : 'DEVELOPMENT DATABASE'}
+                    </span>
                   </div>
                   <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
                     {stalls.length > 1 && (

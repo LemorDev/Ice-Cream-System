@@ -60,7 +60,7 @@ body {
 }
 
 .sidebar-scrollbar {
-  scrollbar-color: rgb(245 214 140 / 72%) transparent;
+  scrollbar-color: #9d73d2 transparent;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
@@ -77,12 +77,12 @@ body {
   min-height: 48px;
   border: 2px solid transparent;
   border-radius: 999px;
-  background: rgb(245 214 140 / 72%);
+  background: #9d73d2;
   background-clip: padding-box;
 }
 
 .sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgb(245 214 140 / 95%);
+  background: #b895e3;
   background-clip: padding-box;
 }
 

@@ -15,6 +15,7 @@ declare
   token text := encode(gen_random_bytes(32), 'hex');
   close_id uuid := gen_random_uuid();
   response jsonb;
+  posted_rows integer;
 begin
   insert into public.stalls (id, name, code, overhead_config) values
     (stall_id, 'Recipe fixture', 'RECIPE-' || substr(stall_id::text, 1, 8), '[{"key":"rent","label":"Rent","dailyRate":10}]');
@@ -40,7 +41,8 @@ begin
     values (tx_id, serve_id, 'Vanilla cone', 1, 100, 100);
 
   perform set_config('request.headers', jsonb_build_object('x-session-token', token, 'x-device-id', 'recipe-test-device')::text, true);
-  if public.post_sale_inventory_ledger(tx_id, 'recipe integration test') <> 2
+  posted_rows := public.post_sale_inventory_ledger(tx_id, 'recipe integration test');
+  if posted_rows <> 2
     or public.get_stock_on_hand(stall_id, powder_id) <> 920
     or public.get_stock_on_hand(stall_id, cone_id) <> 19 then
     raise exception 'Recipe backflush did not consume the exact ingredients';

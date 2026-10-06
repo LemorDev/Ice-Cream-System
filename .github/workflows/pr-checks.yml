@@ -42,7 +42,7 @@ jobs:
           node-version: 24.19.0
       - name: Install isolated PostgreSQL test runtime
         run: npm install --prefix apps/android-pos/app/build/sql-test-runtime --no-audit --no-fund --package-lock=false @electric-sql/pglite@0.5.8
-      - run: node supabase/tests/pos_stock_receiving.integration.mjs --activation
+      - run: node supabase/tests/pos_stock_receiving.integration.mjs --extended --activation
 
   android:
     name: Android checks

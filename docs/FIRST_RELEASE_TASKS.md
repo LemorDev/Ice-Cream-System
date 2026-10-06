@@ -1,6 +1,6 @@
 # First-release task tracker
 
-Updated: 5 October 2026. Source plan: [First-release deployment plan](FIRST_RELEASE_DEPLOYMENT_PLAN.md).
+Updated: 6 October 2026. Source plan: [First-release deployment plan](FIRST_RELEASE_DEPLOYMENT_PLAN.md).
 
 This is the working checklist for the first IMS, Owner dashboard, and Android POS release. Complete one numbered task at a time, record its evidence in this file, and start the next ready task. `Done` means the stated completion check passed; a command merely running is not enough. Keep development test data out of production. Real sales begin only in the supervised production pilot.
 
@@ -10,7 +10,7 @@ Status key: `[ ]` To do · `[-]` In progress · `[x]` Done · `[!]` Blocked. For
 
 The 4 October local check found the branch `codex/inventory-recipes-ui` with many modified and untracked files, including both web and Android work and pending SQL migrations. Local `main` exists; local `develop` and a `.github` workflow directory were not found. The prior plan found production release signing unconfigured. These observations are a starting snapshot, not a production readiness assessment. Preserve the current work before switching branches or releasing.
 
-**Next task: R05 — re-audit release risks against current code.** R04 established the protected branch and PR path; R07 can expand the first passing PR checks with isolated database testing.
+**Next task: R06 — resolve the release blockers in the [R05 audit](R05_RELEASE_RISK_AUDIT.md).** R05 rechecked the dated findings against the current code and identified the specific repair and verification work.
 
 ## 1. Establish the release baseline
 
@@ -36,7 +36,7 @@ The detailed rules, acceptance checks, implementation gaps, and sign-off record 
 
 ## 2. Make the development candidate trustworthy
 
-- [ ] **R05 — Re-audit release risks against current code** (Developer; needs R02–R03). Recheck the dated [project review](PROJECT_REVIEW.md) and [release guide](RELEASE_AND_BRANCHING_PLAN.md). Record evidence for role/stall isolation, login rate limiting and account recovery, pagination, report dates and historical costs, recipe/stock arithmetic, sync replay, close/deduction totals, queue and device recovery. **Done when:** each finding is classified `fixed`, `tested`, `release blocker`, or `accepted limitation` with evidence; no dated finding is treated as current without rechecking it.
+- [x] **R05 — Re-audit release risks against current code** (Developer; needs R02–R03). Recheck the dated [project review](PROJECT_REVIEW.md) and [release guide](RELEASE_AND_BRANCHING_PLAN.md). Record evidence for role/stall isolation, login rate limiting and account recovery, pagination, report dates and historical costs, recipe/stock arithmetic, sync replay, close/deduction totals, queue and device recovery. **Done when:** each finding is classified `fixed`, `tested`, `release blocker`, or `accepted limitation` with evidence; no dated finding is treated as current without rechecking it. Evidence: [R05 audit](R05_RELEASE_RISK_AUDIT.md).
 - [ ] **R06 — Resolve release blockers** (Developer; needs R05). Make a separate issue or checklist item for each blocker from R05; fix the server and clients in compatible order. **Done when:** no unresolved issue can lose, duplicate, expose, or materially misstate a sale, cash, stock, or Owner report. Record any accepted limitation in the cashier/Owner instructions.
 - [ ] **R07 — Add repeatable CI checks** (Developer; needs R04). On PRs run web lint, tests, and build; Android unit tests and build; and isolated database migration/fixture checks. Pin the required Node/pnpm, Java/Android, and CLI versions. **Done when:** all checks run on a PR, failures block merging, and artifacts/logs identify the tested commit.
 - [ ] **R08 — Verify the development database contract** (Developer; needs R05–R06). Confirm the CLI links to the development project, inspect `migration list` and `db push --dry-run`, apply only reviewed pending migrations there, and execute rollback-only SQL fixtures on a disposable database. Test development Supabase with two stalls, role restrictions, duplicate uploads, and matching web/POS RPC behavior. **Done when:** migration history and test evidence match the candidate; no test fixture ran on production.
@@ -78,14 +78,14 @@ Fill this in during R01; do not infer production values from local files.
 
 | Item | Current verified value / evidence |
 | --- | --- |
-| Local branch and commit | `codex/inventory-recipes-ui` at `a5203d0` in the 4 October local check; many working-tree changes remain |
-| Changed/untracked paths | 125 on 2026-10-04: Android 64, web 22, Supabase 26, docs 9, root/other 4. These are status paths, not 125 reviewed changes. |
+| Local branch and commit | `codex/inventory-recipes-ui` at `3cf4158` before the 6 October R05 audit edits; the R03 source and security fixes are committed. |
+| Changed/untracked paths | The 125-path 4 October snapshot was reviewed in R03. Before R05, only the unrelated `Screenshot_1790765438.png` remained untracked. |
 | Credential-bearing local paths | `.env.development.local`, `.env.local`, `local.properties`, and `supabase/.temp` exist and are Git-ignored. Values were not read or staged. The staged files were screened for credential patterns during R03. |
-| Preserved source commits | `02cedcf` environment setup; `fd82002` Supabase contracts/tests; `9b99d3f` Android POS/Room/UI; `6dc1811` IMS source/tests; `9f41023` release documents. All are on `codex/inventory-recipes-ui` and have not been pushed. |
+| Preserved source commits | `02cedcf` environment setup; `fd82002` Supabase contracts/tests; `9b99d3f` Android POS/Room/UI; `6dc1811` IMS source/tests; `9f41023` release documents. They were pushed to the authorized feature branch for PR #1; security commit `3cf4158` followed. |
 | Source verified for R03 | `9f41023`: 45 web tests, web lint, and `build:development` passed; 84 Android `testDevDebugUnitTest` cases passed with zero failures/errors. This is a local verification, not live database or device acceptance. |
 | Preserved unrelated file | Root `Screenshot_1790765438.png` shows an Android USB debugging prompt. It remains untracked and was not included in any commit. |
 | Remote default/main state | `origin/main` freshly fetched and verified at `c90835f` during R04 |
-| `develop` branch / CI | Local and remote `develop` created at `c90835f`; [draft PR #1](https://github.com/LemorDev/Ice-Cream-System/pull/1) targets it. Both branches require passing `Web checks` and `Android checks`; [run 37280302762](https://github.com/LemorDev/Ice-Cream-System/actions/runs/37280302762) passed both at `d39525e`. [Branch flow](BRANCH_REVIEW_FLOW.md) records protection and deployment settings. |
+| `develop` branch / CI | Local and remote `develop` created at `c90835f`; [draft PR #1](https://github.com/LemorDev/Ice-Cream-System/pull/1) targets it. Both long-lived branches now require `Web checks`, `Android checks`, and `Database checks`; [run 37284888741](https://github.com/LemorDev/Ice-Cream-System/actions/runs/37284888741) passed all three at `3cf4158`. [Branch flow](BRANCH_REVIEW_FLOW.md) records the initial R04 settings. |
 | Development Supabase schema | First applied 3 October per [Supabase setup guide](../supabase/README.md); check current pending migrations |
 | Production Supabase project and migration history | Unknown; verify read-only in R01/R15 |
 | Currently deployed web URL and revision | Unknown; verify in R01/R15 |
@@ -104,3 +104,4 @@ Fill this in during R01; do not infer production values from local files.
 | 2026-10-05 | R02 done | User reported that Owner and Cashier both accepted scope revision `0bba1be`; acceptance recorded in the scope document. This is workflow agreement, not a passing implementation test. | R04 branch/review flow; R05 audits the known refund and midnight release blockers. |
 | 2026-10-05 | R04 in progress | Fetched remote `main` at `c90835f`, created/pushed `develop` at the same commit, pushed feature head `65284df`, and opened [draft PR #1](https://github.com/LemorDev/Ice-Cream-System/pull/1) into `develop`. User chose public visibility to enable GitHub Free branch protection; both long-lived branches now require PRs and disallow force pushes/deletions. User reports no hosting connected; no deployment workflow exists. [Review flow](BRANCH_REVIEW_FLOW.md) and initial PR checks added. | Run the checks, require their verified names on both branches, and verify final rules before closing R04. |
 | 2026-10-05 | R04 done | Verified remote `main` and `develop` at `c90835f`, PR #1 base `develop`, and branch protection on both long-lived branches: PR required, strict `Web checks` and `Android checks`, admin enforcement, no force push/deletion. Both checks passed at `d39525e` after fixing the Android setup action. User reports no hosting connected, and the only GitHub workflow has no deploy job. See [branch/review evidence](BRANCH_REVIEW_FLOW.md). | R05 risk audit; R07 adds isolated database CI and makes it required before candidate merge. |
+| 2026-10-06 | R05 done | [R05 audit](R05_RELEASE_RISK_AUDIT.md) rechecked the September review and release guide against `3cf4158`, classified 19 findings with code/test evidence, and enumerated the release blockers for R06. The extended disposable PGlite suite passed after fixing a fixture evaluation-order defect. Database CI was broadened to include that fixture; its new PR run is pending. No live database or phone was tested. | R06 repairs the listed blockers; R08/R09 supply live backend and device evidence. |

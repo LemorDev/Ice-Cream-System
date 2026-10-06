@@ -57,9 +57,9 @@ class StockReceivingRepositoryTest {
             val id = firstArg<String>(); entries[id] = entries.getValue(id).copy(isSynced = true)
         }
         coEvery { states.find(any()) } returns null
-        coEvery { api.getProducts(any()) } returns emptyList()
-        coEvery { api.getRecipes(any()) } returns emptyList()
-        coEvery { api.getInventoryLedger(any(), any()) } returns emptyList()
+        coEvery { api.getProductsPage(any()) } returns emptyList()
+        coEvery { api.getRecipesPage(any()) } returns emptyList()
+        coEvery { api.getInventoryLedgerPage(any()) } returns emptyList()
         receiving = StockReceivingRepository(db, products, sessions, ledger, trigger)
         catalog = ProductRepository(db, products, ledger, states, recipes, api)
     }
@@ -122,7 +122,10 @@ class StockReceivingRepositoryTest {
             remote.add(InventoryLedgerDto(e.id, e.stallId, e.productId, e.quantityDelta, e.movementType, e.reason, e.referenceId, e.occurredAt, e.occurredAt))
             PushInventoryEntryResponse("accepted", e.id)
         }
-        coEvery { api.getInventoryLedger(any(), any()) } coAnswers { remote.toList() }
+        coEvery { api.getInventoryLedgerPage(any()) } coAnswers {
+            if (firstArg<com.icecreampost.pos.data.remote.dto.CatalogPageRequest>().afterId == null) remote.toList()
+            else emptyList()
+        }
         val sync = SyncRepository(mockk<TransactionDao>(relaxed = true), mockk<BusinessDayDao>(relaxed = true), ledger,
             mockk<DailyStoreClosingDao>(relaxed = true), mockk<RevenueDeductionDao>(relaxed = true), states, api, catalog, mockk<AppLogger>(relaxed = true))
         assertEquals(2, sync.sync().ledgerEntriesSynced)

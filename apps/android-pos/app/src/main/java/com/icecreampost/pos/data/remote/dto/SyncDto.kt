@@ -48,6 +48,13 @@ data class ProductPullRequest(
 )
 
 @Serializable
+data class CatalogPageRequest(
+    @SerialName("p_after_updated_at") val afterUpdatedAt: String? = null,
+    @SerialName("p_after_id") val afterId: String? = null,
+    @SerialName("p_limit") val limit: Int = 250,
+)
+
+@Serializable
 data class PushBusinessDayPayload(
     val id: String,
     @SerialName("stall_id") val stallId: String,

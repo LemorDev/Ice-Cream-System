@@ -12,6 +12,7 @@ import com.icecreampost.pos.data.local.entity.SyncStateEntity
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.InventoryLedgerDto
 import com.icecreampost.pos.data.remote.dto.ProductDto
+import com.icecreampost.pos.data.remote.dto.CatalogPageRequest
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -27,6 +28,7 @@ import org.junit.Before
 import org.junit.Test
 import retrofit2.HttpException
 import retrofit2.Response
+import java.io.IOException
 
 class ProductRepositoryTest {
     private val database = mockk<CoolerzDatabase>()
@@ -98,9 +100,9 @@ class ProductRepositoryTest {
             val state = firstArg<SyncStateEntity>()
             states[state.key] = state
         }
-        coEvery { api.getInventoryLedger(any(), any()) } returns listOf(receipt)
-        coEvery { api.getProducts(any()) } returns listOf(remoteProduct)
-        coEvery { api.getRecipes(any()) } returns emptyList()
+        stubLedger(listOf(receipt))
+        stubProducts(listOf(remoteProduct))
+        coEvery { api.getRecipesPage(any()) } returns emptyList()
         repository = ProductRepository(database, productDao, ledgerDao, stateDao, recipeDao, api)
     }
 
@@ -117,21 +119,21 @@ class ProductRepositoryTest {
     }
 
     @Test
-    fun `legacy server without recipe RPC still refreshes products`() = runTest {
-        coEvery { api.getRecipes(any()) } throws httpError(404)
+    fun `older server without paged recipe RPC is rejected before changing stock`() = runTest {
+        coEvery { api.getRecipesPage(any()) } throws httpError(404)
 
-        repository.refreshFromCloud()
+        assertTrue(runCatching { repository.refreshFromCloud() }.isFailure)
 
-        assertEquals("Vanilla", products.getValue("product-1").name)
-        assertEquals(10.0, products.getValue("product-1").unitsInStock, 0.001)
+        assertTrue(products.isEmpty())
+        assertTrue(ledger.isEmpty())
     }
 
     @Test
     fun `first pull sums fractional movements before storing integer stock`() = runTest {
-        coEvery { api.getInventoryLedger(any(), any()) } returns listOf(
+        stubLedger(listOf(
             receipt.copy(id = "receive-half-1", quantityDelta = 0.5),
             receipt.copy(id = "receive-half-2", quantityDelta = 0.5),
-        )
+        ))
 
         repository.refreshFromCloud()
 
@@ -141,29 +143,29 @@ class ProductRepositoryTest {
     @Test
     fun `new product in incremental pull does not double its received stock`() = runTest {
         states["catalog"] = SyncStateEntity(key = "catalog", value = "legacy", cursorUpdatedAt = firstTime)
-        coEvery { api.getProducts(any()) } returns listOf(remoteProduct.copy(updatedAt = secondTime))
-        coEvery { api.getInventoryLedger(any(), any()) } returns listOf(receipt.copy(updatedAt = secondTime))
+        stubProducts(listOf(remoteProduct.copy(updatedAt = secondTime)))
+        stubLedger(listOf(receipt.copy(updatedAt = secondTime)))
 
         repository.refreshFromCloud()
 
         assertEquals(10.0, products.getValue("product-1").unitsInStock, 0.001)
-        coVerify { api.getProducts(match { it.updatedAfter == firstTime }) }
-        coVerify { api.getInventoryLedger(updatedAtFilter = "gt.$firstTime") }
+        coVerify { api.getProductsPage(match { it.afterUpdatedAt == "2026-09-08T00:59:59Z" && it.afterId == null }) }
+        coVerify { api.getInventoryLedgerPage(match { it.afterUpdatedAt == "2026-09-08T00:59:59Z" && it.afterId == null }) }
     }
 
     @Test
     fun `newer product changes do not advance the ledger cursor past unseen stock`() = runTest {
-        coEvery { api.getProducts(any()) } returns listOf(remoteProduct.copy(updatedAt = thirdTime))
+        stubProducts(listOf(remoteProduct.copy(updatedAt = thirdTime)))
         repository.refreshFromCloud()
-        coEvery { api.getInventoryLedger(any(), any()) } returns listOf(
+        stubLedger(listOf(
             receipt.copy(id = "receive-2", quantityDelta = 2.0, updatedAt = secondTime),
-        )
-        coEvery { api.getProducts(any()) } returns emptyList()
+        ))
+        stubProducts(emptyList())
 
         repository.refreshFromCloud()
 
-        coVerify { api.getInventoryLedger(updatedAtFilter = "gt.$firstTime") }
-        coVerify { api.getProducts(match { it.updatedAfter == thirdTime }) }
+        coVerify { api.getInventoryLedgerPage(match { it.afterUpdatedAt == "2026-09-08T00:59:59Z" && it.afterId == null }) }
+        coVerify { api.getProductsPage(match { it.afterUpdatedAt == "2026-09-08T02:59:59Z" && it.afterId == null }) }
         assertEquals(12.0, products.getValue("product-1").unitsInStock, 0.001)
         assertEquals(secondTime, states["catalog-ledger"]?.cursorUpdatedAt)
     }
@@ -191,10 +193,13 @@ class ProductRepositoryTest {
     @Test
     fun `catalog refresh preserves a checkout completed during the network request`() = runTest {
         repository.refreshFromCloud()
-        coEvery { api.getInventoryLedger(any(), any()) } returns emptyList()
-        coEvery { api.getProducts(any()) } coAnswers {
-            products["product-1"] = products.getValue("product-1").copy(unitsInStock = 7.0)
-            listOf(remoteProduct.copy(salePrice = 50.0, updatedAt = secondTime))
+        stubLedger(emptyList())
+        coEvery { api.getProductsPage(any()) } coAnswers {
+            if (firstArg<CatalogPageRequest>().afterId != null) emptyList()
+            else {
+                products["product-1"] = products.getValue("product-1").copy(unitsInStock = 7.0)
+                listOf(remoteProduct.copy(salePrice = 50.0, updatedAt = secondTime))
+            }
         }
 
         repository.refreshFromCloud()
@@ -203,8 +208,68 @@ class ProductRepositoryTest {
         assertEquals(5_000L, products.getValue("product-1").priceCents)
     }
 
+    @Test
+    fun `equal-time product rows continue past the page boundary`() = runTest {
+        val cloud = (0..250).map { index ->
+            remoteProduct.copy(id = "product-${index.toString().padStart(4, '0')}")
+        }
+        coEvery { api.getProductsPage(any()) } coAnswers {
+            when (firstArg<CatalogPageRequest>().afterId) {
+                null -> cloud.take(250)
+                cloud[249].id -> cloud.drop(250)
+                else -> emptyList()
+            }
+        }
+
+        repository.refreshFromCloud()
+
+        assertEquals(251, products.size)
+        coVerify { api.getProductsPage(match { it.afterUpdatedAt == firstTime && it.afterId == cloud[249].id }) }
+        assertEquals(firstTime, states["catalog-products"]?.cursorUpdatedAt)
+    }
+
+    @Test
+    fun `interrupted ledger page leaves stock and cursor untouched until retry`() = runTest {
+        val receipts = (0..250).map { index ->
+            receipt.copy(id = "receive-${index.toString().padStart(4, '0')}", quantityDelta = 0.5)
+        }
+        coEvery { api.getInventoryLedgerPage(any()) } coAnswers {
+            if (firstArg<CatalogPageRequest>().afterId == null) receipts.take(250)
+            else throw IOException("page interrupted")
+        }
+
+        assertTrue(runCatching { repository.refreshFromCloud() }.isFailure)
+        assertTrue(ledger.isEmpty())
+        assertTrue(states.isEmpty())
+
+        coEvery { api.getInventoryLedgerPage(any()) } coAnswers {
+            when (firstArg<CatalogPageRequest>().afterId) {
+                null -> receipts.take(250)
+                receipts[249].id -> receipts.drop(250)
+                else -> emptyList()
+            }
+        }
+        repository.refreshFromCloud()
+
+        assertEquals(251, ledger.size)
+        assertEquals(125.5, products.getValue("product-1").unitsInStock, 0.001)
+        assertEquals(firstTime, states["catalog-ledger"]?.cursorUpdatedAt)
+    }
+
     private fun httpError(code: Int): HttpException {
         val body = "{\"message\":\"Not found\"}".toResponseBody("application/json".toMediaType())
         return HttpException(Response.error<Any>(code, body))
+    }
+
+    private fun stubProducts(rows: List<ProductDto>) {
+        coEvery { api.getProductsPage(any()) } coAnswers {
+            if (firstArg<CatalogPageRequest>().afterId == null) rows else emptyList()
+        }
+    }
+
+    private fun stubLedger(rows: List<InventoryLedgerDto>) {
+        coEvery { api.getInventoryLedgerPage(any()) } coAnswers {
+            if (firstArg<CatalogPageRequest>().afterId == null) rows else emptyList()
+        }
     }
 }

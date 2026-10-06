@@ -11,12 +11,11 @@ import com.icecreampost.pos.data.local.entity.SyncStateEntity
 import com.icecreampost.pos.data.local.entity.ProductRecipeEntity
 import com.icecreampost.pos.data.local.database.CoolerzDatabase
 import com.icecreampost.pos.data.remote.SupabaseApi
-import com.icecreampost.pos.data.remote.dto.ProductPullRequest
+import com.icecreampost.pos.data.remote.dto.CatalogPageRequest
 import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
-import retrofit2.HttpException
 
 @Singleton
 class ProductRepository @Inject constructor(
@@ -37,16 +36,14 @@ class ProductRepository @Inject constructor(
         // Migrate existing installs without replaying previously applied inventory.
         val productCursor = if (productState == null) legacyCursor else productState.cursorUpdatedAt
         val ledgerCursor = if (ledgerState == null) legacyCursor else ledgerState.cursorUpdatedAt
-        val remoteLedger = api.getInventoryLedger(updatedAtFilter = ledgerCursor?.let { "gt.$it" })
-        val productDtos = api.getProducts(ProductPullRequest(productCursor))
-        // Older deployed databases do not expose get_pos_recipes yet. Treat a
-        // missing RPC as an empty recipe catalog so ordinary sales keep working
-        // until the server migration is applied.
-        val recipeDtos = try {
-            api.getRecipes(ProductPullRequest(null))
-        } catch (error: HttpException) {
-            if (error.code() == 404) emptyList() else throw error
-        }
+        // Complete every page before entering the Room transaction. A failed
+        // page leaves both stock and cursors untouched for the next retry.
+        val remoteLedger = pullAllPages(ledgerCursor, api::getInventoryLedgerPage,
+            { it.id }, { it.updatedAt })
+        val productDtos = pullAllPages(productCursor, api::getProductsPage,
+            { it.id }, { it.updatedAt })
+        val recipeDtos = pullAllPages(null, api::getRecipesPage,
+            { it.id }, { it.updatedAt })
         val ledger = remoteLedger.map { entry ->
             InventoryLedgerEntity(
                 id = entry.id,
@@ -145,5 +142,41 @@ class ProductRepository @Inject constructor(
                 )
             }
         }
+    }
+
+    private suspend fun <T> pullAllPages(
+        lastCommittedAt: String?,
+        load: suspend (CatalogPageRequest) -> List<T>,
+        id: (T) -> String,
+        updatedAt: (T) -> String,
+    ): List<T> {
+        // Overlap the committed timestamp so equal-time rows missed by an
+        // older build are replayed. Room upserts and ledger delta logic dedupe.
+        var afterAt = lastCommittedAt?.let { saved ->
+            runCatching { Instant.parse(saved).minusSeconds(1).toString() }.getOrNull()
+        }
+        var afterId: String? = null
+        val rows = linkedMapOf<String, T>()
+        var pages = 0
+        while (true) {
+            check(++pages <= 100_000) { "Catalog paging did not finish." }
+            val batch = load(CatalogPageRequest(afterAt, afterId))
+            check(batch.size <= 250) { "Catalog page exceeded its server limit." }
+            if (batch.isEmpty()) break
+            batch.forEach { row ->
+                require(id(row).isNotBlank() && updatedAt(row).isNotBlank()) { "Catalog row is missing its cursor." }
+                rows[id(row)] = row
+            }
+            val last = batch.last()
+            val nextAt = updatedAt(last)
+            val nextId = id(last)
+            check(afterAt == null || Instant.parse(nextAt).isAfter(Instant.parse(afterAt)) ||
+                (Instant.parse(nextAt) == Instant.parse(afterAt) && (afterId == null || nextId > afterId))) {
+                "Catalog page did not advance its cursor."
+            }
+            afterAt = nextAt
+            afterId = nextId
+        }
+        return rows.values.toList()
     }
 }

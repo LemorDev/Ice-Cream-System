@@ -14,6 +14,7 @@ import com.icecreampost.pos.data.remote.dto.PushTransactionPayload
 import com.icecreampost.pos.data.remote.dto.PushTransactionResponse
 import com.icecreampost.pos.data.remote.dto.PushTransactionRpcRequest
 import com.icecreampost.pos.data.remote.dto.ProductPullRequest
+import com.icecreampost.pos.data.remote.dto.CatalogPageRequest
 import com.icecreampost.pos.data.remote.dto.PushBusinessDayRequest
 import com.icecreampost.pos.data.remote.dto.PushBusinessDayResponse
 import com.icecreampost.pos.data.remote.dto.ProductRecipeDto
@@ -50,8 +51,17 @@ interface SupabaseApi {
     @POST("rest/v1/rpc/get_pos_products")
     suspend fun getProducts(@Body request: ProductPullRequest): List<ProductDto>
 
+    @POST("rest/v1/rpc/get_pos_products_page")
+    suspend fun getProductsPage(@Body request: CatalogPageRequest): List<ProductDto>
+
     @POST("rest/v1/rpc/get_pos_recipes")
     suspend fun getRecipes(@Body request: ProductPullRequest = ProductPullRequest(null)): List<ProductRecipeDto>
+
+    @POST("rest/v1/rpc/get_pos_recipes_page")
+    suspend fun getRecipesPage(@Body request: CatalogPageRequest): List<ProductRecipeDto>
+
+    @POST("rest/v1/rpc/get_pos_inventory_ledger_page")
+    suspend fun getInventoryLedgerPage(@Body request: CatalogPageRequest): List<InventoryLedgerDto>
 
     @POST("rest/v1/rpc/push_pos_inventory_entry")
     suspend fun pushInventoryEntry(@Body request: PushInventoryEntryRequest): PushInventoryEntryResponse

@@ -36,7 +36,7 @@ PGlite test is not a live Supabase or physical-phone test.
 | R05-17 | [Device recovery SQL](../supabase/migrations/202610010002_pos_activation_and_deduction_alignment.sql) and [activation fixture](../supabase/tests/activation_alignment.sql) cover active-device transfer and server-known recovery totals. [POS replacement](../apps/android-pos/app/src/main/java/com/icecreampost/pos/ui/PosViewModel.kt) checks that the day is closed and pending work is zero. The PGlite fixture passed. | **tested** | R09: test the actual Room migration/update and replacement on a physical phone with a nonempty queue. |
 | R05-18 | A lost phone's unsynced queue cannot be reconstructed from Supabase. [Scope](FIRST_RELEASE_SCOPE.md) accepts numbered-paper continuation and manual reconciliation; the [POS recovery guide](../supabase/README.md) warns that the recovered totals include only server-known records. | **accepted limitation** | R18 must supply the numbered sheet, named support contact, stop conditions and manual reconciliation path before pilot; do not claim phone-only sales were recovered. |
 | R05-19 | [Android](../apps/android-pos/app/src/main/java/com/icecreampost/pos/di/NetworkModule.kt) uses HTTP BASIC logging (request line/status, no headers or body) and app sync logs IDs/status, not passwords or tokens. [Web session](../apps/web-ims/src/lib/session.ts) uses session storage. This rechecks the old logging concern, but is not a penetration test. | **fixed** | R08/R09: inspect release logs and verify tokens/passwords do not appear; do not enable BODY logging. |
-| R05-20 | The broadened PR run discovered a new [high-severity `source-map-js` advisory](https://github.com/advisories/GHSA-68fv-2mgg-jv7q) affecting locked 1.2.1. The override now resolves 1.2.2, and `pnpm audit --json` reports zero advisories on 6 October. | **tested** | Require the web audit job to pass on the updated PR head; recheck advisories before the release candidate is frozen. |
+| R05-20 | The broadened PR run discovered a new [high-severity `source-map-js` advisory](https://github.com/advisories/GHSA-68fv-2mgg-jv7q) affecting locked 1.2.1. The override now resolves 1.2.2, `pnpm audit --json` reports zero advisories, and the web audit job passed on `78fc271`. | **tested** | Recheck advisories before the release candidate is frozen. |
 
 ## Verification and interpretation
 
@@ -57,8 +57,9 @@ PGlite test is not a live Supabase or physical-phone test.
 - [PR run 37284888741](https://github.com/LemorDev/Ice-Cream-System/actions/runs/37284888741)
   passed web, Android and the previous narrower database job at `3cf4158`.
   The broadened [PR run 37428102600](https://github.com/LemorDev/Ice-Cream-System/actions/runs/37428102600)
-  passed Database checks but its web dependency audit found R05-20. The
-  patched lockfile and broader fixture still need a fully passing PR run.
+  passed Database checks but its web dependency audit found R05-20. After the
+  lockfile fix, [run 37428550926](https://github.com/LemorDev/Ice-Cream-System/actions/runs/37428550926)
+  passed all three required checks on `78fc271`.
 - `pnpm audit --json` reports zero vulnerabilities after resolving
   `source-map-js` 1.2.2; the extended PGlite suite also still passes.
 - No development Supabase migration push, live backend test, physical phone,

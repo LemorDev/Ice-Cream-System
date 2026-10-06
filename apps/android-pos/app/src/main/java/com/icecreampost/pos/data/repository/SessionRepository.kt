@@ -2,8 +2,10 @@ package com.icecreampost.pos.data.repository
 
 import com.icecreampost.pos.data.local.dao.SessionDao
 import com.icecreampost.pos.data.local.dao.BusinessDayDao
+import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.entity.AppSessionEntity
 import com.icecreampost.pos.data.local.entity.BusinessDayEntity
+import com.icecreampost.pos.data.local.entity.SyncStateEntity
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.LoginRequest
 import com.icecreampost.pos.data.remote.dto.ActivateDeviceRequest
@@ -26,11 +28,17 @@ class SessionRepository @Inject constructor(
     private val sessionTokenStore: SessionTokenStore,
     private val deviceIdentity: DeviceIdentity,
     private val businessDayDao: BusinessDayDao,
+    private val syncStateDao: SyncStateDao,
 ) {
     fun observeSession(): Flow<AppSessionEntity?> = sessionDao.observeCurrent()
 
     suspend fun restoreStoredSession(allowExpiredForOfflineWork: Boolean = false): AppSessionEntity? {
         val current = sessionDao.getCurrent()
+        if (current?.stallId != null && !isCompatibleStall(current.stallId)) {
+            sessionTokenStore.token = null
+            sessionDao.clear()
+            return null
+        }
         val storedToken = current?.sessionToken?.takeIf { it.isNotBlank() }
         val isExpired = current?.expiresAt?.let { expiresAt ->
             runCatching { !Instant.parse(expiresAt).isAfter(Instant.now()) }.getOrDefault(true)
@@ -57,6 +65,13 @@ class SessionRepository @Inject constructor(
             throw error
         } ?: error("The stall code, email, or password is incorrect.")
         require(response.role == "cashier") { "Use the Owner web dashboard for this account." }
+        check(isCompatibleStall(response.stallId) &&
+            (sessionDao.getCurrent()?.stallId == null || sessionDao.getCurrent()?.stallId == response.stallId)) {
+            "This phone contains data from another stall. Use that stall's account and resolve its queue on this phone; a different stall needs a separate POS device."
+        }
+        // Persist the assignment even when there are no sales yet. Sign-out
+        // must never make another stall's catalog or queue visible on this phone.
+        syncStateDao.upsert(SyncStateEntity(key = "device-stall", value = response.stallId))
         sessionTokenStore.token = response.sessionToken
         val session = AppSessionEntity(
                 userId = response.userId,
@@ -141,5 +156,11 @@ class SessionRepository @Inject constructor(
     suspend fun signOut() {
         sessionTokenStore.token = null
         sessionDao.clear()
+    }
+
+    private suspend fun isCompatibleStall(stallId: String): Boolean {
+        val bound = syncStateDao.find("device-stall")?.value
+        val persisted = syncStateDao.findPersistedStallIds()
+        return (bound == null || bound == stallId) && persisted.all { it == stallId }
     }
 }

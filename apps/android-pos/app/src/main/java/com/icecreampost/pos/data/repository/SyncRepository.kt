@@ -23,6 +23,8 @@ import com.icecreampost.pos.data.remote.dto.PushDailyClosingRequest
 import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionPayload
 import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionRequest
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -49,6 +51,7 @@ class SyncRepository @Inject constructor(
     private val productRepository: ProductRepository,
     private val logger: AppLogger,
 ) {
+    private val syncMutex = Mutex()
     fun observeSyncState(): Flow<SyncStateEntity?> = syncStateDao.observe("sync")
 
     suspend fun resetStatus() {
@@ -59,7 +62,9 @@ class SyncRepository @Inject constructor(
         transactionDao.getUnsynced().isNotEmpty() || inventoryLedgerDao.countPending() > 0 ||
         revenueDeductionDao.getUnsynced().isNotEmpty() || dailyStoreClosingDao.getUnsynced().isNotEmpty()
 
-    suspend fun sync(): SyncReport {
+    suspend fun sync(): SyncReport = syncMutex.withLock { syncOnce() }
+
+    private suspend fun syncOnce(): SyncReport {
         setState("running", null)
         var pushed = 0
         var permanentFailures = 0
@@ -161,6 +166,10 @@ class SyncRepository @Inject constructor(
         for (closing in dailyStoreClosingDao.getUnsynced()) {
             if (businessDayDao.getUnsynced().any { it.id == closing.businessDayId }) continue
             if (revenueDeductionDao.getUnsynced().any { it.businessDayId == closing.businessDayId }) continue
+            // A server closing is final. Never acknowledge it while any local sale or
+            // stock movement can still change its totals, including failed records.
+            if (transactionDao.getUnsynced().any { it.stallId == closing.stallId && it.occurredAt <= closing.closedAt }) continue
+            if (inventoryLedgerDao.countPending() > 0) continue
             try {
                 val response = api.pushDailyClosing(PushDailyClosingRequest(PushDailyClosingPayload(
                     id = closing.id,

@@ -71,7 +71,9 @@ class CheckoutRepository @Inject constructor(
         require(!resolvedDeviceId.isNullOrBlank()) { "This POS has not been activated." }
         val now = Instant.now().toString()
         val transactionId = UUID.randomUUID().toString()
-        val receiptNumber = "LOCAL-${now.replace("[^0-9]".toRegex(), "").takeLast(12)}"
+        // UUID identity survives offline retries and cannot collide with another
+        // checkout created in the same millisecond.
+        val receiptNumber = "LOCAL-${transactionId.uppercase()}"
         val subtotalCents = lines.sumOf { it.lineTotalCents }
         require(cashReceivedCents >= subtotalCents) { "Cash received is less than the total." }
 

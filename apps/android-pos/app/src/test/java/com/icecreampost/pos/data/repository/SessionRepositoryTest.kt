@@ -2,7 +2,9 @@ package com.icecreampost.pos.data.repository
 
 import com.icecreampost.pos.data.local.dao.SessionDao
 import com.icecreampost.pos.data.local.dao.BusinessDayDao
+import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.entity.AppSessionEntity
+import com.icecreampost.pos.data.local.entity.SyncStateEntity
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.ActivateDeviceResponse
 import com.icecreampost.pos.data.remote.dto.LoginResponse
@@ -24,13 +26,17 @@ class SessionRepositoryTest {
     private val api = mockk<SupabaseApi>()
     private val tokenStore = SessionTokenStore()
     private val deviceIdentity = mockk<DeviceIdentity>()
+    private val syncStateDao = mockk<SyncStateDao>(relaxed = true)
     private lateinit var repository: SessionRepository
 
     @Before
     fun setUp() {
         every { deviceIdentity.id } returns "hardware-1"
+        coEvery { syncStateDao.find("device-stall") } returns null
+        coEvery { syncStateDao.findPersistedStallIds() } returns emptyList()
+        coEvery { sessionDao.getCurrent() } returns null
         repository = SessionRepository(sessionDao, api, tokenStore, deviceIdentity,
-            mockk(relaxed = true))
+            mockk(relaxed = true), syncStateDao)
     }
 
     @Test
@@ -58,6 +64,35 @@ class SessionRepositoryTest {
         assertEquals("cashier", saved.captured.role)
         assertEquals("stall-1", saved.captured.stallId)
         assertEquals(false, saved.captured.isActivated)
+    }
+
+    @Test
+    fun `another stall cannot sign in over persisted local sales`() = runTest {
+        coEvery { api.login(any()) } returns listOf(login(role = "cashier"))
+        coEvery { syncStateDao.findPersistedStallIds() } returns listOf("other-stall")
+
+        assertThrows(IllegalStateException::class.java) {
+            runTest { repository.signIn("MAIN-001", "cashier@example.com", "password") }
+        }
+
+        assertEquals(null, tokenStore.token)
+        coVerify(exactly = 0) { sessionDao.save(any()) }
+        coVerify(exactly = 0) { syncStateDao.upsert(any()) }
+    }
+
+    @Test
+    fun `a phone remains bound to its original stall after sign out and an empty queue`() = runTest {
+        coEvery { api.login(any()) } returns listOf(login(role = "cashier"))
+        coEvery { syncStateDao.find("device-stall") } returns SyncStateEntity(
+            key = "device-stall", value = "other-stall",
+        )
+
+        assertThrows(IllegalStateException::class.java) {
+            runTest { repository.signIn("MAIN-001", "cashier@example.com", "password") }
+        }
+
+        assertEquals(null, tokenStore.token)
+        coVerify(exactly = 0) { sessionDao.save(any()) }
     }
 
     @Test

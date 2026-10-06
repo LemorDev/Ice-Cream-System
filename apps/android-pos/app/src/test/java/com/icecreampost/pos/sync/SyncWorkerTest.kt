@@ -5,6 +5,7 @@ import androidx.work.ListenableWorker
 import androidx.work.WorkerParameters
 import com.icecreampost.pos.core.logging.AppLogger
 import com.icecreampost.pos.data.local.dao.SessionDao
+import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.entity.AppSessionEntity
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.interceptor.SessionTokenStore
@@ -32,7 +33,7 @@ class SyncWorkerTest {
             stallId = "stall-1", isActivated = true,
         )
         val sessionRepository = SessionRepository(sessionDao, mockk<SupabaseApi>(), tokenStore, mockk<DeviceIdentity>(),
-            mockk(relaxed = true))
+            mockk(relaxed = true), emptySyncStateDao())
         coEvery { syncRepository.sync() } coAnswers {
             assertEquals("persisted-session-token", tokenStore.token)
             SyncReport(pushed = 1, permanentFailures = 0)
@@ -59,6 +60,7 @@ class SyncWorkerTest {
             SessionTokenStore(),
             mockk<DeviceIdentity>(),
             mockk(relaxed = true),
+            emptySyncStateDao(),
         )
         val worker = SyncWorker(
             mockk<Context>(), mockk<WorkerParameters>(relaxed = true),
@@ -91,6 +93,7 @@ class SyncWorkerTest {
             SessionTokenStore(),
             mockk<DeviceIdentity>(),
             mockk(relaxed = true),
+            emptySyncStateDao(),
         )
         val worker = SyncWorker(
             mockk<Context>(), mockk<WorkerParameters>(relaxed = true),
@@ -100,5 +103,10 @@ class SyncWorkerTest {
         assertEquals(ListenableWorker.Result.failure(), worker.doWork())
 
         coVerify(exactly = 0) { sessionDao.clear() }
+    }
+
+    private fun emptySyncStateDao(): SyncStateDao = mockk<SyncStateDao>().also { dao ->
+        coEvery { dao.find("device-stall") } returns null
+        coEvery { dao.findPersistedStallIds() } returns emptyList()
     }
 }

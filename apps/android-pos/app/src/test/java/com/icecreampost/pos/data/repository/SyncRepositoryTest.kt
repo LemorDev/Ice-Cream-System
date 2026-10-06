@@ -24,6 +24,9 @@ import io.mockk.just
 import io.mockk.mockk
 import io.mockk.runs
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
@@ -325,6 +328,49 @@ class SyncRepositoryTest {
         assertEquals(1, report.permanentFailures)
         coVerify(exactly = 0) { api.pushDailyClosing(any()) }
         coVerify(exactly = 1) { revenueDeductionDao.markSyncError(deduction.id, any()) }
+    }
+
+    @Test
+    fun `a rejected sale prevents final closing upload`() = runTest {
+        val closing = DailyStoreClosingEntity(
+            id = "c672218c-e417-4a43-8122-c4d9e105d275", stallId = transaction.stallId,
+            businessDayId = "7fb894ad-fe85-430f-a239-a942ad288c18", businessDate = "2026-08-21",
+            grossSalesCents = transaction.totalCents, cogsCents = 0, wasteCostCents = 0,
+            overheadCostCents = 0, netProfitCents = transaction.totalCents,
+            expectedCashCents = transaction.totalCents, collectedCashCents = transaction.totalCents,
+            deviceId = "786706d8-cfaa-46f1-909a-123f2cc9385a", closedAt = "2026-08-21T09:00:00Z",
+        )
+        coEvery { api.pushTransaction(any()) } throws httpError(400)
+        coEvery { dailyStoreClosingDao.getUnsynced() } returns listOf(closing)
+
+        val report = repository.sync()
+
+        assertEquals(1, report.permanentFailures)
+        coVerify(exactly = 0) { api.pushDailyClosing(any()) }
+    }
+
+    @Test
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `overlapping manual and worker sync share one upload`() = runTest {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        coEvery { transactionDao.getUnsynced() } returnsMany listOf(listOf(transaction), emptyList())
+        coEvery { api.pushTransaction(any()) } coAnswers {
+            entered.complete(Unit)
+            release.await()
+            acknowledgement("accepted")
+        }
+
+        val first = async { repository.sync() }
+        entered.await()
+        val second = async { repository.sync() }
+        runCurrent()
+        coVerify(exactly = 1) { api.pushTransaction(any()) }
+        release.complete(Unit)
+
+        assertEquals(1, first.await().pushed)
+        assertEquals(0, second.await().pushed)
+        coVerify(exactly = 1) { api.pushTransaction(any()) }
     }
 
     @Test

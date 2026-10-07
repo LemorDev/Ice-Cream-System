@@ -3,7 +3,9 @@
 create schema if not exists private;
 revoke all on schema private from public, anon, authenticated;
 
-create table private.password_login_failures (
+-- Development received this table during the earlier security repair before
+-- CLI migration history was recorded; the verified shape is identical.
+create table if not exists private.password_login_failures (
   user_id uuid primary key references public.app_users(id) on delete cascade,
   failed_count integer not null check (failed_count > 0),
   window_started_at timestamptz not null,

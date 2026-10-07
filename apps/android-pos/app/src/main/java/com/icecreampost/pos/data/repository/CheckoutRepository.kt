@@ -16,6 +16,8 @@ import com.icecreampost.pos.domain.model.CartLine
 import com.icecreampost.pos.sync.SyncTrigger
 import kotlinx.coroutines.flow.Flow
 import java.time.Instant
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -78,7 +80,9 @@ class CheckoutRepository @Inject constructor(
         require(cashReceivedCents >= subtotalCents) { "Cash received is less than the total." }
 
         database.withTransaction {
-            require(businessDayDao.findOpen(resolvedStallId) != null) { "Open the operating day before starting a sale." }
+            val openDay = requireNotNull(businessDayDao.findOpen(resolvedStallId)) {
+                "Open the operating day before starting a sale."
+            }
             lines.forEach { line ->
                 val current = productDao.findById(line.product.id)
                     ?: error("${line.product.name} is no longer available locally.")
@@ -101,6 +105,16 @@ class CheckoutRepository @Inject constructor(
                 }
                 current
             }
+            val componentCosts = usage.mapValues { (productId, quantity) ->
+                val product = requireNotNull(stockProducts[productId])
+                val baseUnitsPerPack = BigDecimal.valueOf(product.packSize)
+                    .multiply(BigDecimal.valueOf(product.conversionRate))
+                require(baseUnitsPerPack.signum() > 0) { "Invalid pack conversion for ${product.name}." }
+                BigDecimal.valueOf(quantity)
+                    .multiply(BigDecimal.valueOf(product.costPriceCents))
+                    .divide(baseUnitsPerPack, 0, RoundingMode.HALF_UP)
+                    .longValueExact()
+            }
             stockProducts.forEach { (productId, current) ->
                 productDao.updateStock(productId, current.unitsInStock - requireNotNull(usage[productId]), now)
             }
@@ -109,12 +123,14 @@ class CheckoutRepository @Inject constructor(
                 TransactionEntity(
                     id = transactionId,
                     stallId = resolvedStallId,
+                    businessDayId = openDay.id,
                     deviceId = resolvedDeviceId,
                     cashierId = resolvedCashierId,
                     receiptNumber = receiptNumber,
                     status = "completed",
                     subtotalCents = subtotalCents,
                     totalCents = subtotalCents,
+                    cogsCents = componentCosts.values.sum(),
                     cashReceivedCents = cashReceivedCents,
                     changeAmountCents = cashReceivedCents - subtotalCents,
                     occurredAt = now,
@@ -141,8 +157,10 @@ class CheckoutRepository @Inject constructor(
                 InventoryLedgerEntity(
                     id = UUID.randomUUID().toString(),
                     stallId = resolvedStallId,
+                    businessDayId = openDay.id,
                     productId = productId,
                     quantityDelta = -quantity,
+                    costTotalCents = requireNotNull(componentCosts[productId]),
                     movementType = "sale",
                     reason = "offline checkout",
                     referenceId = transactionId,

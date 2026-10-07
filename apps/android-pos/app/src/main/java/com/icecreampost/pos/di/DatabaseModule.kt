@@ -37,6 +37,7 @@ object DatabaseModule {
                 CoolerzDatabase.MIGRATION_8_9,
                 CoolerzDatabase.MIGRATION_9_10,
                 CoolerzDatabase.MIGRATION_10_11,
+                CoolerzDatabase.MIGRATION_11_12,
             )
             .build()
 

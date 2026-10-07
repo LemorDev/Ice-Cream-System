@@ -7,6 +7,7 @@ import kotlinx.serialization.Serializable
 data class PushTransactionPayload(
     val id: String,
     @SerialName("stall_id") val stallId: String,
+    @SerialName("business_day_id") val businessDayId: String,
     @SerialName("device_id") val deviceId: String? = null,
     @SerialName("receipt_number") val receiptNumber: String,
     val status: String,
@@ -16,6 +17,7 @@ data class PushTransactionPayload(
     @SerialName("change_amount") val changeAmount: Double? = null,
     @SerialName("occurred_at") val occurredAt: String,
     val items: List<PushTransactionItemPayload>,
+    val components: List<PushSaleComponentPayload>,
 )
 
 @Serializable
@@ -31,6 +33,14 @@ data class PushTransactionItemPayload(
     val quantity: Double,
     @SerialName("unit_price") val unitPrice: Double,
     @SerialName("line_total") val lineTotal: Double,
+)
+
+@Serializable
+data class PushSaleComponentPayload(
+    val id: String,
+    @SerialName("product_id") val productId: String,
+    val quantity: Double,
+    @SerialName("cost_total") val costTotal: Double,
 )
 
 @Serializable

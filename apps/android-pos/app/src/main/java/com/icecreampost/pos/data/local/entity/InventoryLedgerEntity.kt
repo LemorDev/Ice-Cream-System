@@ -7,8 +7,10 @@ import androidx.room.PrimaryKey
 data class InventoryLedgerEntity(
     @PrimaryKey val id: String,
     val stallId: String,
+    val businessDayId: String? = null,
     val productId: String,
     val quantityDelta: Double,
+    val costTotalCents: Long? = null,
     val movementType: String,
     val reason: String? = null,
     val referenceId: String? = null,

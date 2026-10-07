@@ -5,7 +5,7 @@ import { appEnvironment } from './lib/supabase'
 import { addInventoryEntry, adminCloseOpenBusinessDay, archiveCategory, archiveProduct, authorizePosRecovery, createCategory, createDeviceActivation, createManagedStall, getOverheadForStall, getPosDeviceStatus, getStockByProduct, getTransactionReceiptItems, listManagedUsers, resetStockLevels, resetTransactionsAndRevenue, revokePendingPosActivation, reviewPosRecovery, reverseTransaction, saveManagedUser, saveProduct, saveProductWithRecipe, setOwnerStalls, setStockOnHand, updateStall } from './lib/api'
 import type { PosDeviceStatus } from './lib/api'
 import type { WebView } from './lib/access'
-import { getDashboardMetrics, getDailyProfitReport, calculateDailyOverhead, DEFAULT_OVERHEAD_ITEMS, formatDateRangeLabel, getBusinessDateKey, getProductPerformance, getRevenueTrend, shiftDateKey } from './lib/dashboard'
+import { getDashboardMetrics, getDailyProfitReport, calculateDailyOverhead, DEFAULT_OVERHEAD_ITEMS, formatDateRangeLabel, getBusinessDateKey, getProductPerformance, getRevenueTrend, shiftDateKey, transactionBusinessDate } from './lib/dashboard'
 import { downloadCsv } from './lib/export'
 import { formatFinancialAmount, formatUnitCostAmount } from './lib/privacy'
 import { getDailyReconciliation, recipeCost, unitCost } from './lib/recipes'
@@ -33,7 +33,7 @@ function getErrorMessage(error: unknown) {
 
 export function OverviewScreen({ data, onNavigate, amountsVisible }: ScreenProps & { onNavigate: (view: string) => void }) {
   const money = (value: number) => formatFinancialAmount(value, amountsVisible)
-  const today = new Date().toISOString().slice(0, 10)
+  const today = data.businessDays.find((day) => day.closed_at === null)?.business_date ?? getBusinessDateKey()
   const metrics = getDashboardMetrics(data.products, data.inventory, data.transactions, today)
   const stock = metrics.stock
   const lowStock = data.products.filter((product) => metrics.lowStock.includes(product.id))
@@ -42,7 +42,7 @@ export function OverviewScreen({ data, onNavigate, amountsVisible }: ScreenProps
     { label: 'Sales today', value: money(metrics.sales), detail: `${metrics.completedSales} completed sale${metrics.completedSales === 1 ? '' : 's'}`, action: () => onNavigate('reports') },
     { label: 'Low-stock items', value: String(lowStock.length), detail: lowStock.length ? 'Review stock levels' : 'Everything is above threshold', action: () => onNavigate('adjustments') },
     { label: 'Active products', value: String(data.products.filter((product) => product.is_sellable).length), detail: `${data.products.length} total catalog items`, action: () => onNavigate('products') },
-    { label: 'Transactions', value: String(data.transactions.length), detail: 'Latest 1,000 records loaded', action: () => onNavigate('transactions') },
+    { label: 'Transactions', value: String(data.transactions.length), detail: 'Stall records loaded', action: () => onNavigate('transactions') },
   ]
 
   return <div className="space-y-6"><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{cards.map((card) => <button key={card.label} className="rounded-2xl border border-[#eadcff] bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[#caa8ff]" onClick={card.action}><p className="text-sm text-slate-500">{card.label}</p><p className="mt-2 text-2xl font-bold text-slate-900">{card.value}</p><p className="mt-1 text-xs text-slate-400">{card.detail}</p></button>)}</div><div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]"><Panel title="Stock watchlist" description="Products at or below their configured threshold."><Table><TableHead><th className="px-3 py-3">Product</th><th className="px-3 py-3">On hand</th><th className="px-3 py-3">Threshold</th><th className="px-3 py-3">Status</th></TableHead><tbody>{lowStock.slice(0, 8).map((product) => { const onHand = stock[product.id] ?? 0; return <tr key={product.id} className="border-b border-slate-100"><TableCell><p className="font-medium">{product.name}</p><p className="text-xs text-slate-400">{product.sku}</p></TableCell><TableCell>{onHand.toLocaleString()} {product.unit}</TableCell><TableCell>{product.low_stock_threshold.toLocaleString()} {product.unit}</TableCell><TableCell><Badge tone={onHand <= 0 ? 'danger' : 'warning'}>{onHand <= 0 ? 'Out of stock' : 'Low stock'}</Badge></TableCell></tr> })}</tbody></Table>{lowStock.length === 0 && <EmptyState title="No stock alerts" description="All active products are above their configured thresholds." />}</Panel><Panel title="Quick actions" description="Common selected-stall operations."><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">{[['Receive stock', 'receiving'], ['Adjust inventory', 'adjustments'], ['Edit prices', 'pricing'], ['Download sales report', 'reports']].map(([label, view]) => <Button key={view} variant="secondary" className="text-left" onClick={() => onNavigate(view)}>{label}</Button>)}</div></Panel></div></div>
@@ -50,13 +50,13 @@ export function OverviewScreen({ data, onNavigate, amountsVisible }: ScreenProps
 
 export function OwnerDashboardScreen({ data, onNavigate, amountsVisible }: ScreenProps & { onNavigate: (view: WebView) => void }) {
   const money = (value: number) => formatFinancialAmount(value, amountsVisible)
-  const today = getBusinessDateKey()
+  const today = data.businessDays.find((day) => day.closed_at === null)?.business_date ?? getBusinessDateKey()
   const yesterday = shiftDateKey(today, -1)
   const weekStart = shiftDateKey(today, -6)
   const trend = useMemo(() => getRevenueTrend(data.transactions, weekStart, today), [data.transactions, today, weekStart])
   const todayPoint = trend.at(-1) ?? { revenue: 0, orders: 0 }
   const yesterdayRevenue = data.transactions
-    .filter((transaction) => transaction.status === 'completed' && getBusinessDateKey(transaction.occurred_at) === yesterday)
+    .filter((transaction) => transaction.status === 'completed' && transactionBusinessDate(transaction) === yesterday)
     .reduce((sum, transaction) => sum + transaction.total_amount, 0)
   const weekRevenue = trend.reduce((sum, point) => sum + point.revenue, 0)
   const weekOrders = trend.reduce((sum, point) => sum + point.orders, 0)
@@ -984,7 +984,7 @@ export function ReportsScreen({ data, amountsVisible }: ScreenProps) {
   )
   const report = useMemo(() => {
     const transactions = data.transactions.filter((transaction) => {
-      const date = getBusinessDateKey(transaction.occurred_at)
+      const date = transactionBusinessDate(transaction)
       return date >= from && date <= to
     })
     return {
@@ -1093,7 +1093,8 @@ export function DailyCloseScreen({ data, amountsVisible }: ScreenProps) {
   const [report] = getDailyProfitReport(data.products, data.inventory, data.transactions, data.transactionItems, date, date, overheadItems, data.businessDays.map((day) => day.business_date), data.stall?.financial_report_reset_at, data.revenueDeductions, data.dailyClosings)
   const emptyReport = { businessDate: date, revenue: 0, cogs: 0, wasteCost: 0, fixedOverhead: 0, revenueDeduction: 0, profitDeduction: 0, netProfit: 0, completedSales: 0, voidedSales: 0 }
   const day = report ?? emptyReport
-  const reconciliation = getDailyReconciliation(date, data.products, data.recipes, data.inventory, data.transactions, data.transactionItems)
+  const reconciliation = getDailyReconciliation(date, data.products, data.recipes, data.inventory, data.transactions, data.transactionItems,
+    data.businessDays.find((businessDay) => businessDay.business_date === date))
   const saved = data.dailyClosings.find((closing) => closing.business_date === date)
   const dayDeductions = data.revenueDeductions.filter((entry) => entry.business_date === date)
   return <div className="space-y-5">

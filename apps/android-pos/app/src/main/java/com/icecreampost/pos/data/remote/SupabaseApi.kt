@@ -42,7 +42,7 @@ interface SupabaseApi {
     @POST("rest/v1/rpc/get_recovered_pos_day")
     suspend fun getRecoveredDay(@Body request: RecoveredDayRequest): RecoveredBusinessDay?
 
-    @POST("rest/v1/rpc/push_pos_transaction")
+    @POST("rest/v1/rpc/push_pos_transaction_v2")
     suspend fun pushTransaction(@Body request: PushTransactionRpcRequest): PushTransactionResponse
 
     @POST("rest/v1/rpc/push_business_day")

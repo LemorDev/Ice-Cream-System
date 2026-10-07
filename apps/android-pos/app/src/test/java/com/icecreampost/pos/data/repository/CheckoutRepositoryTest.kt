@@ -137,15 +137,17 @@ class CheckoutRepositoryTest {
 
     @Test
     fun `recipe checkout atomically backflushes ingredients instead of the menu item`() = runTest {
-        val powder = cartProduct.copy(id = "powder", name = "Vanilla powder", isSellable = false, productType = "raw", baseUnit = "g", unitsInStock = 1_000.0)
-        val cone = cartProduct.copy(id = "cone", name = "Cone", isSellable = false, productType = "packaging", unitsInStock = 30.0)
+        val powder = cartProduct.copy(id = "powder", name = "Vanilla powder", isSellable = false, productType = "raw", baseUnit = "g", unitsInStock = 1_000.0, costPriceCents = 50_000, packSize = 1_000.0)
+        val cone = cartProduct.copy(id = "cone", name = "Cone", isSellable = false, productType = "packaging", unitsInStock = 30.0, costPriceCents = 10_000, packSize = 50.0)
         coEvery { recipeDao.findForParents(listOf(cartProduct.id)) } returns listOf(
             ProductRecipeEntity("r1", "stall-1", cartProduct.id, powder.id, 80.0, "2026-09-08T00:00:00Z"),
             ProductRecipeEntity("r2", "stall-1", cartProduct.id, cone.id, 1.0, "2026-09-08T00:00:00Z"),
         )
         coEvery { productDao.findById(any()) } answers { when (firstArg<String>()) { cartProduct.id -> cartProduct; powder.id -> powder; else -> cone } }
         val movements = io.mockk.slot<List<InventoryLedgerEntity>>()
+        val savedSale = io.mockk.slot<TransactionEntity>()
         coEvery { ledgerDao.upsertAll(capture(movements)) } returns Unit
+        coEvery { transactionDao.upsert(capture(savedSale)) } returns Unit
 
         repository.checkout(listOf(CartLine(cartProduct, 2)), 4_000)
 
@@ -153,5 +155,9 @@ class CheckoutRepositoryTest {
         coVerify { productDao.updateStock(cone.id, 28.0, any()) }
         coVerify(exactly = 0) { productDao.updateStock(cartProduct.id, any(), any()) }
         assertEquals(setOf(powder.id to -160.0, cone.id to -2.0), movements.captured.map { it.productId to it.quantityDelta }.toSet())
+        assertEquals("day-1", savedSale.captured.businessDayId)
+        assertEquals(8_400L, savedSale.captured.cogsCents)
+        assertEquals(setOf(powder.id to 8_000L, cone.id to 400L),
+            movements.captured.map { it.productId to it.costTotalCents }.toSet())
     }
 }

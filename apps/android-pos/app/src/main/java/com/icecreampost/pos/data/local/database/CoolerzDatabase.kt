@@ -42,7 +42,7 @@ import com.icecreampost.pos.data.local.entity.RevenueDeductionEntity
         DailyStoreClosingEntity::class,
         RevenueDeductionEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = true,
 )
 abstract class CoolerzDatabase : RoomDatabase() {
@@ -156,6 +156,16 @@ abstract class CoolerzDatabase : RoomDatabase() {
         val MIGRATION_10_11 = object : Migration(10, 11) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE business_days ADD COLUMN recoveryKnownOrders INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE transactions ADD COLUMN businessDayId TEXT")
+                db.execSQL("ALTER TABLE transactions ADD COLUMN cogsCents INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE inventory_ledger ADD COLUMN businessDayId TEXT")
+                db.execSQL("ALTER TABLE inventory_ledger ADD COLUMN costTotalCents INTEGER")
+                db.execSQL("UPDATE transactions SET businessDayId=(SELECT day.id FROM business_days day WHERE day.stallId=transactions.stallId AND transactions.occurredAt>=day.openedAt AND transactions.occurredAt<=COALESCE(day.closedAt,'9999-12-31T23:59:59Z') ORDER BY day.openedAt DESC LIMIT 1)")
+                db.execSQL("UPDATE inventory_ledger SET businessDayId=(SELECT day.id FROM business_days day WHERE day.stallId=inventory_ledger.stallId AND inventory_ledger.occurredAt>=day.openedAt AND inventory_ledger.occurredAt<=COALESCE(day.closedAt,'9999-12-31T23:59:59Z') ORDER BY day.openedAt DESC LIMIT 1)")
             }
         }
     }

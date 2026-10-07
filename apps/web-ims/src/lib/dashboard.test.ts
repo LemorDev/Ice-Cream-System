@@ -37,6 +37,29 @@ test('business reporting uses the Manila calendar date', () => {
   assert.equal(getBusinessDateKey('2026-08-04T23:30:00Z'), '2026-08-05')
 })
 
+test('an overnight sale keeps its opening day and booked cost after a catalog edit', () => {
+  const overnight = [{
+    id: 'overnight', status: 'completed', total_amount: 50,
+    occurred_at: '2026-08-04T16:05:00Z', business_date: '2026-08-04', cogs: 40,
+  }] as Transaction[]
+  const changedCost = [{ id: 'serve', cost_price: 999 }] as Product[]
+  const used = [{ transaction_id: 'overnight', product_id: 'serve', product_name: 'Serve', quantity: 1, line_total: 50 }] as TransactionItem[]
+  const waste = [{
+    id: 'waste', product_id: 'powder', movement_type: 'adjustment', quantity_delta: -10,
+    occurred_at: '2026-08-04T16:10:00Z', business_date: '2026-08-04', unit_cost: 0.5,
+  }] as InventoryEntry[]
+
+  const [report] = getDailyProfitReport(changedCost, waste, overnight, used, '2026-08-04', '2026-08-05', [])
+
+  assert.equal(report.businessDate, '2026-08-04')
+  assert.equal(report.revenue, 50)
+  assert.equal(report.cogs, 40)
+  assert.equal(report.wasteCost, 5)
+  assert.equal(report.netProfit, 5)
+  assert.deepEqual(getRevenueTrend(overnight, '2026-08-04', '2026-08-05').map((point) => point.revenue), [50, 0])
+  assert.equal(getProductPerformance(overnight, used, '2026-08-04', '2026-08-04')[0].revenue, 50)
+})
+
 test('revenue trend includes zero-sales days and completed transactions only', () => {
   const result = getRevenueTrend(transactions, '2026-08-03', '2026-08-05')
   assert.deepEqual(result, [

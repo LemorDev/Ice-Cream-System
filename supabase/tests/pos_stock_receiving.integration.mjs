@@ -45,7 +45,7 @@ try {
   await db.exec(await readFile('supabase/migrations/202609300002_fix_pos_inventory_movement_enum.sql','utf8'));
   await db.exec(fixture);
   console.log('PASS: corrected receipt integration fixture (stock totals, repeat deliveries, retry idempotency, input validation, permissions)');
-  const regressionFiles = ['stockable_product_classification.sql', 'set_stock_on_hand.sql', 'password_login_limits.sql', 'r06_replay_and_reset.sql', 'r06_catalog_pages.sql'];
+  const regressionFiles = ['stockable_product_classification.sql', 'set_stock_on_hand.sql', 'password_login_limits.sql', 'r06_replay_and_reset.sql', 'r06_catalog_pages.sql', 'r06_sale_snapshots.sql'];
   if (process.argv.includes('--extended')) regressionFiles.push('recipes_and_closings.sql');
   if (process.argv.includes('--activation')) regressionFiles.push('activation_alignment.sql', 'separate_revenue_deductions.sql', 'system_admin_data_reset.sql', 'admin_close_open_business_day.sql');
   for (const file of regressionFiles) {

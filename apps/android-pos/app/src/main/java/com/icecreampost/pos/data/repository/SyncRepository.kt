@@ -12,6 +12,7 @@ import com.icecreampost.pos.data.local.entity.SyncStateEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.PushTransactionItemPayload
+import com.icecreampost.pos.data.remote.dto.PushSaleComponentPayload
 import com.icecreampost.pos.data.remote.dto.PushTransactionPayload
 import com.icecreampost.pos.data.remote.dto.PushTransactionRpcRequest
 import com.icecreampost.pos.data.remote.dto.PushBusinessDayPayload
@@ -234,8 +235,10 @@ class SyncRepository @Inject constructor(
     private suspend fun push(transaction: TransactionEntity) {
         transactionDao.markSyncAttempt(transaction.id, Instant.now().toString())
         val items = transactionDao.getItems(transaction.id)
+        val components = inventoryLedgerDao.getSaleComponents(transaction.id)
         require(transaction.id.isNotBlank()) { "Transaction ID is missing." }
         require(transaction.stallId.isNotBlank()) { "Transaction stall is missing." }
+        require(!transaction.businessDayId.isNullOrBlank()) { "Sale has no operating-day identity. Keep it queued for reconciliation." }
         require(transaction.receiptNumber.isNotBlank()) { "Receipt number is missing." }
         require(transaction.totalCents >= 0) { "Transaction total is invalid." }
         require(items.isNotEmpty()) { "Transaction has no items." }
@@ -245,11 +248,20 @@ class SyncRepository @Inject constructor(
         require(items.all { it.productName.isNotBlank() && it.quantity > 0 && it.unitPriceCents >= 0 && it.lineTotalCents >= 0 }) {
             "A transaction item contains invalid values."
         }
+        require(components.isNotEmpty()) { "Sale has no ingredient snapshot. Keep it queued for reconciliation." }
+        require(components.all { it.stallId == transaction.stallId && it.businessDayId == transaction.businessDayId &&
+            it.quantityDelta < 0 && it.costTotalCents != null && it.costTotalCents >= 0 }) {
+            "A sale ingredient snapshot is incomplete."
+        }
+        require(components.sumOf { requireNotNull(it.costTotalCents) } == transaction.cogsCents) {
+            "Sale cost snapshot does not match its ingredients."
+        }
 
         val response = api.pushTransaction(
             PushTransactionRpcRequest(PushTransactionPayload(
                 id = transaction.id,
                 stallId = transaction.stallId,
+                businessDayId = requireNotNull(transaction.businessDayId),
                 deviceId = transaction.deviceId,
                 receiptNumber = transaction.receiptNumber,
                 status = transaction.status,
@@ -268,12 +280,22 @@ class SyncRepository @Inject constructor(
                         lineTotal = item.lineTotalCents / 100.0,
                     )
                 },
+                components = components.map { component ->
+                    PushSaleComponentPayload(
+                        id = component.id,
+                        productId = component.productId,
+                        quantity = -component.quantityDelta,
+                        costTotal = requireNotNull(component.costTotalCents) / 100.0,
+                    )
+                },
             )),
         )
         check(response.status == "accepted" || response.status == "duplicate") {
             "IMS returned an unexpected sync status: ${response.status}."
         }
-        check(response.transactionId.isNotBlank()) { "IMS did not acknowledge the transaction ID." }
+        check(response.transactionId == transaction.id && response.receiptNumber == transaction.receiptNumber) {
+            "IMS acknowledged a different transaction or receipt."
+        }
     }
 
     private suspend fun setState(status: String, errorMessage: String?) {

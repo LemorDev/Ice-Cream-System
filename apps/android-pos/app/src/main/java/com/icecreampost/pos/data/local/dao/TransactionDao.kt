@@ -24,7 +24,7 @@ interface TransactionDao {
     @Query("SELECT COALESCE(SUM(totalCents), 0) FROM transactions WHERE stallId = :stallId AND status = 'completed' AND occurredAt >= :openedAt AND occurredAt <= :closedAt")
     suspend fun getCompletedTotalBetween(stallId: String, openedAt: String, closedAt: String): Long
 
-    @Query("SELECT COALESCE(SUM(ti.quantity * p.costPriceCents), 0) FROM transaction_items ti JOIN transactions t ON t.id = ti.transactionId JOIN products p ON p.id = ti.productId WHERE t.stallId = :stallId AND t.status = 'completed' AND t.occurredAt >= :openedAt AND t.occurredAt <= :closedAt")
+    @Query("SELECT COALESCE(SUM(cogsCents), 0) FROM transactions WHERE stallId = :stallId AND status = 'completed' AND occurredAt >= :openedAt AND occurredAt <= :closedAt")
     suspend fun getCompletedCogsBetween(stallId: String, openedAt: String, closedAt: String): Long
 
     @Upsert

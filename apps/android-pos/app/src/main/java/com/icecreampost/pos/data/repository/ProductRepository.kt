@@ -118,7 +118,13 @@ class ProductRepository @Inject constructor(
                     }
                 }
             }
-            inventoryLedgerDao.upsertAll(ledger)
+            inventoryLedgerDao.upsertAll(ledger.map { entry ->
+                val local = inventoryLedgerDao.findById(entry.id)
+                entry.copy(
+                    businessDayId = local?.businessDayId,
+                    costTotalCents = local?.costTotalCents,
+                )
+            })
             productRecipeDao.deleteAll()
             productRecipeDao.upsertAll(recipeDtos.map { recipe ->
                 ProductRecipeEntity(recipe.id, recipe.stallId, recipe.parentProductId, recipe.ingredientProductId, recipe.quantity, recipe.updatedAt)

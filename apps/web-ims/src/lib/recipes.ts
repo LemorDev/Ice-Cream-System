@@ -1,4 +1,4 @@
-import type { InventoryEntry, Product, ProductRecipe, Transaction, TransactionItem } from './types'
+import type { BusinessDay, InventoryEntry, Product, ProductRecipe, Transaction, TransactionItem } from './types'
 
 export function unitCost(product: Pick<Product, 'cost_price' | 'pack_size' | 'conversion_rate'>) {
   const usableUnits = product.pack_size * product.conversion_rate
@@ -24,22 +24,20 @@ export type ReconciliationRow = {
 
 export function getDailyReconciliation(
   date: string,
-  products: Product[], recipes: ProductRecipe[], inventory: InventoryEntry[],
-  transactions: Transaction[], items: TransactionItem[],
+  products: Product[], _recipes: ProductRecipe[], inventory: InventoryEntry[],
+  _transactions: Transaction[], _items: TransactionItem[], operatingDay?: BusinessDay,
 ): ReconciliationRow[] {
-  const beforeEnd = `${date}T23:59:59.999`
-  const beforeStart = `${date}T00:00:00.000`
-  const completed = new Set(transactions.filter((tx) => tx.status === 'completed' && tx.occurred_at >= beforeStart && tx.occurred_at <= beforeEnd).map((tx) => tx.id))
-  const sold = new Map<string, number>()
-  items.filter((item) => completed.has(item.transaction_id)).forEach((item) => {
-    if (item.product_id) sold.set(item.product_id, (sold.get(item.product_id) ?? 0) + item.quantity)
-  })
+  const beforeStart = operatingDay?.opened_at ?? `${date}T00:00:00.000Z`
+  const beforeEnd = operatingDay?.closed_at ?? '9999-12-31T23:59:59Z'
+  const belongsToDay = (entry: InventoryEntry) => operatingDay
+    ? entry.business_day_id === operatingDay.id || (!entry.business_day_id && entry.occurred_at >= beforeStart && entry.occurred_at <= beforeEnd)
+    : (entry.business_date ?? entry.occurred_at.slice(0, 10)) === date
   return products.filter((product) => product.product_type !== 'sellable').map((product) => {
     const starting = inventory.filter((entry) => entry.product_id === product.id && entry.occurred_at < beforeStart).reduce((sum, entry) => sum + entry.quantity_delta, 0)
-    const movements = inventory.filter((entry) => entry.product_id === product.id && entry.occurred_at >= beforeStart && entry.occurred_at <= beforeEnd)
+    const movements = inventory.filter((entry) => entry.product_id === product.id && belongsToDay(entry))
     const receipts = movements.filter((entry) => entry.quantity_delta > 0).reduce((sum, entry) => sum + entry.quantity_delta, 0)
-    const waste = Math.abs(movements.filter((entry) => entry.movement_type === 'void_waste' || (entry.movement_type === 'adjustment' && entry.quantity_delta < 0)).reduce((sum, entry) => sum + entry.quantity_delta, 0))
-    const salesUsage = recipes.filter((recipe) => recipe.ingredient_product_id === product.id).reduce((sum, recipe) => sum + recipe.quantity * (sold.get(recipe.parent_product_id) ?? 0), 0)
+    const waste = Math.abs(movements.filter((entry) => entry.movement_type === 'adjustment' && entry.quantity_delta < 0).reduce((sum, entry) => sum + entry.quantity_delta, 0))
+    const salesUsage = Math.abs(movements.filter((entry) => entry.movement_type === 'sale').reduce((sum, entry) => sum + entry.quantity_delta, 0))
     return { product, starting, salesUsage, waste, expected: starting + receipts - salesUsage - waste }
   })
 }

@@ -178,6 +178,32 @@ class ProductRepositoryTest {
     }
 
     @Test
+    fun `pulling the same sale ledger keeps its immutable day and cost snapshot`() = runTest {
+        val sale = InventoryLedgerEntity(
+            id = "sale-ledger-1", stallId = "stall-1", businessDayId = "day-1",
+            productId = "product-1", quantityDelta = -2.0, costTotalCents = 840,
+            movementType = "sale", referenceId = "sale-1", occurredAt = firstTime,
+            updatedAt = firstTime,
+        )
+        products["product-1"] = ProductEntity(
+            id = "product-1", stallId = "stall-1", name = "Vanilla", category = "Ice cream",
+            priceCents = 1_000, unitsInStock = 8.0, updatedAt = firstTime,
+        )
+        ledger[sale.id] = sale
+        stubLedger(listOf(InventoryLedgerDto(
+            id = sale.id, stallId = sale.stallId, productId = sale.productId,
+            quantityDelta = sale.quantityDelta, movementType = "sale", referenceId = sale.referenceId,
+            occurredAt = firstTime, updatedAt = firstTime,
+        )))
+
+        repository.refreshFromCloud()
+
+        assertEquals(8.0, products.getValue("product-1").unitsInStock, 0.001)
+        assertEquals("day-1", ledger.getValue(sale.id).businessDayId)
+        assertEquals(840L, ledger.getValue(sale.id).costTotalCents)
+    }
+
+    @Test
     fun `interrupted pull rolls back stock and cursor before retry`() = runTest {
         failLedgerWrite = true
         assertTrue(runCatching { repository.refreshFromCloud() }.isFailure)

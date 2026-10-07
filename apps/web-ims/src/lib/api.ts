@@ -76,8 +76,8 @@ export async function loadWorkspace(client: DbClient, stallId: string): Promise<
     client.from('stalls').select('*').eq('id', stallId).is('deleted_at', null).single(),
     fetchAllRows((from, to) => client.from('product_categories').select('id, name, sort_order').eq('stall_id', stallId).is('deleted_at', null).order('sort_order').order('id').range(from, to)),
     fetchAllRows((from, to) => client.from('products').select('id, stall_id, category_id, sell_category, sku, name, unit, sale_price, cost_price, low_stock_threshold, pack_size, conversion_rate, is_sellable, product_type, base_unit, updated_at, deleted_at').eq('stall_id', stallId).is('deleted_at', null).order('name').order('id').range(from, to)),
-    fetchAllRows((from, to) => client.from('inventory_ledger').select('id, product_id, quantity_delta, movement_type, reason, reference_id, occurred_at').eq('stall_id', stallId).is('deleted_at', null).order('occurred_at', { ascending: false }).order('id', { ascending: false }).range(from, to)),
-    fetchAllRows((from, to) => client.from('transactions').select('id, receipt_number, status, subtotal, total_amount, cash_received, change_amount, occurred_at').eq('stall_id', stallId).is('deleted_at', null).order('occurred_at', { ascending: false }).order('id', { ascending: false }).range(from, to)),
+    fetchAllRows((from, to) => client.from('inventory_ledger').select('id, product_id, business_day_id, unit_cost, quantity_delta, movement_type, reason, reference_id, occurred_at').eq('stall_id', stallId).is('deleted_at', null).order('occurred_at', { ascending: false }).order('id', { ascending: false }).range(from, to)),
+    fetchAllRows((from, to) => client.from('transactions').select('id, business_day_id, cogs, receipt_number, status, subtotal, total_amount, cash_received, change_amount, occurred_at').eq('stall_id', stallId).is('deleted_at', null).order('occurred_at', { ascending: false }).order('id', { ascending: false }).range(from, to)),
     fetchAllRows((from, to) => client.from('business_days').select('id, stall_id, device_id, cashier_id, business_date, opened_at, opening_notes, closed_at, closing_cash_total, closing_notes, updated_at').eq('stall_id', stallId).is('deleted_at', null).order('opened_at', { ascending: false }).order('id', { ascending: false }).range(from, to)),
     fetchAllRows((from, to) => client.from('product_recipes').select('id, stall_id, parent_product_id, ingredient_product_id, quantity, updated_at').eq('stall_id', stallId).order('parent_product_id').order('id').range(from, to)),
     fetchAllRows((from, to) => client.from('daily_store_closings').select('id, stall_id, business_day_id, business_date, gross_sales, cogs, waste_cost, overhead_cost, revenue_deduction, net_profit, expected_cash, collected_cash, device_id, closed_at').eq('stall_id', stallId).order('business_date', { ascending: false }).order('id', { ascending: false }).range(from, to)),
@@ -125,6 +125,12 @@ export async function loadWorkspace(client: DbClient, stallId: string): Promise<
 
   const rawStall = throwIfError(stallResult) as Stall
   const businessDateById = new Map(throwIfError(businessDayResult).map((day) => [day.id, day.business_date]))
+  const businessDateFor = (dayId: string | null | undefined, occurredAt: string) => {
+    if (!dayId) return getBusinessDateKey(occurredAt)
+    const date = businessDateById.get(dayId)
+    if (!date) throw new Error(`The operating day for record ${dayId} is unavailable. Refresh or contact support.`)
+    return date
+  }
   const stall: Stall | null = rawStall
     ? {
         ...rawStall,
@@ -149,6 +155,8 @@ export async function loadWorkspace(client: DbClient, stallId: string): Promise<
     inventory: throwIfError(inventoryResult).map((entry) => ({
       ...entry,
       quantity_delta: Number(entry.quantity_delta),
+      unit_cost: entry.unit_cost == null ? null : Number(entry.unit_cost),
+      business_date: businessDateFor(entry.business_day_id, entry.occurred_at),
     })) as InventoryEntry[],
     transactions: throwIfError(transactionResult).map((transaction) => ({
       ...transaction,
@@ -156,6 +164,8 @@ export async function loadWorkspace(client: DbClient, stallId: string): Promise<
       total_amount: Number(transaction.total_amount),
       cash_received: transaction.cash_received === null ? null : Number(transaction.cash_received),
       change_amount: transaction.change_amount === null ? null : Number(transaction.change_amount),
+      cogs: transaction.cogs == null ? undefined : Number(transaction.cogs),
+      business_date: businessDateFor(transaction.business_day_id, transaction.occurred_at),
     })) as Transaction[],
     transactionItems: items,
     businessDays: throwIfError(businessDayResult).map((day) => ({

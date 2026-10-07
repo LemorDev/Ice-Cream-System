@@ -7,6 +7,8 @@ import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
 
 @Dao
 interface InventoryLedgerDao {
+    @Query("SELECT * FROM inventory_ledger WHERE referenceId = :transactionId AND movementType = 'sale' AND deletedAt IS NULL ORDER BY productId")
+    suspend fun getSaleComponents(transactionId: String): List<InventoryLedgerEntity>
     @Query("SELECT * FROM inventory_ledger WHERE id = :id LIMIT 1")
     suspend fun findById(id: String): InventoryLedgerEntity?
 

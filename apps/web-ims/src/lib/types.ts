@@ -72,6 +72,9 @@ export type DailyStoreClosing = {
 export type InventoryEntry = {
   id: string
   product_id: string
+  business_day_id?: string | null
+  business_date?: string
+  unit_cost?: number | null
   quantity_delta: number
   movement_type: 'receive' | 'sale' | 'void_restock' | 'void_waste' | 'adjustment' | 'opening_balance'
   reason: string | null
@@ -82,6 +85,9 @@ export type InventoryEntry = {
 export type Transaction = {
   id: string
   receipt_number: string
+  business_day_id?: string | null
+  business_date?: string
+  cogs?: number
   status: 'completed' | 'voided' | 'refunded'
   subtotal: number
   total_amount: number

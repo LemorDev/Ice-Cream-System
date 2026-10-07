@@ -12,6 +12,7 @@ import com.icecreampost.pos.data.local.entity.DailyStoreClosingEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
 import com.icecreampost.pos.data.local.entity.TransactionItemEntity
 import com.icecreampost.pos.data.local.entity.RevenueDeductionEntity
+import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.PushBusinessDayResponse
 import com.icecreampost.pos.data.remote.dto.PushDailyClosingResponse
@@ -52,6 +53,7 @@ class SyncRepositoryTest {
     private val transaction = TransactionEntity(
         id = "42a46c09-88dd-4ea2-b68c-e50183a40d5b",
         stallId = "576d9260-fe7e-472b-b67a-bc9e2ca07ffc",
+        businessDayId = "7fb894ad-fe85-430f-a239-a942ad288c18",
         receiptNumber = "LOCAL-202608210001",
         subtotalCents = 10_000,
         totalCents = 10_000,
@@ -71,6 +73,18 @@ class SyncRepositoryTest {
         lineTotalCents = 10_000,
         updatedAt = "2026-08-21T01:00:00Z",
     )
+    private val saleComponent = InventoryLedgerEntity(
+        id = "ca10fe6a-6ab8-4f84-84d5-6da3df4d3c12",
+        stallId = transaction.stallId,
+        businessDayId = transaction.businessDayId,
+        productId = item.productId!!,
+        quantityDelta = -2.0,
+        costTotalCents = 0,
+        movementType = "sale",
+        referenceId = transaction.id,
+        occurredAt = transaction.occurredAt,
+        updatedAt = transaction.updatedAt,
+    )
 
     @Before
     fun setUp() {
@@ -79,6 +93,7 @@ class SyncRepositoryTest {
         coEvery { businessDayDao.markSynced(any()) } just runs
         coEvery { businessDayDao.markSyncError(any(), any()) } just runs
         coEvery { inventoryLedgerDao.getUnsynced() } returns emptyList()
+        coEvery { inventoryLedgerDao.getSaleComponents(transaction.id) } returns listOf(saleComponent)
         coEvery { dailyStoreClosingDao.getUnsynced() } returns emptyList()
         coEvery { revenueDeductionDao.getUnsynced() } returns emptyList()
         coEvery { transactionDao.getItems(transaction.id) } returns listOf(item)
@@ -100,7 +115,9 @@ class SyncRepositoryTest {
         assertEquals(SyncReport(pushed = 1, permanentFailures = 0), report)
         coVerify(exactly = 1) { transactionDao.markSynced(transaction.id) }
         coVerify(exactly = 1) {
-            api.pushTransaction(match { it.transaction.id == transaction.id && it.transaction.items.size == 1 })
+            api.pushTransaction(match { it.transaction.id == transaction.id && it.transaction.items.size == 1 &&
+                it.transaction.businessDayId == transaction.businessDayId && it.transaction.components.size == 1 &&
+                it.transaction.components[0].id == saleComponent.id })
         }
         coVerify(exactly = 1) { productRepository.refreshFromCloud() }
     }
@@ -234,6 +251,16 @@ class SyncRepositoryTest {
         assertEquals(SyncReport(pushed = 0, permanentFailures = 1, failureMessage = "Sale: IMS returned an unexpected sync status: unknown."), report)
         coVerify(exactly = 0) { transactionDao.markSynced(any()) }
         coVerify(exactly = 1) { transactionDao.markSyncError(transaction.id, match { it.contains("unexpected") }, any()) }
+    }
+
+    @Test
+    fun `acknowledgement for a different sale is never accepted`() = runTest {
+        coEvery { api.pushTransaction(any()) } returns acknowledgement("duplicate").copy(transactionId = "other-sale")
+
+        val report = repository.sync()
+
+        assertEquals(1, report.permanentFailures)
+        coVerify(exactly = 0) { transactionDao.markSynced(transaction.id) }
     }
 
     @Test

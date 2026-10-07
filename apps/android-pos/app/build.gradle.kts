@@ -44,11 +44,13 @@ android {
             dimension = "environment"
             applicationIdSuffix = ".dev"
             versionNameSuffix = "-dev"
+            buildConfigField("String", "APP_ENV", "\"development\"")
             buildConfigField("String", "SUPABASE_URL", "\"${localValue("supabase.dev.url")}\"")
             buildConfigField("String", "SUPABASE_ANON_KEY", "\"${localValue("supabase.dev.anonKey")}\"")
         }
         create("production") {
             dimension = "environment"
+            buildConfigField("String", "APP_ENV", "\"production\"")
             buildConfigField("String", "SUPABASE_URL", "\"${localValue("supabase.production.url")}\"")
             buildConfigField("String", "SUPABASE_ANON_KEY", "\"${localValue("supabase.production.anonKey")}\"")
         }
@@ -57,6 +59,28 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+}
+
+// Never produce a development APK that can modify production data. Unit tests
+// remain runnable while the separate development Supabase project is provisioned.
+val configuredDevSupabaseUrl = localValue("supabase.dev.url").trim().trimEnd('/').lowercase()
+val configuredProductionSupabaseUrl = localValue("supabase.production.url").trim().trimEnd('/').lowercase()
+val verifyDevBackendIsolation by tasks.registering {
+    group = "verification"
+    description = "Ensures development POS builds cannot connect to the production Supabase project."
+    doLast {
+        if (configuredDevSupabaseUrl.isBlank() || configuredProductionSupabaseUrl.isBlank()) {
+            throw GradleException("Configure supabase.dev.url and supabase.production.url in local.properties before building a dev APK.")
+        }
+        if (configuredDevSupabaseUrl == configuredProductionSupabaseUrl) {
+            throw GradleException("Dev and production currently use the same Supabase project. Create a separate development project and set supabase.dev.url before building or installing a dev APK.")
+        }
+    }
+}
+tasks.configureEach {
+    if (name.startsWith("assembleDev") || name.startsWith("bundleDev") || name.startsWith("installDev")) {
+        dependsOn(verifyDevBackendIsolation)
     }
 }
 

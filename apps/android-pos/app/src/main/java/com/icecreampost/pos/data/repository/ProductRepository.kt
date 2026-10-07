@@ -4,12 +4,14 @@ import androidx.room.withTransaction
 import com.icecreampost.pos.data.local.dao.ProductDao
 import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
 import com.icecreampost.pos.data.local.dao.SyncStateDao
+import com.icecreampost.pos.data.local.dao.ProductRecipeDao
 import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
 import com.icecreampost.pos.data.local.entity.ProductEntity
 import com.icecreampost.pos.data.local.entity.SyncStateEntity
+import com.icecreampost.pos.data.local.entity.ProductRecipeEntity
 import com.icecreampost.pos.data.local.database.CoolerzDatabase
 import com.icecreampost.pos.data.remote.SupabaseApi
-import com.icecreampost.pos.data.remote.dto.ProductPullRequest
+import com.icecreampost.pos.data.remote.dto.CatalogPageRequest
 import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -21,9 +23,11 @@ class ProductRepository @Inject constructor(
     private val productDao: ProductDao,
     private val inventoryLedgerDao: InventoryLedgerDao,
     private val syncStateDao: SyncStateDao,
+    private val productRecipeDao: ProductRecipeDao,
     private val api: SupabaseApi,
 ) {
     fun observeProducts(): Flow<List<ProductEntity>> = productDao.observeProducts()
+    fun observeRecipes(): Flow<List<ProductRecipeEntity>> = productRecipeDao.observeAll()
 
     suspend fun refreshFromCloud() {
         val legacyCursor = syncStateDao.find("catalog")?.cursorUpdatedAt
@@ -32,20 +36,31 @@ class ProductRepository @Inject constructor(
         // Migrate existing installs without replaying previously applied inventory.
         val productCursor = if (productState == null) legacyCursor else productState.cursorUpdatedAt
         val ledgerCursor = if (ledgerState == null) legacyCursor else ledgerState.cursorUpdatedAt
-        val remoteLedger = api.getInventoryLedger(updatedAtFilter = ledgerCursor?.let { "gt.$it" })
-        val productDtos = api.getProducts(ProductPullRequest(productCursor))
+        // Complete every page before entering the Room transaction. A failed
+        // page leaves both stock and cursors untouched for the next retry.
+        val remoteLedger = pullAllPages(ledgerCursor, api::getInventoryLedgerPage,
+            { it.id }, { it.updatedAt })
+        val productDtos = pullAllPages(productCursor, api::getProductsPage,
+            { it.id }, { it.updatedAt })
+        val recipeDtos = pullAllPages(null, api::getRecipesPage,
+            { it.id }, { it.updatedAt })
         val ledger = remoteLedger.map { entry ->
             InventoryLedgerEntity(
                 id = entry.id,
                 stallId = entry.stallId,
+                businessDayId = entry.businessDayId,
                 productId = entry.productId,
                 quantityDelta = entry.quantityDelta,
+                costTotalCents = entry.unitCost?.let { cost ->
+                    kotlin.math.round(kotlin.math.abs(entry.quantityDelta) * cost * 100).toLong()
+                },
                 movementType = entry.movementType,
                 reason = entry.reason,
                 referenceId = entry.referenceId,
                 occurredAt = entry.occurredAt,
                 updatedAt = entry.updatedAt,
                 deletedAt = entry.deletedAt,
+                isSynced = true,
             )
         }
         // Stock, ledger rows and cursors must commit together so a retry cannot
@@ -67,7 +82,9 @@ class ProductRepository @Inject constructor(
                     packSize = dto.packSize,
                     conversionRate = dto.conversionRate,
                     isSellable = dto.isSellable,
-                    unitsInStock = current?.unitsInStock ?: 0,
+                    productType = dto.productType,
+                    baseUnit = dto.baseUnit,
+                    unitsInStock = current?.unitsInStock ?: 0.0,
                     updatedAt = dto.updatedAt,
                     deletedAt = dto.deletedAt,
                     localUpdatedAt = current?.localUpdatedAt ?: dto.updatedAt,
@@ -78,7 +95,7 @@ class ProductRepository @Inject constructor(
             remoteLedger.forEach { entry ->
                 val old = inventoryLedgerDao.findById(entry.id)
                 val localEquivalent = if (old == null && entry.referenceId != null) {
-                    inventoryLedgerDao.findByReferenceAndMovement(entry.referenceId, entry.movementType)
+                    inventoryLedgerDao.findByReferenceAndMovement(entry.referenceId, entry.movementType, entry.productId)
                 } else {
                     null
                 }
@@ -99,13 +116,23 @@ class ProductRepository @Inject constructor(
                     if (product != null) {
                         productDao.updateStock(
                             id = product.id,
-                            stock = (product.unitsInStock + difference).toInt(),
+                            stock = product.unitsInStock + difference,
                             updatedAt = Instant.now().toString(),
                         )
                     }
                 }
             }
-            inventoryLedgerDao.upsertAll(ledger)
+            inventoryLedgerDao.upsertAll(ledger.map { entry ->
+                val local = inventoryLedgerDao.findById(entry.id)
+                entry.copy(
+                    businessDayId = local?.businessDayId ?: entry.businessDayId,
+                    costTotalCents = local?.costTotalCents ?: entry.costTotalCents,
+                )
+            })
+            productRecipeDao.deleteAll()
+            productRecipeDao.upsertAll(recipeDtos.map { recipe ->
+                ProductRecipeEntity(recipe.id, recipe.stallId, recipe.parentProductId, recipe.ingredientProductId, recipe.quantity, recipe.updatedAt)
+            })
             val nextProductCursor = (listOfNotNull(productCursor) + productDtos.map { it.updatedAt }).maxOrNull()
             val nextLedgerCursor = (listOfNotNull(ledgerCursor) + remoteLedger.map { it.updatedAt }).maxOrNull()
             val now = Instant.now().toString()
@@ -125,5 +152,41 @@ class ProductRepository @Inject constructor(
                 )
             }
         }
+    }
+
+    private suspend fun <T> pullAllPages(
+        lastCommittedAt: String?,
+        load: suspend (CatalogPageRequest) -> List<T>,
+        id: (T) -> String,
+        updatedAt: (T) -> String,
+    ): List<T> {
+        // Overlap the committed timestamp so equal-time rows missed by an
+        // older build are replayed. Room upserts and ledger delta logic dedupe.
+        var afterAt = lastCommittedAt?.let { saved ->
+            runCatching { Instant.parse(saved).minusSeconds(1).toString() }.getOrNull()
+        }
+        var afterId: String? = null
+        val rows = linkedMapOf<String, T>()
+        var pages = 0
+        while (true) {
+            check(++pages <= 100_000) { "Catalog paging did not finish." }
+            val batch = load(CatalogPageRequest(afterAt, afterId))
+            check(batch.size <= 250) { "Catalog page exceeded its server limit." }
+            if (batch.isEmpty()) break
+            batch.forEach { row ->
+                require(id(row).isNotBlank() && updatedAt(row).isNotBlank()) { "Catalog row is missing its cursor." }
+                rows[id(row)] = row
+            }
+            val last = batch.last()
+            val nextAt = updatedAt(last)
+            val nextId = id(last)
+            check(afterAt == null || Instant.parse(nextAt).isAfter(Instant.parse(afterAt)) ||
+                (Instant.parse(nextAt) == Instant.parse(afterAt) && (afterId == null || nextId > afterId))) {
+                "Catalog page did not advance its cursor."
+            }
+            afterAt = nextAt
+            afterId = nextId
+        }
+        return rows.values.toList()
     }
 }

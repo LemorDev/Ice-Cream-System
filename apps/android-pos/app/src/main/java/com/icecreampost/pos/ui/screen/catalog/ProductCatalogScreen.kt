@@ -1,5 +1,6 @@
 package com.icecreampost.pos.ui.screen.catalog
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -31,12 +32,12 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -44,27 +45,42 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.icecreampost.pos.data.local.entity.ProductEntity
 import com.icecreampost.pos.domain.model.CartLine
+import com.icecreampost.pos.domain.model.MenuAvailability
 import com.icecreampost.pos.ui.PosViewModel
 import com.icecreampost.pos.ui.component.QuantityStepper
 import com.icecreampost.pos.ui.component.ScreenHeader
+import com.icecreampost.pos.ui.component.ServingFilter
 import com.icecreampost.pos.ui.component.formatMoney
 import com.icecreampost.pos.ui.screen.checkout.toCentsOrNull
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, onBack: () -> Unit) {
+fun ProductCatalogScreen(
+    viewModel: PosViewModel,
+    onSaleComplete: () -> Unit,
+    onOperatingDay: () -> Unit,
+    focusMode: Boolean = false,
+    onToggleFocusMode: () -> Unit = {},
+) {
     val products by viewModel.filteredProducts.collectAsStateWithLifecycle()
     val categories by viewModel.categories.collectAsStateWithLifecycle()
     val query by viewModel.query.collectAsStateWithLifecycle()
     val selectedCategory by viewModel.category.collectAsStateWithLifecycle()
+    val selectedServing by viewModel.serving.collectAsStateWithLifecycle()
     val cartLines by viewModel.cartLines.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
+    val businessDay by viewModel.businessDay.collectAsStateWithLifecycle()
+    val session by viewModel.session.collectAsStateWithLifecycle()
+    val isOpen = businessDay != null && businessDay?.closedAt == null && businessDay?.stallId == session?.stallId
+    val availability by viewModel.availability.collectAsStateWithLifecycle()
     val cartQuantity = cartLines.sumOf { it.quantity }
     val cartTotal = cartLines.sumOf { it.lineTotalCents }
     var showOrderSheet by rememberSaveable { mutableStateOf(false) }
@@ -74,6 +90,11 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
     val cashCents = cashInput.toCentsOrNull()
     val changeCents = cashCents?.minus(cartTotal)?.takeIf { it >= 0 }
 
+    LaunchedEffect(Unit) { viewModel.syncToIms() }
+    BackHandler(enabled = focusMode && !showOrderSheet && !showCheckoutConfirmation && !showClearConfirmation) {
+        onToggleFocusMode()
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -82,10 +103,10 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
                 Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 12.dp) {
                     Button(
                         onClick = { showOrderSheet = true },
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp).height(56.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).height(56.dp),
                         shape = MaterialTheme.shapes.medium,
                     ) {
-                        Text("Order & payment", modifier = Modifier.weight(1f))
+                        Text("Cart", modifier = Modifier.weight(1f))
                         Text("$cartQuantity ${if (cartQuantity == 1) "item" else "items"}  ·  ${formatMoney(cartTotal)}")
                         Spacer(Modifier.width(8.dp))
                         Text("↑")
@@ -96,22 +117,16 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
     ) { insets ->
         Column(
             modifier = Modifier.fillMaxSize().padding(insets).padding(top = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Box(modifier = Modifier.padding(horizontal = 20.dp)) {
+            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                 ScreenHeader(
-                    title = "New order",
-                    subtitle = "Coolerz Ice Cream",
-                    onBack = onBack,
+                    title = "Sell",
+                    subtitle = if (focusMode) "Focus mode" else null,
                     trailing = {
-                        if (cartQuantity > 0) {
-                            Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.primaryContainer) {
-                                Text(
-                                    "$cartQuantity in cart",
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
+                        if (isOpen) {
+                            TextButton(onClick = onToggleFocusMode) {
+                                Text(if (focusMode) "Exit focus" else "Focus screen")
                             }
                         }
                     },
@@ -120,18 +135,24 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
             OutlinedTextField(
                 value = query,
                 onValueChange = viewModel::setQuery,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                placeholder = { Text("Search menu") },
-                leadingIcon = { Text("⌕", style = MaterialTheme.typography.titleLarge) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                label = { Text("Search products") },
                 singleLine = true,
                 shape = MaterialTheme.shapes.medium,
             )
             Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp),
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                FilterChip(selected = selectedCategory == null, onClick = { viewModel.setCategory(null) }, label = { Text("All") })
-                categories.forEach { category ->
+                FilterChip(selected = selectedCategory == null && selectedServing == null, onClick = { viewModel.setCategory(null) }, label = { Text("All") })
+                ServingFilter.entries.forEach { serving ->
+                    FilterChip(
+                        selected = selectedServing == serving,
+                        onClick = { viewModel.setServing(if (selectedServing == serving) null else serving) },
+                        label = { Text(serving.label) },
+                    )
+                }
+                categories.filterNot { it.equals("Cup", true) || it.equals("Cups", true) || it.equals("Cone", true) || it.equals("Cones", true) }.forEach { category ->
                     FilterChip(
                         selected = selectedCategory == category,
                         onClick = { viewModel.setCategory(if (selectedCategory == category) null else category) },
@@ -139,14 +160,21 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
                     )
                 }
             }
-            error?.let { ErrorMessage(it, Modifier.padding(horizontal = 20.dp)) }
+            if (!isOpen) {
+                Column(Modifier.padding(horizontal = 16.dp)) {
+                    Text("Open the operating day to start a sale.", style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = onOperatingDay) { Text("Operating day") }
+                }
+            }
+            com.icecreampost.pos.ui.component.SyncStatusLine(viewModel, Modifier.padding(horizontal = 16.dp))
+            error?.let { ErrorMessage(it, Modifier.padding(horizontal = 16.dp)) }
             if (products.isEmpty()) {
-                EmptyCatalog(query = query, modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp))
+                EmptyCatalog(query = query, modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp))
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 18.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     item {
                         Text(
@@ -162,6 +190,8 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
                             quantityInCart = quantityInCart,
                             onAdd = { viewModel.addToCart(product) },
                             onRemove = { viewModel.removeFromCart(product.id) },
+                            availability = availability[product.id],
+                            busy = busy || !isOpen,
                         )
                     }
                 }
@@ -169,13 +199,14 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
         }
     }
 
+    // Keep the order visible behind the confirmation. The sheet itself must
+    // remain dismissible so Android Back can close it after the dialog closes.
     if (showOrderSheet && cartLines.isNotEmpty()) {
         ModalBottomSheet(
-            onDismissRequest = {},
-            sheetState = rememberModalBottomSheetState(
-                skipPartiallyExpanded = true,
-                confirmValueChange = { it != SheetValue.Hidden },
-            ),
+            onDismissRequest = {
+                if (!busy && !showCheckoutConfirmation && !showClearConfirmation) showOrderSheet = false
+            },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = MaterialTheme.colorScheme.background,
             dragHandle = null,
         ) {
@@ -190,8 +221,9 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
                 error = error,
                 onDecrease = viewModel::removeFromCart,
                 onIncrease = viewModel::addToCart,
+                canIncrease = { product, _ -> isOpen && !busy && (availability[product.id]?.additionalPortions ?: 0) > 0 },
                 onClear = { showClearConfirmation = true },
-                onComplete = { showCheckoutConfirmation = true },
+                onComplete = { if (isOpen) showCheckoutConfirmation = true },
                 onBack = { if (!busy) showOrderSheet = false },
             )
         }
@@ -219,7 +251,7 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
                             }
                         }
                     },
-                    enabled = !busy && cashCents != null && cashCents >= cartTotal,
+                    enabled = isOpen && !busy && cashCents != null && cashCents >= cartTotal && cartLines.isNotEmpty(),
                 ) { Text(if (busy) "Saving…" else "Confirm sale") }
             },
         )
@@ -232,7 +264,7 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
             text = { Text("All $cartQuantity items will be removed. This cannot be undone.") },
             dismissButton = { TextButton(onClick = { showClearConfirmation = false }) { Text("Keep order") } },
             confirmButton = {
-                Button(onClick = {
+                Button(colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), onClick = {
                     viewModel.clearCart()
                     cashInput = ""
                     showClearConfirmation = false
@@ -249,35 +281,30 @@ private fun ProductRow(
     quantityInCart: Int,
     onAdd: () -> Unit,
     onRemove: () -> Unit,
+    availability: MenuAvailability?,
+    busy: Boolean,
 ) {
-    val remainingStock = product.unitsInStock - quantityInCart
-    val lowStock = remainingStock <= product.lowStockThreshold
+    val additionalAvailable = availability?.additionalPortions ?: 0
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         shape = MaterialTheme.shapes.medium,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(product.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "${product.category} · per ${product.unit}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(formatMoney(product.priceCents), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                    Text("  ·  ", color = MaterialTheme.colorScheme.outline)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("${formatMoney(product.priceCents)} / ${product.unit}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                     Text(
-                        "$remainingStock left",
+                        menuAvailabilityLabel(availability, product.unitsInStock),
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (lowStock) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
+                        color = if (additionalAvailable == 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -285,7 +312,8 @@ private fun ProductRow(
             if (quantityInCart == 0) {
                 Button(
                     onClick = onAdd,
-                    enabled = product.unitsInStock > 0,
+                    modifier = Modifier.semantics { contentDescription = "Add ${product.name}" },
+                    enabled = !busy && additionalAvailable > 0,
                     contentPadding = PaddingValues(horizontal = 16.dp),
                 ) { Text("Add") }
             } else {
@@ -293,11 +321,22 @@ private fun ProductRow(
                     quantity = quantityInCart,
                     onDecrease = onRemove,
                     onIncrease = onAdd,
-                    canIncrease = quantityInCart < product.unitsInStock,
+                    canIncrease = !busy && additionalAvailable > 0,
+                    canDecrease = !busy,
                 )
             }
         }
     }
+}
+
+internal fun menuAvailabilityLabel(availability: MenuAvailability?, ownStock: Double): String = when {
+    availability == null -> "Checking stock…"
+    availability.additionalPortions > 0 -> "In stock"
+    availability.invalidRecipe -> "Sold out"
+    availability.limitingIngredients.isNotEmpty() -> "Sold out · Need ${availability.limitingIngredients.joinToString()}"
+    availability.limitedByCart -> "No more for this order"
+    !availability.hasRecipe && ownStock <= 0 -> "Sold out"
+    else -> "Sold out"
 }
 
 @Composable
@@ -312,110 +351,68 @@ private fun OrderAndPaymentSheet(
     error: String?,
     onDecrease: (String) -> Unit,
     onIncrease: (ProductEntity) -> Unit,
+    canIncrease: (ProductEntity, Int) -> Boolean,
     onClear: () -> Unit,
     onComplete: () -> Unit,
     onBack: () -> Unit,
 ) {
-    val quantity = lines.sumOf { it.quantity }
     Column(
-        modifier = Modifier.fillMaxWidth().fillMaxHeight(0.94f).padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().fillMaxHeight(0.94f).padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = onBack, enabled = !busy, contentPadding = PaddingValues(horizontal = 12.dp)) {
-                Text("‹ Back")
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Order details", style = MaterialTheme.typography.headlineSmall)
-                Text("$quantity ${if (quantity == 1) "item" else "items"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack, enabled = !busy) { Text("Back") }
+            Text("Payment", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
             TextButton(onClick = onClear, enabled = !busy) { Text("Clear", color = MaterialTheme.colorScheme.error) }
         }
-
+        // Only cart lines scroll. Cash entry and checkout stay anchored below them.
         LazyColumn(
-            modifier = Modifier.fillMaxWidth().weight(1f).heightIn(min = 92.dp),
-            contentPadding = PaddingValues(bottom = 4.dp),
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(lines, key = { it.product.id }) { line ->
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.surface,
-                    shape = MaterialTheme.shapes.medium,
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(line.product.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${formatMoney(line.product.priceCents)} each", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Text(formatMoney(line.lineTotalCents), style = MaterialTheme.typography.titleSmall)
-                        Spacer(Modifier.width(10.dp))
-                        QuantityStepper(
-                            quantity = line.quantity,
-                            onDecrease = { onDecrease(line.product.id) },
-                            onIncrease = { onIncrease(line.product) },
-                            canIncrease = line.quantity < line.product.unitsInStock,
-                        )
-                    }
-                }
-            }
-        }
-
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surface,
-            shape = MaterialTheme.shapes.medium,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
                 Column {
-                    Text("Total due", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(formatMoney(total), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
-                }
-                if (changeCents != null) {
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text("Change", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(formatMoney(changeCents), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(line.product.name, style = MaterialTheme.typography.titleSmall)
+                            Text(formatMoney(line.lineTotalCents) + " · " + formatMoney(line.product.priceCents) + " each",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        QuantityStepper(line.quantity, { onDecrease(line.product.id) }, { onIncrease(line.product) },
+                            canIncrease = canIncrease(line.product, line.quantity), canDecrease = !busy)
                     }
+                    androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
         }
-
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Cash received", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    text = "₱${cashInput.ifBlank { "0.00" }}",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = if (cashInput.isBlank()) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface,
-                )
+        androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Total " + formatMoney(total), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text(
+                when {
+                    changeCents != null -> "Change " + formatMoney(changeCents)
+                    cashCents != null -> "Due " + formatMoney(total - cashCents)
+                    else -> "Change —"
+                },
+                style = MaterialTheme.typography.titleMedium,
+                color = if (cashCents != null && cashCents < total) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Cash received", style = MaterialTheme.typography.bodySmall)
+                Text("₱" + cashInput.ifBlank { "0.00" }, style = MaterialTheme.typography.titleLarge)
             }
             TextButton(onClick = { onCashInputChange(total.toPesoInput()) }, enabled = !busy) { Text("Exact amount") }
         }
-
-        NumericCashKeypad(
-            enabled = !busy,
-            onKey = { key -> onCashInputChange(updateCashInput(cashInput, key)) },
-        )
-
-        if (cashCents != null && cashCents < total) {
-            Text("Still due ${formatMoney(total - cashCents)}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+        NumericCashKeypad(enabled = !busy, onKey = { onCashInputChange(updateCashInput(cashInput, it)) })
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        Button(onClick = onComplete, enabled = !busy && cashCents != null && cashCents >= total && lines.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = MaterialTheme.shapes.medium) {
+            Text(if (busy) "Saving…" else "Review sale")
         }
-        error?.let { ErrorMessage(it) }
-        Button(
-            onClick = onComplete,
-            enabled = !busy && cashCents != null && cashCents >= total,
-            modifier = Modifier.fillMaxWidth().height(54.dp),
-            shape = MaterialTheme.shapes.medium,
-        ) { Text(if (busy) "Saving…" else "Review sale") }
     }
 }
 
@@ -427,7 +424,7 @@ private fun NumericCashKeypad(enabled: Boolean, onKey: (String) -> Unit) {
         listOf("7", "8", "9"),
         listOf(".", "0", "⌫"),
     )
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         rows.forEach { keys ->
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 keys.forEach { key ->
@@ -438,7 +435,7 @@ private fun NumericCashKeypad(enabled: Boolean, onKey: (String) -> Unit) {
                         shape = MaterialTheme.shapes.medium,
                         contentPadding = PaddingValues(0.dp),
                     ) {
-                        Text(key, style = MaterialTheme.typography.titleLarge)
+                        Text(key, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { contentDescription = if (key == "⌫") "Delete last digit" else if (key == ".") "Decimal point" else key })
                     }
                 }
             }

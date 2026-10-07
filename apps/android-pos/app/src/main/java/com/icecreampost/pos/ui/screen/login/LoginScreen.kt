@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -19,10 +20,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.icecreampost.pos.ui.PosViewModel
+import com.icecreampost.pos.ui.component.CoolerzLogo
 
 @Composable
 fun LoginScreen(viewModel: PosViewModel) {
@@ -40,7 +44,13 @@ fun LoginScreen(viewModel: PosViewModel) {
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text("Coolerz POS", style = MaterialTheme.typography.headlineLarge)
+        CoolerzLogo(Modifier.size(112.dp).align(Alignment.CenterHorizontally))
+        Text(
+            "Coolerz POS",
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.headlineLarge,
+            textAlign = TextAlign.Center,
+        )
         Text("Sign in with the stall code and Cashier account. This phone will reuse its active POS registration.")
         OutlinedTextField(
             stallCode,
@@ -67,6 +77,6 @@ fun LoginScreen(viewModel: PosViewModel) {
         ) {
             if (busy) CircularProgressIndicator() else Text("Sign in")
         }
-        Text("First activation requires a network connection. Completed sales afterward are saved locally.")
+        Text("Activation and sign-in require a network connection. Sales save locally while this cashier session remains signed in; after it expires, sign in online again.")
     }
 }

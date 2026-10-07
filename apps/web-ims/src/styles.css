@@ -9,12 +9,96 @@
     linear-gradient(180deg, #fffaf4 0%, #f3e9ff 48%, #fffdf8 100%);
 }
 
+html {
+  scrollbar-color: #9d73d2 #f5eff9;
+  scrollbar-width: thin;
+}
+
+html::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+html::-webkit-scrollbar-track {
+  background: #f5eff9;
+}
+
+html::-webkit-scrollbar-button,
+.sidebar-scrollbar::-webkit-scrollbar-button {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+html::-webkit-scrollbar-button:single-button,
+.sidebar-scrollbar::-webkit-scrollbar-button:single-button {
+  display: block;
+  width: 0;
+  height: 0;
+}
+
+html::-webkit-scrollbar-thumb {
+  min-height: 48px;
+  border: 2px solid #f5eff9;
+  border-radius: 999px;
+  background: #9d73d2;
+}
+
+html::-webkit-scrollbar-thumb:hover {
+  background: #7846b8;
+}
+
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
   background: inherit;
   color: inherit;
+}
+
+.sidebar-scrollbar {
+  scrollbar-color: #9d73d2 transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-thumb {
+  min-height: 48px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #9d73d2;
+  background-clip: padding-box;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #b895e3;
+  background-clip: padding-box;
+}
+
+.product-modal-scrollbar {
+  scrollbar-color: #9d73d2 #f5eff9;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+
+.product-modal-scrollbar::-webkit-scrollbar { width: 9px; }
+.product-modal-scrollbar::-webkit-scrollbar-track { background: #f5eff9; }
+.product-modal-scrollbar::-webkit-scrollbar-thumb {
+  min-height: 48px;
+  border: 2px solid #f5eff9;
+  border-radius: 999px;
+  background: #9d73d2;
 }
 
 img {

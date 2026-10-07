@@ -1,8 +1,5 @@
-# Copy these keys into local.properties for local development.
-# local.properties is ignored by Git.
-sdk.dir=C\\:\\Users\\YourName\\AppData\\Local\\Android\\Sdk
-
-supabase.dev.url=https://hdtizzdrbscchvqwcpkb.supabase.co
-supabase.dev.anonKey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhkdGl6emRyYnNjY2h2cXdjcGtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU4MTEwNDcsImV4cCI6MjEwMTM4NzA0N30.S32jH0x-exsd6xmyIcqKtdG8hZ6wfWcybvtESqjGE9g
-supabase.production.url=https://hdtizzdrbscchvqwcpkb.supabase.co
-supabase.production.anonKey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhkdGl6emRyYnNjY2h2cXdjcGtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU4MTEwNDcsImV4cCI6MjEwMTM4NzA0N30.S32jH0x-exsd6xmyIcqKtdG8hZ6wfWcybvtESqjGE9g
+# Keep the Android SDK path in local.properties. Copy only the Supabase entries below.
+supabase.dev.url=https://YOUR_DEVELOPMENT_PROJECT_REF.supabase.co
+supabase.dev.anonKey=YOUR_DEVELOPMENT_ANON_KEY
+supabase.production.url=https://YOUR_PRODUCTION_PROJECT_REF.supabase.co
+supabase.production.anonKey=YOUR_PRODUCTION_ANON_KEY

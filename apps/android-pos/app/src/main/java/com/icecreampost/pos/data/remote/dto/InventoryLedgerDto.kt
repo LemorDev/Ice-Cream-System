@@ -15,4 +15,6 @@ data class InventoryLedgerDto(
     @SerialName("occurred_at") val occurredAt: String,
     @SerialName("updated_at") val updatedAt: String,
     @SerialName("deleted_at") val deletedAt: String? = null,
+    @SerialName("business_day_id") val businessDayId: String? = null,
+    @SerialName("unit_cost") val unitCost: Double? = null,
 )

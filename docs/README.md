@@ -12,9 +12,17 @@ pnpm install
 pnpm dev
 ```
 
+`pnpm dev` is the root shortcut for `pnpm --dir apps/web-ims dev`.
+Both run the local development IMS against the development Supabase project;
+neither deploys the website. See the [first-release deployment plan](FIRST_RELEASE_DEPLOYMENT_PLAN.md)
+for the online IMS, Owner dashboard, and POS release workflow.
+
 Open the URL shown in the terminal, normally [http://localhost:5173](http://localhost:5173).
 
-Before signing in, create `apps/web-ims/.env.local` from `apps/web-ims/.env.example` and enter the Supabase project URL and anon key.
+Before signing in, configure the development URL and anon key in the ignored
+`apps/web-ims/.env.development.local` file using
+`apps/web-ims/.env.development.example` as the template. The development build
+also requires the production URL for its environment-isolation check.
 
 Owners can install the deployed dashboard on an iPhone from Safari using **Share → Add to Home Screen**. See [RBAC.md](RBAC.md) for roles, account setup, stall assignment, POS activation, and operating-day rules.
 

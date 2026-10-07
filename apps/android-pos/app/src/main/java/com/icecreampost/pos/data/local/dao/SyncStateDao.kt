@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface SyncStateDao {
+    @Query("SELECT stallId FROM transactions WHERE stallId <> '' UNION SELECT stallId FROM business_days WHERE stallId <> '' UNION SELECT stallId FROM products WHERE stallId <> '' UNION SELECT stallId FROM inventory_ledger WHERE stallId <> ''")
+    suspend fun findPersistedStallIds(): List<String>
+
     @Query("SELECT * FROM sync_state WHERE `key` = :key LIMIT 1")
     suspend fun find(key: String): SyncStateEntity?
 

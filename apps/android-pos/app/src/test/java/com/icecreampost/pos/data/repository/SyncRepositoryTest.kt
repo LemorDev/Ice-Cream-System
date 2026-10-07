@@ -4,12 +4,23 @@ import com.icecreampost.pos.core.logging.AppLogger
 import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.dao.TransactionDao
 import com.icecreampost.pos.data.local.dao.BusinessDayDao
+import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
+import com.icecreampost.pos.data.local.dao.DailyStoreClosingDao
+import com.icecreampost.pos.data.local.dao.RevenueDeductionDao
+import com.icecreampost.pos.data.local.dao.SaleReversalDao
 import com.icecreampost.pos.data.local.entity.BusinessDayEntity
+import com.icecreampost.pos.data.local.entity.DailyStoreClosingEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
 import com.icecreampost.pos.data.local.entity.TransactionItemEntity
+import com.icecreampost.pos.data.local.entity.RevenueDeductionEntity
+import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
+import com.icecreampost.pos.data.local.entity.SaleReversalEntity
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.PushBusinessDayResponse
+import com.icecreampost.pos.data.remote.dto.PushDailyClosingResponse
+import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionResponse
 import com.icecreampost.pos.data.remote.dto.PushTransactionResponse
+import com.icecreampost.pos.data.remote.dto.PushSaleReversalResponse
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
@@ -17,6 +28,9 @@ import io.mockk.just
 import io.mockk.mockk
 import io.mockk.runs
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
@@ -31,6 +45,10 @@ class SyncRepositoryTest {
     private val transactionDao = mockk<TransactionDao>()
     private val syncStateDao = mockk<SyncStateDao>()
     private val businessDayDao = mockk<BusinessDayDao>()
+    private val inventoryLedgerDao = mockk<InventoryLedgerDao>(relaxed = true)
+    private val dailyStoreClosingDao = mockk<DailyStoreClosingDao>(relaxed = true)
+    private val revenueDeductionDao = mockk<RevenueDeductionDao>(relaxed = true)
+    private val reversalDao = mockk<SaleReversalDao>(relaxed = true)
     private val api = mockk<SupabaseApi>()
     private val productRepository = mockk<ProductRepository>()
     private val logger = mockk<AppLogger>(relaxed = true)
@@ -39,6 +57,7 @@ class SyncRepositoryTest {
     private val transaction = TransactionEntity(
         id = "42a46c09-88dd-4ea2-b68c-e50183a40d5b",
         stallId = "576d9260-fe7e-472b-b67a-bc9e2ca07ffc",
+        businessDayId = "7fb894ad-fe85-430f-a239-a942ad288c18",
         receiptNumber = "LOCAL-202608210001",
         subtotalCents = 10_000,
         totalCents = 10_000,
@@ -58,6 +77,18 @@ class SyncRepositoryTest {
         lineTotalCents = 10_000,
         updatedAt = "2026-08-21T01:00:00Z",
     )
+    private val saleComponent = InventoryLedgerEntity(
+        id = "ca10fe6a-6ab8-4f84-84d5-6da3df4d3c12",
+        stallId = transaction.stallId,
+        businessDayId = transaction.businessDayId,
+        productId = item.productId!!,
+        quantityDelta = -2.0,
+        costTotalCents = 0,
+        movementType = "sale",
+        referenceId = transaction.id,
+        occurredAt = transaction.occurredAt,
+        updatedAt = transaction.updatedAt,
+    )
 
     @Before
     fun setUp() {
@@ -65,14 +96,24 @@ class SyncRepositoryTest {
         coEvery { businessDayDao.getUnsynced() } returns emptyList()
         coEvery { businessDayDao.markSynced(any()) } just runs
         coEvery { businessDayDao.markSyncError(any(), any()) } just runs
+        coEvery { inventoryLedgerDao.getUnsynced() } returns emptyList()
+        coEvery { inventoryLedgerDao.getSaleComponents(transaction.id) } returns listOf(saleComponent)
+        coEvery { dailyStoreClosingDao.getUnsynced() } returns emptyList()
+        coEvery { revenueDeductionDao.getUnsynced() } returns emptyList()
+        coEvery { reversalDao.getUnsynced() } returns emptyList()
         coEvery { transactionDao.getItems(transaction.id) } returns listOf(item)
+        coEvery { transactionDao.countForDay(any(), any()) } returns 0
+        coEvery { transactionDao.getCompletedTotalBetween(any(),any(),any()) } returns 0
+        coEvery { transactionDao.getCashSalesBetween(any(),any(),any()) } returns 0
+        coEvery { transactionDao.getCompletedCogsBetween(any(),any(),any()) } returns 0
+        coEvery { inventoryLedgerDao.getWasteCostBetween(any(),any(),any()) } returns 0
         coEvery { transactionDao.markSyncAttempt(any(), any()) } just runs
         coEvery { transactionDao.markSynced(any()) } just runs
         coEvery { transactionDao.markSyncError(any(), any(), any()) } just runs
         coEvery { syncStateDao.find(any()) } returns null
         coEvery { syncStateDao.upsert(any()) } just runs
         coEvery { productRepository.refreshFromCloud() } just runs
-        repository = SyncRepository(transactionDao, businessDayDao, syncStateDao, api, productRepository, logger)
+        repository = SyncRepository(transactionDao, businessDayDao, inventoryLedgerDao, dailyStoreClosingDao, revenueDeductionDao, reversalDao, syncStateDao, api, productRepository, logger)
     }
 
     @Test
@@ -84,7 +125,9 @@ class SyncRepositoryTest {
         assertEquals(SyncReport(pushed = 1, permanentFailures = 0), report)
         coVerify(exactly = 1) { transactionDao.markSynced(transaction.id) }
         coVerify(exactly = 1) {
-            api.pushTransaction(match { it.transaction.id == transaction.id && it.transaction.items.size == 1 })
+            api.pushTransaction(match { it.transaction.id == transaction.id && it.transaction.items.size == 1 &&
+                it.transaction.businessDayId == transaction.businessDayId && it.transaction.components.size == 1 &&
+                it.transaction.components[0].id == saleComponent.id })
         }
         coVerify(exactly = 1) { productRepository.refreshFromCloud() }
     }
@@ -133,7 +176,7 @@ class SyncRepositoryTest {
 
         val report = repository.sync()
 
-        assertEquals(SyncReport(pushed = 0, permanentFailures = 1), report)
+        assertEquals(SyncReport(pushed = 0, permanentFailures = 1, failureMessage = "Sale: Transaction has no items."), report)
         coVerify(exactly = 0) { api.pushTransaction(any()) }
         coVerify(exactly = 0) { transactionDao.markSynced(any()) }
         coVerify(exactly = 1) { transactionDao.markSyncError(transaction.id, match { it.contains("no items") }, any()) }
@@ -145,10 +188,30 @@ class SyncRepositoryTest {
 
         val report = repository.sync()
 
-        assertEquals(SyncReport(pushed = 0, permanentFailures = 1), report)
+        assertEquals(SyncReport(pushed = 0, permanentFailures = 1, failureMessage = "Sale: IMS error"), report)
         coVerify(exactly = 0) { transactionDao.markSynced(any()) }
         coVerify(exactly = 1) { transactionDao.markSyncError(transaction.id, any(), any()) }
         coVerify(exactly = 1) { productRepository.refreshFromCloud() }
+    }
+
+    @Test
+    fun `sync error retains quoted database constraint name`() = runTest {
+        val body = """{"message":"insert or update on table \"daily_store_closings\" violates foreign key constraint"}"""
+            .toResponseBody("application/json".toMediaType())
+        coEvery { transactionDao.getUnsynced() } returns emptyList()
+        coEvery { dailyStoreClosingDao.getUnsynced() } returns listOf(DailyStoreClosingEntity(
+            id = "c672218c-e417-4a43-8122-c4d9e105d275", stallId = transaction.stallId,
+            businessDayId = "7fb894ad-fe85-430f-a239-a942ad288c18", businessDate = "2026-09-29",
+            grossSalesCents = 0, cogsCents = 0, wasteCostCents = 0, overheadCostCents = 0,
+            netProfitCents = 0, expectedCashCents = 0, collectedCashCents = 0,
+            deviceId = "786706d8-cfaa-46f1-909a-123f2cc9385a", closedAt = "2026-09-29T07:00:00Z",
+        ))
+        coEvery { api.pushDailyClosing(any()) } throws HttpException(Response.error<Any>(400, body))
+        coEvery { businessDayDao.findByDate(any(), "2026-09-29") } returns closingDay("2026-09-29", "2026-09-29T07:00:00Z")
+
+        val report = repository.sync()
+
+        assertEquals("Daily closing: insert or update on table \"daily_store_closings\" violates foreign key constraint", report.failureMessage)
     }
 
     @Test
@@ -196,9 +259,243 @@ class SyncRepositoryTest {
 
         val report = repository.sync()
 
-        assertEquals(SyncReport(pushed = 0, permanentFailures = 1), report)
+        assertEquals(SyncReport(pushed = 0, permanentFailures = 1, failureMessage = "Sale: IMS returned an unexpected sync status: unknown."), report)
         coVerify(exactly = 0) { transactionDao.markSynced(any()) }
         coVerify(exactly = 1) { transactionDao.markSyncError(transaction.id, match { it.contains("unexpected") }, any()) }
+    }
+
+    @Test
+    fun `acknowledgement for a different sale is never accepted`() = runTest {
+        coEvery { api.pushTransaction(any()) } returns acknowledgement("duplicate").copy(transactionId = "other-sale")
+
+        val report = repository.sync()
+
+        assertEquals(1, report.permanentFailures)
+        coVerify(exactly = 0) { transactionDao.markSynced(transaction.id) }
+    }
+
+    @Test
+    fun `a previously failed daily closing is retried and marked synced`() = runTest {
+        val closing = DailyStoreClosingEntity(
+            id = "c672218c-e417-4a43-8122-c4d9e105d275",
+            stallId = transaction.stallId,
+            businessDayId = "7fb894ad-fe85-430f-a239-a942ad288c18",
+            businessDate = "2026-09-11",
+            grossSalesCents = 0,
+            cogsCents = 0,
+            wasteCostCents = 0,
+            overheadCostCents = 74_333,
+            netProfitCents = -74_333,
+            expectedCashCents = 0,
+            collectedCashCents = 0,
+            deviceId = "786706d8-cfaa-46f1-909a-123f2cc9385a",
+            closedAt = "2026-09-13T02:15:00Z",
+            revenueDeductionCents = 1_250,
+            deductionReason = "Customer refund",
+            syncError = "Previous server validation error",
+        )
+        coEvery { transactionDao.getUnsynced() } returns emptyList()
+        coEvery { dailyStoreClosingDao.getUnsynced() } returns listOf(closing)
+        coEvery { transactionDao.getCompletedTotalBetween(any(),any(),any()) } returns 1_250
+        coEvery { transactionDao.getCashSalesBetween(any(),any(),any()) } returns 1_250
+        coEvery { revenueDeductionDao.totalForDay(closing.businessDayId) } returns 1_250
+        coEvery { businessDayDao.findByDate(any(), closing.businessDate) } returns closingDay(closing.businessDate, closing.closedAt)
+        coEvery { api.pushDailyClosing(any()) } returns PushDailyClosingResponse("accepted", closing.id)
+
+        val report = repository.sync()
+
+        assertEquals(SyncReport(pushed = 0, permanentFailures = 0, closingsSynced = 1), report)
+        coVerify(exactly = 1) { dailyStoreClosingDao.markSynced(closing.id) }
+        coVerify(exactly = 1) {
+            api.pushDailyClosing(match {
+                it.closing.revenueDeduction == 12.5 && it.closing.deductionReason == "See recorded deductions"
+            })
+        }
+    }
+
+    @Test
+    fun `cloud stock correction is included before final closing upload`() = runTest {
+        val closing = DailyStoreClosingEntity(
+            id = "c672218c-e417-4a43-8122-c4d9e105d275", stallId = transaction.stallId,
+            businessDayId = transaction.businessDayId!!, businessDate = "2026-09-29",
+            grossSalesCents = 0, cogsCents = 0, wasteCostCents = 0, overheadCostCents = 0,
+            netProfitCents = 0, expectedCashCents = 0, collectedCashCents = 0,
+            deviceId = "786706d8-cfaa-46f1-909a-123f2cc9385a", closedAt = "2026-09-29T07:00:00Z",
+        )
+        coEvery { transactionDao.getUnsynced() } returns emptyList()
+        coEvery { dailyStoreClosingDao.getUnsynced() } returns listOf(closing)
+        coEvery { businessDayDao.findByDate(any(),closing.businessDate) } returns closingDay(closing.businessDate,closing.closedAt)
+        coEvery { inventoryLedgerDao.getWasteCostBetween(any(),any(),any()) } returns 500
+        coEvery { inventoryLedgerDao.countForDay(any(),any(),any(),any()) } returns 1
+        coEvery { api.pushDailyClosing(any()) } returns PushDailyClosingResponse("accepted",closing.id)
+
+        assertEquals(1,repository.sync().closingsSynced)
+
+        coVerifyOrder {
+            productRepository.refreshFromCloud()
+            dailyStoreClosingDao.upsert(match { it.id == closing.id && it.wasteCostCents == 500L && it.netProfitCents == -500L })
+            api.pushDailyClosing(match { it.closing.wasteCost == 5.0 && it.closing.movementCount == 1 })
+        }
+    }
+
+    @Test
+    fun `deductions sync before daily closing`() = runTest {
+        val dayId = "7fb894ad-fe85-430f-a239-a942ad288c18"
+        val deduction = RevenueDeductionEntity(
+            id = "9c42062e-3aa8-4c48-b334-38903f69ac44", stallId = transaction.stallId,
+            businessDayId = dayId, businessDate = "2026-09-29", amountCents = 1_500,
+            reason = "Customer refund", cashierId = "cashier-1", occurredAt = "2026-09-29T06:00:00Z",
+        )
+        val closing = DailyStoreClosingEntity(
+            id = "c672218c-e417-4a43-8122-c4d9e105d275", stallId = transaction.stallId,
+            businessDayId = dayId, businessDate = "2026-09-29", grossSalesCents = 10_000,
+            cogsCents = 0, wasteCostCents = 0, overheadCostCents = 0, netProfitCents = 8_500,
+            expectedCashCents = 8_500, collectedCashCents = 8_500,
+            deviceId = "786706d8-cfaa-46f1-909a-123f2cc9385a", closedAt = "2026-09-29T07:00:00Z",
+            revenueDeductionCents = 1_500, deductionReason = "See recorded deductions",
+        )
+        coEvery { transactionDao.getUnsynced() } returns emptyList()
+        coEvery { revenueDeductionDao.getUnsynced() } returnsMany listOf(listOf(deduction), emptyList())
+        coEvery { dailyStoreClosingDao.getUnsynced() } returns listOf(closing)
+        coEvery { transactionDao.getCompletedTotalBetween(any(),any(),any()) } returns 10_000
+        coEvery { transactionDao.getCashSalesBetween(any(),any(),any()) } returns 10_000
+        coEvery { revenueDeductionDao.totalForDay(closing.businessDayId) } returns 1_500
+        coEvery { revenueDeductionDao.profitAffectingTotalForDay(closing.businessDayId) } returns 1_500
+        coEvery { businessDayDao.findByDate(any(), closing.businessDate) } returns closingDay(closing.businessDate, closing.closedAt)
+        coEvery { api.pushRevenueDeduction(any()) } returns PushRevenueDeductionResponse("accepted", deduction.id)
+        coEvery { api.pushDailyClosing(any()) } returns PushDailyClosingResponse("accepted", closing.id)
+
+        val report = repository.sync()
+
+        assertEquals(1, report.deductionsSynced)
+        assertEquals(1, report.closingsSynced)
+        coVerifyOrder {
+            api.pushRevenueDeduction(match { it.deduction.reason == "Customer refund" })
+            api.pushDailyClosing(any())
+        }
+    }
+
+    @Test
+    fun `a failed deduction keeps its daily closing queued`() = runTest {
+        val dayId = "7fb894ad-fe85-430f-a239-a942ad288c18"
+        val deduction = RevenueDeductionEntity(
+            id = "9c42062e-3aa8-4c48-b334-38903f69ac44", stallId = transaction.stallId,
+            businessDayId = dayId, businessDate = "2026-09-29", amountCents = 1_500,
+            reason = "Customer refund", cashierId = "cashier-1", occurredAt = "2026-09-29T06:00:00Z",
+        )
+        val closing = DailyStoreClosingEntity(
+            id = "c672218c-e417-4a43-8122-c4d9e105d275", stallId = transaction.stallId,
+            businessDayId = dayId, businessDate = "2026-09-29", grossSalesCents = 10_000,
+            cogsCents = 0, wasteCostCents = 0, overheadCostCents = 0, netProfitCents = 8_500,
+            expectedCashCents = 8_500, collectedCashCents = 8_500,
+            deviceId = "786706d8-cfaa-46f1-909a-123f2cc9385a", closedAt = "2026-09-29T07:00:00Z",
+        )
+        coEvery { transactionDao.getUnsynced() } returns emptyList()
+        coEvery { revenueDeductionDao.getUnsynced() } returns listOf(deduction)
+        coEvery { dailyStoreClosingDao.getUnsynced() } returns listOf(closing)
+        coEvery { api.pushRevenueDeduction(any()) } throws IllegalStateException("IMS rejected deduction")
+
+        val report = repository.sync()
+
+        assertEquals(1, report.permanentFailures)
+        coVerify(exactly = 0) { api.pushDailyClosing(any()) }
+        coVerify(exactly = 1) { revenueDeductionDao.markSyncError(deduction.id, any()) }
+    }
+
+    @Test
+    fun `a rejected sale prevents final closing upload`() = runTest {
+        val closing = DailyStoreClosingEntity(
+            id = "c672218c-e417-4a43-8122-c4d9e105d275", stallId = transaction.stallId,
+            businessDayId = "7fb894ad-fe85-430f-a239-a942ad288c18", businessDate = "2026-08-21",
+            grossSalesCents = transaction.totalCents, cogsCents = 0, wasteCostCents = 0,
+            overheadCostCents = 0, netProfitCents = transaction.totalCents,
+            expectedCashCents = transaction.totalCents, collectedCashCents = transaction.totalCents,
+            deviceId = "786706d8-cfaa-46f1-909a-123f2cc9385a", closedAt = "2026-08-21T09:00:00Z",
+        )
+        coEvery { api.pushTransaction(any()) } throws httpError(400)
+        coEvery { dailyStoreClosingDao.getUnsynced() } returns listOf(closing)
+
+        val report = repository.sync()
+
+        assertEquals(1, report.permanentFailures)
+        coVerify(exactly = 0) { api.pushDailyClosing(any()) }
+    }
+
+    @Test
+    fun `refund uploads after sale and acknowledges its exact stock movements`() = runTest {
+        val reversal = SaleReversalEntity("reversal-1", transaction.id, transaction.stallId,
+            transaction.businessDayId!!, "payout-day", "refund", "Customer return", true,
+            transaction.totalCents, "2026-08-22T01:00:00Z")
+        val movement = saleComponent.copy(id = "return-1", movementType = "void_restock",
+            quantityDelta = 2.0, referenceId = transaction.id, occurredAt = reversal.occurredAt)
+        coEvery { api.pushTransaction(any()) } returns acknowledgement("accepted")
+        coEvery { reversalDao.getUnsynced() } returns listOf(reversal)
+        coEvery { inventoryLedgerDao.getReversalMovements(transaction.id) } returns listOf(movement)
+        coEvery { api.pushSaleReversal(any()) } returns PushSaleReversalResponse("accepted",reversal.id,transaction.id)
+        coEvery { reversalDao.markSynced(reversal.id) } just runs
+        coEvery { transactionDao.updateStatus(transaction.id,"refunded") } just runs
+        coEvery { inventoryLedgerDao.markSynced(movement.id) } just runs
+        coEvery { reversalDao.markSyncError(any(),any()) } just runs
+        coEvery { transactionDao.getUnsynced() } returnsMany listOf(listOf(transaction), emptyList())
+
+        val report = repository.sync()
+
+        assertEquals(1, report.reversalsSynced)
+        coVerifyOrder {
+            api.pushTransaction(any())
+            api.pushSaleReversal(match { it.reversal.id == reversal.id &&
+                it.reversal.movements.single().id == movement.id && it.reversal.payoutDayId == "payout-day" })
+            transactionDao.updateStatus(transaction.id,"refunded")
+            inventoryLedgerDao.markSynced(movement.id)
+            reversalDao.markSynced(reversal.id)
+        }
+    }
+
+    @Test
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `overlapping manual and worker sync share one upload`() = runTest {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        coEvery { transactionDao.getUnsynced() } returnsMany listOf(listOf(transaction), emptyList())
+        coEvery { api.pushTransaction(any()) } coAnswers {
+            entered.complete(Unit)
+            release.await()
+            acknowledgement("accepted")
+        }
+
+        val first = async { repository.sync() }
+        entered.await()
+        val second = async { repository.sync() }
+        runCurrent()
+        coVerify(exactly = 1) { api.pushTransaction(any()) }
+        release.complete(Unit)
+
+        assertEquals(1, first.await().pushed)
+        assertEquals(0, second.await().pushed)
+        coVerify(exactly = 1) { api.pushTransaction(any()) }
+    }
+
+    @Test
+    fun `missing receipt RPC keeps stock receipt queued until server accepts retry`() = runTest {
+        val entry = com.icecreampost.pos.data.local.entity.InventoryLedgerEntity(
+            id = "receipt-1", stallId = transaction.stallId, productId = "powder",
+            quantityDelta = 125.5, movementType = "receive", occurredAt = transaction.occurredAt,
+            updatedAt = transaction.updatedAt,
+        )
+        coEvery { transactionDao.getUnsynced() } returns emptyList()
+        coEvery { inventoryLedgerDao.getUnsynced() } returns listOf(entry)
+        for (code in listOf(404, 400)) {
+            coEvery { api.pushInventoryEntry(any()) } throws httpError(code)
+            assertEquals(1, repository.sync().permanentFailures)
+        }
+        coVerify(exactly = 0) { inventoryLedgerDao.markSynced(any()) }
+        coVerify(exactly = 0) { inventoryLedgerDao.markSyncError(any(), any()) }
+        coEvery { api.pushInventoryEntry(any()) } throws IOException("offline")
+        try { repository.sync(); org.junit.Assert.fail() } catch (_: RetryableSyncException) {}
+        coVerify(exactly = 0) { inventoryLedgerDao.markSynced(any()) }
+        coEvery { api.pushInventoryEntry(any()) } returns com.icecreampost.pos.data.remote.dto.PushInventoryEntryResponse("duplicate", entry.id)
+        assertEquals(1, repository.sync().ledgerEntriesSynced)
+        coVerify(exactly = 1) { inventoryLedgerDao.markSynced(entry.id) }
     }
 
     private fun acknowledgement(status: String) = PushTransactionResponse(
@@ -207,6 +504,13 @@ class SyncRepositoryTest {
         receiptNumber = transaction.receiptNumber,
         insertedItems = if (status == "accepted") 1 else 0,
         insertedLedger = if (status == "accepted") 1 else 0,
+    )
+
+    private fun closingDay(date: String, closedAt: String) = BusinessDayEntity(
+        id = transaction.businessDayId!!, stallId = transaction.stallId,
+        deviceId = "786706d8-cfaa-46f1-909a-123f2cc9385a", cashierId = "cashier-1",
+        businessDate = date, openedAt = "2026-09-11T00:00:00Z",
+        closedAt = closedAt, updatedAt = closedAt,
     )
 
     private fun httpError(code: Int): HttpException {

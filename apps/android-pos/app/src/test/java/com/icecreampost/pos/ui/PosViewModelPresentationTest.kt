@@ -27,6 +27,7 @@ class PosViewModelPresentationTest {
     private val sync = mockk<SyncRepository>(relaxed = true)
     private val state = mockk<SyncStateDao>()
     private val days = mockk<BusinessDayRepository>()
+    private val reversals = mockk<SaleReversalRepository>()
     private val store = ViewModelStore()
     private lateinit var model: PosViewModel
     private val catalog = MutableStateFlow<List<ProductEntity>>(emptyList())
@@ -42,7 +43,8 @@ class PosViewModelPresentationTest {
         every { state.observe(any()) } returns flowOf(null)
         every { days.observeLatest() } returns flowOf(null)
         every { days.observeDeductions() } returns flowOf(emptyList())
-        model = PosViewModel(mockk(relaxed = true), products, checkout, sessions, sync, state, days)
+        every { reversals.observeAll() } returns flowOf(emptyList())
+        model = PosViewModel(mockk(relaxed = true), products, checkout, sessions, sync, state, days, reversals)
         store.put("pos", model)
     }
 

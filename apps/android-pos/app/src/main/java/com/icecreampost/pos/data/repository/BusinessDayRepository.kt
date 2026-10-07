@@ -8,6 +8,7 @@ import com.icecreampost.pos.data.local.entity.DailyStoreClosingEntity
 import com.icecreampost.pos.data.local.dao.DailyStoreClosingDao
 import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
 import com.icecreampost.pos.data.local.dao.RevenueDeductionDao
+import com.icecreampost.pos.data.local.dao.SaleReversalDao
 import com.icecreampost.pos.data.local.entity.RevenueDeductionEntity
 import com.icecreampost.pos.data.local.database.CoolerzDatabase
 import androidx.room.withTransaction
@@ -30,6 +31,7 @@ class BusinessDayRepository @Inject constructor(
     private val dailyStoreClosingDao: DailyStoreClosingDao,
     private val inventoryLedgerDao: InventoryLedgerDao,
     private val revenueDeductionDao: RevenueDeductionDao,
+    private val reversalDao: SaleReversalDao,
 ) {
     fun observeLatest(): Flow<BusinessDayEntity?> = businessDayDao.observeLatest()
     fun observeDeductions(): Flow<List<RevenueDeductionEntity>> = revenueDeductionDao.observeAll()
@@ -49,10 +51,10 @@ class BusinessDayRepository @Inject constructor(
         require(normalizedReason.isNotEmpty()) { "Provide a reason for the deduction." }
         database.withTransaction {
             val now = Instant.now().toString()
-            val localGross = transactionDao.getCompletedTotalBetween(stallId, openDay.openedAt, now)
-            val gross = localGross + openDay.recoveryKnownSalesCents
+            val localCashSales = transactionDao.getCashSalesBetween(stallId, openDay.openedAt, now)
+            val cashSales = localCashSales + openDay.recoveryKnownSalesCents
             val existing = revenueDeductionDao.totalForDay(openDay.id)
-            require(amountCents <= gross - existing) { "Deduction cannot exceed remaining sales revenue." }
+            require(amountCents <= cashSales - existing) { "Deduction cannot exceed remaining cash sales." }
             revenueDeductionDao.upsert(RevenueDeductionEntity(
                 id = UUID.randomUUID().toString(), stallId = stallId, businessDayId = openDay.id,
                 businessDate = openDay.businessDate,
@@ -93,13 +95,16 @@ class BusinessDayRepository @Inject constructor(
         require(openDay.deviceId == session.deviceId) { "Close the day from the POS that opened it." }
         val now = Instant.now().toString()
         val cashTotal = transactionDao.getCompletedTotalBetween(stallId, openDay.openedAt, now) + openDay.recoveryKnownSalesCents
+        val cashSales = transactionDao.getCashSalesBetween(stallId, openDay.openedAt, now) + openDay.recoveryKnownSalesCents
         val cogs = transactionDao.getCompletedCogsBetween(stallId, openDay.openedAt, now) + openDay.recoveryKnownCogsCents
-        val waste = inventoryLedgerDao.getWasteCostBetween(stallId, openDay.openedAt, now) + openDay.recoveryKnownWasteCents
+        val waste = inventoryLedgerDao.getWasteCostBetween(stallId, openDay.openedAt, now) +
+            reversalDao.wasteCostForOriginalDay(openDay.id) + openDay.recoveryKnownWasteCents
         val revenueDeductionCents = revenueDeductionDao.totalForDay(openDay.id) + openDay.recoveryKnownDeductionsCents
         val profitDeductionCents = revenueDeductionDao.profitAffectingTotalForDay(openDay.id) + openDay.recoveryKnownProfitDeductionsCents
-        require(revenueDeductionCents <= cashTotal) { "Revenue deduction cannot exceed gross sales." }
-        val expectedCash = cashTotal - revenueDeductionCents
-        val collected = collectedCashCents ?: expectedCash
+        val refundPayout = reversalDao.cashReturnedForDay(openDay.id)
+        require(revenueDeductionCents <= cashSales) { "Revenue deduction cannot exceed cash sales." }
+        val expectedCash = cashSales - revenueDeductionCents - refundPayout
+        val collected = collectedCashCents ?: expectedCash.coerceAtLeast(0)
         require(collected >= 0) { "Collected cash cannot be negative." }
         database.withTransaction {
             businessDayDao.upsert(openDay.copy(

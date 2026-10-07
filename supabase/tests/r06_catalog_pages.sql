@@ -60,6 +60,13 @@ begin
   if exists(select 1 from public.get_pos_inventory_ledger_page(null,null,500) l where l.stall_id=other_stall) then
     raise exception 'Other stall ledger leaked';
   end if;
+  select l.updated_at,l.id into page_at,page_id from public.get_pos_inventory_ledger_page_v2(null,null,250) l
+    order by l.updated_at desc,l.id desc limit 1;
+  if (select count(*) from public.get_pos_inventory_ledger_page_v2(page_at,page_id,250))<>1
+    or exists(select 1 from public.get_pos_inventory_ledger_page_v2(null,null,500) l
+      where l.stall_id=other_stall or l.unit_cost is null) then
+    raise exception 'Day/cost ledger page skipped, leaked or lost a cost';
+  end if;
   perform set_config('request.headers','{}',true);
   begin
     perform public.get_pos_products_page(null,null,250);

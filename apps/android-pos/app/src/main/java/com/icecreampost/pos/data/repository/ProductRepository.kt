@@ -48,8 +48,12 @@ class ProductRepository @Inject constructor(
             InventoryLedgerEntity(
                 id = entry.id,
                 stallId = entry.stallId,
+                businessDayId = entry.businessDayId,
                 productId = entry.productId,
                 quantityDelta = entry.quantityDelta,
+                costTotalCents = entry.unitCost?.let { cost ->
+                    kotlin.math.round(kotlin.math.abs(entry.quantityDelta) * cost * 100).toLong()
+                },
                 movementType = entry.movementType,
                 reason = entry.reason,
                 referenceId = entry.referenceId,
@@ -121,8 +125,8 @@ class ProductRepository @Inject constructor(
             inventoryLedgerDao.upsertAll(ledger.map { entry ->
                 val local = inventoryLedgerDao.findById(entry.id)
                 entry.copy(
-                    businessDayId = local?.businessDayId,
-                    costTotalCents = local?.costTotalCents,
+                    businessDayId = local?.businessDayId ?: entry.businessDayId,
+                    costTotalCents = local?.costTotalCents ?: entry.costTotalCents,
                 )
             })
             productRecipeDao.deleteAll()

@@ -4,6 +4,8 @@ import type {
   Category,
   BusinessDay,
   RevenueDeduction,
+  SaleReversal,
+  ClosedDayCorrection,
   InventoryEntry,
   OverheadItem,
   Product,
@@ -11,6 +13,7 @@ import type {
   Stall,
   Transaction,
   TransactionItem,
+  SaleComponent,
   ProductRecipe,
   DailyStoreClosing,
   WorkspaceData,
@@ -18,35 +21,15 @@ import type {
 
 export type DbClient = SupabaseClient
 
-type PageResult<T> = { data: T[] | null; error: { message: string } | null }
-const PAGE_SIZE = 500
-
-export async function fetchAllRows<T extends { id: string }>(
-  page: (from: number, to: number) => PromiseLike<PageResult<T>>,
-): Promise<PageResult<T>> {
-  const rows: T[] = []
-  const seen = new Set<string>()
-  for (let from = 0; ;) {
-    const result = await page(from, from + PAGE_SIZE - 1)
-    if (result.error) return { data: null, error: result.error }
-    const batch = result.data ?? []
-    if (batch.length === 0) break
-    for (const row of batch) {
-      if (seen.has(row.id)) throw new Error('Workspace data changed during loading. Refresh to try again.')
-      seen.add(row.id)
-      rows.push(row)
-    }
-    // PostgREST may return fewer rows than requested when its server cap is
-    // lower than PAGE_SIZE. Advance by rows received, then ask again.
-    from += batch.length
-  }
-  return { data: rows, error: null }
-}
-
 function throwIfError<T>(result: { data: T | null; error: { message: string } | null }): T {
   if (result.error) throw new Error(result.error.message)
   if (result.data === null) throw new Error('The database returned no data.')
   return result.data
+}
+
+function newestFirst<T extends { id: string }>(rows: T[], field: keyof T): T[] {
+  return rows.sort((left, right) => String(right[field] ?? '').localeCompare(String(left[field] ?? '')) ||
+    right.id.localeCompare(left.id))
 }
 
 export function getOverheadForStall(stall: Stall | null): OverheadItem[] {
@@ -72,56 +55,36 @@ export async function getTransactionReceiptItems(client: DbClient, transactionId
 }
 
 export async function loadWorkspace(client: DbClient, stallId: string): Promise<WorkspaceData> {
-  const results = await Promise.all([
-    client.from('stalls').select('*').eq('id', stallId).is('deleted_at', null).single(),
-    fetchAllRows((from, to) => client.from('product_categories').select('id, name, sort_order').eq('stall_id', stallId).is('deleted_at', null).order('sort_order').order('id').range(from, to)),
-    fetchAllRows((from, to) => client.from('products').select('id, stall_id, category_id, sell_category, sku, name, unit, sale_price, cost_price, low_stock_threshold, pack_size, conversion_rate, is_sellable, product_type, base_unit, updated_at, deleted_at').eq('stall_id', stallId).is('deleted_at', null).order('name').order('id').range(from, to)),
-    fetchAllRows((from, to) => client.from('inventory_ledger').select('id, product_id, business_day_id, unit_cost, quantity_delta, movement_type, reason, reference_id, occurred_at').eq('stall_id', stallId).is('deleted_at', null).order('occurred_at', { ascending: false }).order('id', { ascending: false }).range(from, to)),
-    fetchAllRows((from, to) => client.from('transactions').select('id, business_day_id, cogs, receipt_number, status, subtotal, total_amount, cash_received, change_amount, occurred_at').eq('stall_id', stallId).is('deleted_at', null).order('occurred_at', { ascending: false }).order('id', { ascending: false }).range(from, to)),
-    fetchAllRows((from, to) => client.from('business_days').select('id, stall_id, device_id, cashier_id, business_date, opened_at, opening_notes, closed_at, closing_cash_total, closing_notes, updated_at').eq('stall_id', stallId).is('deleted_at', null).order('opened_at', { ascending: false }).order('id', { ascending: false }).range(from, to)),
-    fetchAllRows((from, to) => client.from('product_recipes').select('id, stall_id, parent_product_id, ingredient_product_id, quantity, updated_at').eq('stall_id', stallId).order('parent_product_id').order('id').range(from, to)),
-    fetchAllRows((from, to) => client.from('daily_store_closings').select('id, stall_id, business_day_id, business_date, gross_sales, cogs, waste_cost, overhead_cost, revenue_deduction, net_profit, expected_cash, collected_cash, device_id, closed_at').eq('stall_id', stallId).order('business_date', { ascending: false }).order('id', { ascending: false }).range(from, to)),
-    fetchAllRows((from, to) => client.from('revenue_deductions').select('id, stall_id, business_day_id, amount, affects_profit, reason, cashier_id, occurred_at').eq('stall_id', stallId).order('occurred_at', { ascending: false }).order('id', { ascending: false }).range(from, to)),
-  ])
-  const [stallResult, categoryResult, initialProductResult, inventoryResult, transactionResult, businessDayResult, recipeResult, initialClosingResult, initialDeductionResult] = results
-  let productResult = initialProductResult
-  let closingResult = initialClosingResult
+  const snapshot = throwIfError(await client.rpc('get_ims_financial_snapshot', { p_stall_id: stallId })) as {
+    stall: Stall | null; categories: Category[]; products: Product[]; recipes: ProductRecipe[];
+    inventory: InventoryEntry[]; transactions: Transaction[]; business_days: BusinessDay[];
+    transaction_items: TransactionItem[]; sale_components: SaleComponent[];
+    daily_store_closings: DailyStoreClosing[]; revenue_deductions: RevenueDeduction[];
+    sale_reversals: SaleReversal[];
+    closed_day_corrections: ClosedDayCorrection[];
+  }
+  const stallResult = { data: snapshot.stall, error: null }
+  const categoryResult = { data: snapshot.categories, error: null }
+  const productResult = { data: snapshot.products, error: null }
+  const recipeResult = { data: snapshot.recipes, error: null }
+  const inventoryResult = { data: snapshot.inventory, error: null }
+  const transactionResult = { data: snapshot.transactions, error: null }
+  const businessDayResult = { data: snapshot.business_days, error: null }
+  const initialClosingResult = { data: snapshot.daily_store_closings, error: null }
+  const initialDeductionResult = { data: snapshot.revenue_deductions, error: null }
+  const reversalResult = { data: snapshot.sale_reversals, error: null }
+  const closingResult = initialClosingResult
   const deductionResult = initialDeductionResult
+  const items = snapshot.transaction_items.map((item) => ({
+    ...item, quantity: Number(item.quantity), unit_price: Number(item.unit_price), line_total: Number(item.line_total),
+  }))
+  const saleComponents = snapshot.sale_components.map((component) => ({
+    ...component, quantity: Number(component.quantity), cost_total: Number(component.cost_total),
+  }))
 
-  // Item rows have no stall_id. Fetch only items belonging to this stall's
-  // complete sale list, in small groups that fit within PostgREST URL limits.
-  const transactionIds = throwIfError(transactionResult).map((transaction) => transaction.id)
-  const items: TransactionItem[] = []
-  for (let index = 0; index < transactionIds.length; index += 50) {
-    const ids = transactionIds.slice(index, index + 50)
-    const result = await fetchAllRows((from, to) => client.from('transaction_items')
-      .select('id, transaction_id, product_id, product_name, quantity, unit_price, line_total')
-      .in('transaction_id', ids).is('deleted_at', null).order('id').range(from, to))
-    items.push(...throwIfError(result).map((item) => ({
-      ...item, quantity: Number(item.quantity), unit_price: Number(item.unit_price), line_total: Number(item.line_total),
-    } as TransactionItem)))
-  }
-
-  // Keep deployed projects readable while recipe and POS category migrations
-  // are rolled out. Writes with a POS category are guarded below.
-  if (productResult.error?.message.includes('sell_category')) {
-    productResult = await fetchAllRows((from, to) => client.from('products').select('id, stall_id, category_id, sku, name, unit, sale_price, cost_price, low_stock_threshold, pack_size, conversion_rate, is_sellable, product_type, base_unit, updated_at, deleted_at').eq('stall_id', stallId).is('deleted_at', null).order('name').order('id').range(from, to)) as typeof productResult
-  }
-  if (productResult.error?.message.includes('product_type') || productResult.error?.message.includes('base_unit')) {
-    productResult = await fetchAllRows((from, to) => client.from('products').select('id, stall_id, category_id, sku, name, unit, sale_price, cost_price, low_stock_threshold, pack_size, conversion_rate, is_sellable, updated_at, deleted_at').eq('stall_id', stallId).is('deleted_at', null).order('name').order('id').range(from, to)) as typeof productResult
-  }
-  if (closingResult.error?.message.includes('revenue_deduction')) {
-    closingResult = await fetchAllRows((from, to) => client.from('daily_store_closings').select('id, stall_id, business_day_id, business_date, gross_sales, cogs, waste_cost, overhead_cost, net_profit, expected_cash, collected_cash, device_id, closed_at').eq('stall_id', stallId).order('business_date', { ascending: false }).order('id', { ascending: false }).range(from, to)) as typeof closingResult
-  }
-  const recipesUnavailable = Boolean(recipeResult.error && (
-    recipeResult.error.message.includes('product_recipes') || recipeResult.error.message.includes('schema cache')
-  ))
-  const closingsUnavailable = Boolean(closingResult.error && (
-    closingResult.error.message.includes('daily_store_closings') || closingResult.error.message.includes('schema cache')
-  ))
-  const deductionsUnavailable = Boolean(deductionResult.error && (
-    deductionResult.error.message.includes('revenue_deductions') || deductionResult.error.message.includes('affects_profit') || deductionResult.error.message.includes('schema cache')
-  ))
+  const recipesUnavailable = false
+  const closingsUnavailable = false
+  const deductionsUnavailable = false
 
   const rawStall = throwIfError(stallResult) as Stall
   const businessDateById = new Map(throwIfError(businessDayResult).map((day) => [day.id, day.business_date]))
@@ -152,13 +115,13 @@ export async function loadWorkspace(client: DbClient, stallId: string): Promise<
       product_type: product.product_type ?? (product.is_sellable ? 'sellable' : 'raw'),
       base_unit: product.base_unit ?? (product.unit === 'ml' ? 'ml' : product.unit === 'g' ? 'g' : 'piece'),
     })) as Product[],
-    inventory: throwIfError(inventoryResult).map((entry) => ({
+    inventory: newestFirst(throwIfError(inventoryResult).map((entry) => ({
       ...entry,
       quantity_delta: Number(entry.quantity_delta),
       unit_cost: entry.unit_cost == null ? null : Number(entry.unit_cost),
       business_date: businessDateFor(entry.business_day_id, entry.occurred_at),
-    })) as InventoryEntry[],
-    transactions: throwIfError(transactionResult).map((transaction) => ({
+    })) as InventoryEntry[], 'occurred_at'),
+    transactions: newestFirst(throwIfError(transactionResult).map((transaction) => ({
       ...transaction,
       subtotal: Number(transaction.subtotal),
       total_amount: Number(transaction.total_amount),
@@ -166,23 +129,35 @@ export async function loadWorkspace(client: DbClient, stallId: string): Promise<
       change_amount: transaction.change_amount === null ? null : Number(transaction.change_amount),
       cogs: transaction.cogs == null ? undefined : Number(transaction.cogs),
       business_date: businessDateFor(transaction.business_day_id, transaction.occurred_at),
-    })) as Transaction[],
+    })) as Transaction[], 'occurred_at'),
     transactionItems: items,
-    businessDays: throwIfError(businessDayResult).map((day) => ({
+    saleComponents,
+    businessDays: newestFirst(throwIfError(businessDayResult).map((day) => ({
       ...day,
       closing_cash_total: day.closing_cash_total === null ? null : Number(day.closing_cash_total),
-    })) as BusinessDay[],
-    revenueDeductions: (deductionsUnavailable ? [] : throwIfError(deductionResult)).map((deduction) => ({
+    })) as BusinessDay[], 'opened_at'),
+    revenueDeductions: newestFirst((deductionsUnavailable ? [] : throwIfError(deductionResult)).map((deduction) => ({
       ...deduction, amount: Number(deduction.amount), business_date: businessDateById.get(deduction.business_day_id) ?? getBusinessDateKey(deduction.occurred_at),
-    })) as RevenueDeduction[],
+    })) as RevenueDeduction[], 'occurred_at'),
+    saleReversals: newestFirst(throwIfError(reversalResult).map((reversal) => ({
+      ...reversal,
+      cash_returned: Number(reversal.cash_returned),
+      original_business_date: businessDateFor(reversal.original_day_id, reversal.occurred_at),
+      payout_business_date: businessDateFor(reversal.payout_day_id, reversal.occurred_at),
+    })) as SaleReversal[], 'occurred_at'),
+    closedDayCorrections: snapshot.closed_day_corrections.map((correction) => ({
+      ...correction,
+      added_gross: Number(correction.added_gross), added_cogs: Number(correction.added_cogs),
+      business_date: businessDateFor(correction.business_day_id, correction.posted_at),
+    })).sort((left, right) => right.posted_at.localeCompare(left.posted_at)),
     deductionsAvailable: !deductionsUnavailable,
     recipes: (recipesUnavailable ? [] : throwIfError(recipeResult)).map((recipe) => ({ ...recipe, quantity: Number(recipe.quantity) })) as ProductRecipe[],
-    dailyClosings: (closingsUnavailable ? [] : throwIfError(closingResult)).map((closing) => ({
+    dailyClosings: newestFirst((closingsUnavailable ? [] : throwIfError(closingResult)).map((closing) => ({
       ...closing,
       gross_sales: Number(closing.gross_sales), cogs: Number(closing.cogs), waste_cost: Number(closing.waste_cost),
       overhead_cost: Number(closing.overhead_cost), revenue_deduction: Number(closing.revenue_deduction ?? 0), net_profit: Number(closing.net_profit),
       expected_cash: Number(closing.expected_cash), collected_cash: Number(closing.collected_cash),
-    })) as DailyStoreClosing[],
+    })) as DailyStoreClosing[], 'business_date'),
   }
 }
 
@@ -319,14 +294,6 @@ export async function setStockOnHand(client: DbClient, stallId: string, productI
     p_target_stock: targetStock,
     p_reason: reason,
   })) as SetStockCountResult
-}
-
-export async function reverseTransaction(client: DbClient, transactionId: string, reason: string, restock: boolean) {
-  return throwIfError(await client.rpc('reverse_sale_inventory_ledger', {
-    p_transaction_id: transactionId,
-    p_reason: reason,
-    p_restock: restock,
-  })) as number
 }
 
 export type DataResetResult = {

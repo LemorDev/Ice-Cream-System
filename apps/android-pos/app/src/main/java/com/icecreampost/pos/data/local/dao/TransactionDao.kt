@@ -21,11 +21,17 @@ interface TransactionDao {
     @Query("SELECT * FROM transaction_items WHERE transactionId = :transactionId AND deletedAt IS NULL")
     suspend fun getItems(transactionId: String): List<TransactionItemEntity>
 
-    @Query("SELECT COALESCE(SUM(totalCents), 0) FROM transactions WHERE stallId = :stallId AND status = 'completed' AND occurredAt >= :openedAt AND occurredAt <= :closedAt")
+    @Query("SELECT COALESCE(SUM(totalCents), 0) FROM transactions t WHERE stallId = :stallId AND status = 'completed' AND occurredAt >= :openedAt AND occurredAt <= :closedAt AND NOT EXISTS (SELECT 1 FROM sale_reversals r WHERE r.transactionId = t.id)")
     suspend fun getCompletedTotalBetween(stallId: String, openedAt: String, closedAt: String): Long
 
-    @Query("SELECT COALESCE(SUM(cogsCents), 0) FROM transactions WHERE stallId = :stallId AND status = 'completed' AND occurredAt >= :openedAt AND occurredAt <= :closedAt")
+    @Query("SELECT COALESCE(SUM(cogsCents), 0) FROM transactions t WHERE stallId = :stallId AND status = 'completed' AND occurredAt >= :openedAt AND occurredAt <= :closedAt AND NOT EXISTS (SELECT 1 FROM sale_reversals r WHERE r.transactionId = t.id)")
     suspend fun getCompletedCogsBetween(stallId: String, openedAt: String, closedAt: String): Long
+
+    @Query("SELECT COALESCE(SUM(totalCents), 0) FROM transactions t WHERE stallId = :stallId AND occurredAt >= :openedAt AND occurredAt <= :closedAt AND status != 'voided' AND NOT EXISTS (SELECT 1 FROM sale_reversals r WHERE r.transactionId = t.id AND r.kind = 'void')")
+    suspend fun getCashSalesBetween(stallId: String, openedAt: String, closedAt: String): Long
+
+    @Query("SELECT COUNT(*) FROM transactions WHERE businessDayId = :dayId AND stallId = :stallId AND deletedAt IS NULL")
+    suspend fun countForDay(stallId: String, dayId: String): Int
 
     @Upsert
     suspend fun upsert(transaction: TransactionEntity)
@@ -35,6 +41,9 @@ interface TransactionDao {
 
     @Query("UPDATE transactions SET isSynced = 1, syncError = NULL WHERE id = :id")
     suspend fun markSynced(id: String)
+
+    @Query("UPDATE transactions SET status = :status WHERE id = :id")
+    suspend fun updateStatus(id: String, status: String)
 
     @Query("UPDATE transactions SET lastSyncAttemptAt = :attemptedAt WHERE id = :id")
     suspend fun markSyncAttempt(id: String, attemptedAt: String)

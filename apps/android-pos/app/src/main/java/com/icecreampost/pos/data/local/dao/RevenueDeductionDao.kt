@@ -14,6 +14,9 @@ interface RevenueDeductionDao {
     @Query("SELECT COALESCE(SUM(amountCents), 0) FROM revenue_deductions WHERE businessDayId = :dayId")
     suspend fun totalForDay(dayId: String): Long
 
+    @Query("SELECT COUNT(*) FROM revenue_deductions WHERE businessDayId = :dayId")
+    suspend fun countForDay(dayId: String): Int
+
     @Query("SELECT COALESCE(SUM(amountCents), 0) FROM revenue_deductions WHERE businessDayId = :dayId AND affectsProfit = 1")
     suspend fun profitAffectingTotalForDay(dayId: String): Long
 

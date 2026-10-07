@@ -19,6 +19,7 @@ class StockReceivingRepositoryTest {
     private val products = mockk<ProductDao>()
     private val sessions = mockk<SessionDao>()
     private val ledger = mockk<InventoryLedgerDao>()
+    private val days = mockk<BusinessDayDao>()
     private val trigger = mockk<SyncTrigger>(relaxed = true)
     private val api = mockk<SupabaseApi>()
     private val states = mockk<SyncStateDao>(relaxed = true)
@@ -42,6 +43,10 @@ class StockReceivingRepositoryTest {
             finally { inTransaction = false }
         }
         coEvery { sessions.getCurrent() } coAnswers { session }
+        coEvery { days.findOpen("s") } returns BusinessDayEntity(
+            id = "day-1", stallId = "s", deviceId = "d", cashierId = "u",
+            businessDate = "2026-09-30", openedAt = "2026-09-30T00:00:00Z",
+            updatedAt = "2026-09-30T00:00:00Z")
         coEvery { products.findById(any()) } coAnswers { product.takeIf { it.id == firstArg<String>() } }
         coEvery { products.updateStock(any(), any(), any()) } coAnswers {
             assertTrue(inTransaction); product = product.copy(unitsInStock = secondArg())
@@ -60,7 +65,7 @@ class StockReceivingRepositoryTest {
         coEvery { api.getProductsPage(any()) } returns emptyList()
         coEvery { api.getRecipesPage(any()) } returns emptyList()
         coEvery { api.getInventoryLedgerPage(any()) } returns emptyList()
-        receiving = StockReceivingRepository(db, products, sessions, ledger, trigger)
+        receiving = StockReceivingRepository(db, products, sessions, ledger, days, trigger)
         catalog = ProductRepository(db, products, ledger, states, recipes, api)
     }
     @After fun teardown() { unmockkStatic("androidx.room.RoomDatabaseKt") }
@@ -76,6 +81,7 @@ class StockReceivingRepositoryTest {
         assertEquals(12.125, product.unitsInStock, 0.0)
         val entry = entries.values.single()
         assertEquals("receive", entry.movementType)
+        assertEquals("day-1", entry.businessDayId)
         assertEquals("Delivery 123", entry.reason)
         assertFalse(entry.isSynced)
         assertNull(entry.referenceId)
@@ -127,7 +133,8 @@ class StockReceivingRepositoryTest {
             else emptyList()
         }
         val sync = SyncRepository(mockk<TransactionDao>(relaxed = true), mockk<BusinessDayDao>(relaxed = true), ledger,
-            mockk<DailyStoreClosingDao>(relaxed = true), mockk<RevenueDeductionDao>(relaxed = true), states, api, catalog, mockk<AppLogger>(relaxed = true))
+            mockk<DailyStoreClosingDao>(relaxed = true), mockk<RevenueDeductionDao>(relaxed = true), mockk<SaleReversalDao>(relaxed = true),
+            states, api, catalog, mockk<AppLogger>(relaxed = true))
         assertEquals(2, sync.sync().ledgerEntriesSynced)
         assertEquals(0, sync.sync().ledgerEntriesSynced)
         catalog.refreshFromCloud()

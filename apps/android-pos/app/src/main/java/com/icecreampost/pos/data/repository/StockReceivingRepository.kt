@@ -21,6 +21,7 @@ class StockReceivingRepository @Inject constructor(
     private val productDao: ProductDao,
     private val sessionDao: SessionDao,
     private val ledgerDao: InventoryLedgerDao,
+    private val businessDayDao: com.icecreampost.pos.data.local.dao.BusinessDayDao,
     private val syncTrigger: SyncTrigger,
 ) {
     suspend fun receive(productId: String, quantity: Double, notes: String) {
@@ -35,11 +36,15 @@ class StockReceivingRepository @Inject constructor(
             require(product.stallId == session.stallId && product.deletedAt == null && product.productType in listOf("raw", "packaging")) {
                 "Select an active stock item assigned to this stall."
             }
+            val day = businessDayDao.findOpen(requireNotNull(session.stallId))
+                ?: error("Open the operating day before receiving stock.")
+            require(day.deviceId == session.deviceId) { "Receive stock on the POS that opened the day." }
             val stock = product.unitsInStock + quantity
             require(stock.isFinite()) { "Stock quantity is too large." }
             val now = Instant.now().toString()
             ledgerDao.upsertAll(listOf(InventoryLedgerEntity(
-                id = UUID.randomUUID().toString(), stallId = product.stallId, productId = product.id,
+                id = UUID.randomUUID().toString(), stallId = product.stallId,
+                businessDayId = day.id, productId = product.id,
                 quantityDelta = quantity, movementType = "receive", reason = notes.trim().ifBlank { null },
                 occurredAt = now, updatedAt = now,
             )))

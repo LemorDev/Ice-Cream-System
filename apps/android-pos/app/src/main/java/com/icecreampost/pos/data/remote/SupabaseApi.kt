@@ -24,6 +24,8 @@ import com.icecreampost.pos.data.remote.dto.PushDailyClosingRequest
 import com.icecreampost.pos.data.remote.dto.PushDailyClosingResponse
 import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionRequest
 import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionResponse
+import com.icecreampost.pos.data.remote.dto.PushSaleReversalRequest
+import com.icecreampost.pos.data.remote.dto.PushSaleReversalResponse
 import retrofit2.http.GET
 import retrofit2.http.Body
 import retrofit2.http.POST
@@ -60,17 +62,20 @@ interface SupabaseApi {
     @POST("rest/v1/rpc/get_pos_recipes_page")
     suspend fun getRecipesPage(@Body request: CatalogPageRequest): List<ProductRecipeDto>
 
-    @POST("rest/v1/rpc/get_pos_inventory_ledger_page")
+    @POST("rest/v1/rpc/get_pos_inventory_ledger_page_v2")
     suspend fun getInventoryLedgerPage(@Body request: CatalogPageRequest): List<InventoryLedgerDto>
 
-    @POST("rest/v1/rpc/push_pos_inventory_entry")
+    @POST("rest/v1/rpc/push_pos_inventory_entry_v2")
     suspend fun pushInventoryEntry(@Body request: PushInventoryEntryRequest): PushInventoryEntryResponse
 
-    @POST("rest/v1/rpc/push_daily_store_closing")
+    @POST("rest/v1/rpc/push_daily_store_closing_v2")
     suspend fun pushDailyClosing(@Body request: PushDailyClosingRequest): PushDailyClosingResponse
 
-    @POST("rest/v1/rpc/push_revenue_deduction")
+    @POST("rest/v1/rpc/push_revenue_deduction_v2")
     suspend fun pushRevenueDeduction(@Body request: PushRevenueDeductionRequest): PushRevenueDeductionResponse
+
+    @POST("rest/v1/rpc/push_pos_sale_reversal")
+    suspend fun pushSaleReversal(@Body request: PushSaleReversalRequest): PushSaleReversalResponse
 
     @GET("rest/v1/inventory_ledger")
     suspend fun getInventoryLedger(

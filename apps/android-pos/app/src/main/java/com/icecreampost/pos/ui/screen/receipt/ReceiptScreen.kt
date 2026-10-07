@@ -50,12 +50,66 @@ fun ReceiptScreen(viewModel: PosViewModel, onDone: () -> Unit) {
 @Composable
 fun HistoricalReceiptScreen(viewModel: PosViewModel, onBack: () -> Unit) {
     val receipt by viewModel.historicalReceipt.collectAsStateWithLifecycle()
+    val reversals by viewModel.saleReversals.collectAsStateWithLifecycle()
+    val day by viewModel.businessDay.collectAsStateWithLifecycle()
+    val busy by viewModel.isBusy.collectAsStateWithLifecycle()
     val visible by viewModel.amountsVisible.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
+    var showReversal by remember { mutableStateOf(false) }
+    var kind by remember { mutableStateOf("refund") }
+    var reason by remember { mutableStateOf("") }
+    var restock by remember { mutableStateOf(true) }
+    val activeReversal = reversals.firstOrNull { it.transactionId == receipt?.transaction?.id }
+    if (showReversal && receipt != null) {
+        val sale = requireNotNull(receipt).transaction
+        AlertDialog(
+            onDismissRequest = { if (!busy) showReversal = false },
+            title = { Text("Correct ${sale.receiptNumber}") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("A full refund returns ${formatMoney(sale.totalCents, visible)} cash. An unpaid void records an entry made by mistake without handing out cash.")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = kind == "refund", onClick = { kind = "refund" }, label = { Text("Refund") })
+                    FilterChip(selected = kind == "void", onClick = { kind = "void" }, label = { Text("Unpaid void") })
+                }
+                OutlinedTextField(value = reason, onValueChange = { reason = it }, label = { Text("Reason") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = restock, onClick = { restock = true }, label = { Text("Restock") })
+                    FilterChip(selected = !restock, onClick = { restock = false }, label = { Text("Waste") })
+                }
+                Text(if (kind == "refund") "Cash to return now: ${formatMoney(sale.totalCents, visible)}. This payout belongs to the current operating day."
+                    else "No cash is returned. Confirm this sale was entered in error.")
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            } },
+            confirmButton = { Button(onClick = {
+                viewModel.reverseSale(sale.id, kind, reason, restock,
+                    if (kind == "refund") sale.totalCents else 0L) {
+                    showReversal = false
+                    reason = ""
+                }
+            }, enabled = !busy && reason.trim().isNotEmpty() && reason.length <= 500) {
+                Text(if (kind == "refund") "Confirm cash refund" else "Confirm unpaid void")
+            } },
+            dismissButton = { OutlinedButton(onClick = { showReversal = false }, enabled = !busy) { Text("Cancel") } },
+        )
+    }
     BackHandler(onBack = onBack)
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ScreenHeader("Receipt", onBack = onBack, trailing = { AmountVisibilityButton(visible, viewModel::toggleAmountsVisible) }) }
-        receipt?.let { item { ReceiptDetails(it, visible) } } ?: item {
+        receipt?.let { saved ->
+            item { ReceiptDetails(saved, visible) }
+            if (activeReversal != null) item {
+                Text("${activeReversal.kind.replaceFirstChar { it.uppercase() }} recorded: ${activeReversal.reason}")
+                Text(if (activeReversal.isSynced) "Synced to IMS" else "Pending sync; keep this POS until confirmed",
+                    color = if (activeReversal.syncError == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
+                activeReversal.syncError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+            if (saved.transaction.status == "completed" && activeReversal == null) item {
+                Button(onClick = { showReversal = true }, enabled = day?.closedAt == null && day != null && !busy,
+                    modifier = Modifier.fillMaxWidth()) { Text("Refund or void this receipt") }
+                if (day?.closedAt != null || day == null) Text("Open the current operating day before returning cash or voiding a receipt.")
+            }
+        } ?: item {
             if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error)
             else CircularProgressIndicator()
         }

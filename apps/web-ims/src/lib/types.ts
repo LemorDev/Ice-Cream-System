@@ -106,6 +106,14 @@ export type TransactionItem = {
   line_total: number
 }
 
+export type SaleComponent = {
+  id: string
+  transaction_id: string
+  product_id: string
+  quantity: number
+  cost_total: number
+}
+
 export type BusinessDay = {
   id: string
   stall_id: string
@@ -130,6 +138,33 @@ export type RevenueDeduction = {
   reason: string
   cashier_id: string
   occurred_at: string
+}
+
+export type SaleReversal = {
+  id: string
+  transaction_id: string
+  stall_id: string
+  original_day_id: string
+  payout_day_id: string
+  original_business_date: string
+  payout_business_date: string
+  cashier_id: string
+  kind: 'refund' | 'void'
+  reason: string
+  restock: boolean
+  cash_returned: number
+  occurred_at: string
+}
+
+export type ClosedDayCorrection = {
+  transaction_id: string
+  stall_id: string
+  business_day_id: string | null
+  business_date: string
+  added_gross: number
+  added_cogs: number
+  reason: string
+  posted_at: string
 }
 
 export type ManagedUser = {
@@ -163,8 +198,11 @@ export type WorkspaceData = {
   inventory: InventoryEntry[]
   transactions: Transaction[]
   transactionItems: TransactionItem[]
+  saleComponents?: SaleComponent[]
   businessDays: BusinessDay[]
   revenueDeductions: RevenueDeduction[]
+  saleReversals?: SaleReversal[]
+  closedDayCorrections?: ClosedDayCorrection[]
   deductionsAvailable: boolean
   recipes: ProductRecipe[]
   dailyClosings: DailyStoreClosing[]

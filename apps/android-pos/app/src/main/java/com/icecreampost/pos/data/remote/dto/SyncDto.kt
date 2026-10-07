@@ -92,6 +92,7 @@ data class PushBusinessDayResponse(
 data class PushInventoryEntryPayload(
     val id: String,
     @SerialName("stall_id") val stallId: String,
+    @SerialName("business_day_id") val businessDayId: String? = null,
     @SerialName("product_id") val productId: String,
     @SerialName("quantity_delta") val quantityDelta: Double,
     @SerialName("movement_type") val movementType: String,
@@ -120,6 +121,10 @@ data class PushDailyClosingPayload(
     @SerialName("closed_at") val closedAt: String,
     @SerialName("revenue_deduction") val revenueDeduction: Double = 0.0,
     @SerialName("deduction_reason") val deductionReason: String? = null,
+    @SerialName("sale_count") val saleCount: Int = 0,
+    @SerialName("movement_count") val movementCount: Int = 0,
+    @SerialName("deduction_count") val deductionCount: Int = 0,
+    @SerialName("reversal_count") val reversalCount: Int = 0,
 )
 
 @Serializable data class PushDailyClosingRequest(@SerialName("p_closing") val closing: PushDailyClosingPayload)
@@ -140,3 +145,28 @@ data class PushRevenueDeductionPayload(
 
 @Serializable data class PushRevenueDeductionRequest(@SerialName("p_deduction") val deduction: PushRevenueDeductionPayload)
 @Serializable data class PushRevenueDeductionResponse(val status: String, @SerialName("deduction_id") val deductionId: String)
+
+@Serializable data class PushReversalMovementPayload(
+    val id: String,
+    @SerialName("product_id") val productId: String,
+)
+
+@Serializable data class PushSaleReversalPayload(
+    val id: String,
+    @SerialName("transaction_id") val transactionId: String,
+    @SerialName("stall_id") val stallId: String,
+    @SerialName("payout_day_id") val payoutDayId: String,
+    val kind: String,
+    val reason: String,
+    val restock: Boolean,
+    @SerialName("cash_returned") val cashReturned: Double,
+    @SerialName("occurred_at") val occurredAt: String,
+    val movements: List<PushReversalMovementPayload>,
+)
+
+@Serializable data class PushSaleReversalRequest(@SerialName("p_reversal") val reversal: PushSaleReversalPayload)
+@Serializable data class PushSaleReversalResponse(
+    val status: String,
+    @SerialName("reversal_id") val reversalId: String,
+    @SerialName("transaction_id") val transactionId: String,
+)

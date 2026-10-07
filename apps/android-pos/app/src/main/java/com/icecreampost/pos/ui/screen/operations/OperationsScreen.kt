@@ -38,6 +38,7 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
     val session by viewModel.session.collectAsStateWithLifecycle()
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
     val deductions by viewModel.revenueDeductions.collectAsStateWithLifecycle()
+    val reversals by viewModel.saleReversals.collectAsStateWithLifecycle()
     val storedDay by viewModel.businessDay.collectAsStateWithLifecycle()
     val businessDay = storedDay?.takeIf { it.stallId == session?.stallId }
     val error by viewModel.error.collectAsStateWithLifecycle()
@@ -48,14 +49,19 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
     val alreadyOperatedToday = businessDay?.businessDate == today
     val visibleDay = businessDay?.takeIf { isOpen || alreadyOperatedToday }
     val completedSales = if (visibleDay == null) emptyList() else transactions.filter {
-        it.status == "completed" && it.stallId == visibleDay.stallId && it.occurredAt >= visibleDay.openedAt &&
-            (visibleDay.closedAt == null || it.occurredAt <= visibleDay.closedAt)
+        it.status == "completed" && it.stallId == visibleDay.stallId && it.businessDayId == visibleDay.id &&
+            reversals.none { reversal -> reversal.transactionId == it.id }
     }
     val localSalesTotal = completedSales.sumOf { it.totalCents }
     val salesTotal = localSalesTotal + (visibleDay?.recoveryKnownSalesCents ?: 0)
+    val cashSales = transactions.filter { it.stallId == visibleDay?.stallId && it.businessDayId == visibleDay?.id &&
+        it.status != "voided" && reversals.none { reversal -> reversal.transactionId == it.id && reversal.kind == "void" } }
+        .sumOf { it.totalCents } + (visibleDay?.recoveryKnownSalesCents ?: 0)
+    val refundPayout = reversals.filter { it.payoutDayId == visibleDay?.id && it.kind == "refund" }
+        .sumOf { it.cashReturnedCents }
     val dayDeductions = deductions.filter { it.businessDayId == visibleDay?.id }
     val deductionTotal = dayDeductions.sumOf { it.amountCents } + (visibleDay?.recoveryKnownDeductionsCents ?: 0)
-    val expectedCash = (salesTotal - deductionTotal).coerceAtLeast(0)
+    val expectedCash = cashSales - deductionTotal - refundPayout
     var showCloseDialog by rememberSaveable { mutableStateOf(false) }
     var showFinalCloseConfirmation by rememberSaveable { mutableStateOf(false) }
     var showDeductionDialog by rememberSaveable { mutableStateOf(false) }
@@ -64,7 +70,7 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
     var revenueDeduction by rememberSaveable { mutableStateOf("") }
     var deductionReason by rememberSaveable { mutableStateOf("") }
     var affectsProfit by rememberSaveable { mutableStateOf(true) }
-    val deductionError = validateRevenueDeduction(revenueDeduction, deductionReason, salesTotal - deductionTotal)
+    val deductionError = validateRevenueDeduction(revenueDeduction, deductionReason, cashSales - deductionTotal)
     val cashError = collectedCash.isNotBlank() && collectedCash.toCentsOrNull() == null
 
     if (showDeductionDialog) {
@@ -72,7 +78,7 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
             onDismissRequest = { showDeductionDialog = false },
             title = { Text("Record revenue deduction") },
             text = { Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Remaining sales revenue: ${formatMoney((salesTotal - deductionTotal).coerceAtLeast(0), amountsVisible)}")
+                Text("Remaining cash sales: ${formatMoney((cashSales - deductionTotal).coerceAtLeast(0), amountsVisible)}")
                 OutlinedTextField(
                     revenueDeduction,
                     { revenueDeduction = it.filter { char -> char.isDigit() || char == '.' } },
@@ -85,7 +91,7 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
                     deductionReason,
                     { deductionReason = it },
                     label = { Text("Reason (required)") },
-                    placeholder = { Text("e.g. customer refund") },
+                    placeholder = { Text("e.g. supplies paid from till") },
                     isError = revenueDeduction.isNotBlank() && deductionReason.isBlank(),
                 )
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -93,6 +99,8 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
                     Text("Additional expense in profit", style = MaterialTheme.typography.bodyMedium)
                 }
                 Text("Turn this off when the cash pays an expense already in IMS fixed overhead, or is only a cash transfer. It still reduces expected cash.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Use the original receipt's Refund / void action for customer refunds. A cash deduction does not correct a sale or its stock.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             } },
@@ -115,8 +123,9 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
             text = { Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Cash sales recorded on this device: ${formatMoney(salesTotal, amountsVisible)}")
                 Text("Recorded deductions: ${formatMoney(deductionTotal, amountsVisible)}")
+                Text("Cash refunds paid: ${formatMoney(refundPayout, amountsVisible)}")
                 Text("Expected cash: ${formatMoney(expectedCash, amountsVisible)}")
-                OutlinedTextField(collectedCash, { collectedCash = it.filter { char -> char.isDigit() || char == '.' } }, label = { Text("Closing cash counted") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), placeholder = { Text(formatMoney(expectedCash, amountsVisible)) }, isError = cashError, supportingText = if (cashError) {{ Text("Enter a valid cash amount.") }} else null)
+                OutlinedTextField(collectedCash, { collectedCash = it.filter { char -> char.isDigit() || char == '.' } }, label = { Text("Closing cash counted") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), placeholder = { Text(formatMoney(expectedCash.coerceAtLeast(0), amountsVisible)) }, isError = cashError, supportingText = if (cashError) {{ Text("Enter a valid cash amount.") }} else null)
                 OutlinedTextField(closingNotes, { closingNotes = it }, label = { Text("Closing notes (optional)") })
             } },
             confirmButton = { Button(onClick = {
@@ -131,11 +140,11 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
             onDismissRequest = { if (!busy) { showFinalCloseConfirmation = false; showCloseDialog = true } },
             title = { Text("Confirm closing the operating day") },
             text = { Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Expected cash: ${formatMoney(expectedCash, amountsVisible)}. Closing cash: ${formatMoney(collectedCash.toCentsOrNull() ?: expectedCash, amountsVisible)}. You cannot start another sale today after closing.")
+                Text("Expected cash: ${formatMoney(expectedCash, amountsVisible)}. Closing cash: ${formatMoney(collectedCash.toCentsOrNull() ?: expectedCash.coerceAtLeast(0), amountsVisible)}. You cannot start another sale today after closing.")
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             } },
             confirmButton = { Button(colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), onClick = {
-                viewModel.closeDay(closingNotes, collectedCash.toCentsOrNull() ?: expectedCash) {
+                viewModel.closeDay(closingNotes, collectedCash.toCentsOrNull() ?: expectedCash.coerceAtLeast(0)) {
                     showFinalCloseConfirmation = false
                     closingNotes = ""
                     collectedCash = ""
@@ -172,6 +181,7 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
             }
             OperationAmount("Sales", salesTotal, amountsVisible)
             OperationAmount("Deductions", deductionTotal, amountsVisible)
+            OperationAmount("Cash refunds paid", refundPayout, amountsVisible)
             OperationAmount("Expected cash", expectedCash, amountsVisible)
         }
         if (deductionsOnly) {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { DbClient } from './lib/api'
 import { appEnvironment } from './lib/supabase'
-import { addInventoryEntry, adminCloseOpenBusinessDay, archiveCategory, archiveProduct, authorizePosRecovery, createCategory, createDeviceActivation, createManagedStall, getOverheadForStall, getPosDeviceStatus, getStockByProduct, getTransactionReceiptItems, listManagedUsers, resetStockLevels, resetTransactionsAndRevenue, revokePendingPosActivation, reviewPosRecovery, reverseTransaction, saveManagedUser, saveProduct, saveProductWithRecipe, setOwnerStalls, setStockOnHand, updateStall } from './lib/api'
+import { addInventoryEntry, adminCloseOpenBusinessDay, archiveCategory, archiveProduct, authorizePosRecovery, createCategory, createDeviceActivation, createManagedStall, getOverheadForStall, getPosDeviceStatus, getStockByProduct, getTransactionReceiptItems, listManagedUsers, resetStockLevels, resetTransactionsAndRevenue, revokePendingPosActivation, reviewPosRecovery, saveManagedUser, saveProduct, saveProductWithRecipe, setOwnerStalls, setStockOnHand, updateStall } from './lib/api'
 import type { PosDeviceStatus } from './lib/api'
 import type { WebView } from './lib/access'
 import { getDashboardMetrics, getDailyProfitReport, calculateDailyOverhead, DEFAULT_OVERHEAD_ITEMS, formatDateRangeLabel, getBusinessDateKey, getProductPerformance, getRevenueTrend, shiftDateKey, transactionBusinessDate } from './lib/dashboard'
@@ -912,18 +912,16 @@ export function PricingScreen({ client, data, onRefresh, onError }: ScreenProps)
   return <Panel title="Price and conversion management" description="Update retail prices, raw costs, and pack-to-usable-unit conversions without an app release.">{data.products.length === 0 ? <EmptyState title="No products yet" description="Add products before changing their prices." /> : <Table><TableHead><th className="px-3 py-3">Product</th><th className="px-3 py-3">Sale price</th><th className="px-3 py-3">Cost price</th><th className="px-3 py-3">Pack size</th><th className="px-3 py-3">Usable units / pack</th><th className="px-3 py-3" /></TableHead><tbody>{data.products.map((product) => { const values = draft(product); const set = (field: keyof typeof values, value: string) => setDrafts((current) => ({ ...current, [product.id]: { ...values, [field]: value } })); return <tr key={product.id} className="border-b border-slate-100"><TableCell><p className="font-medium">{product.name}</p><p className="text-xs text-slate-400">{product.unit}</p></TableCell><TableCell><input className="w-28 rounded border border-slate-300 px-2 py-1" type="number" min="0" step="0.01" value={values.sale_price} onChange={(event) => set('sale_price', event.target.value)} /></TableCell><TableCell><input className="w-28 rounded border border-slate-300 px-2 py-1" type="number" min="0" step="0.01" value={values.cost_price} onChange={(event) => set('cost_price', event.target.value)} /></TableCell><TableCell><input className="w-24 rounded border border-slate-300 px-2 py-1" type="number" min="0.001" step="0.001" value={values.pack_size} onChange={(event) => set('pack_size', event.target.value)} /></TableCell><TableCell><input className="w-28 rounded border border-slate-300 px-2 py-1" type="number" min="0.001" step="0.001" value={values.conversion_rate} onChange={(event) => set('conversion_rate', event.target.value)} /></TableCell><TableCell><Button disabled={savingId === product.id} onClick={() => void save(product)}>{savingId === product.id ? 'Saving…' : 'Save'}</Button></TableCell></tr> })}</tbody></Table>}</Panel>
 }
 
-export function TransactionsScreen({ client, data, onRefresh, onError, amountsVisible }: ScreenProps) {
+export function TransactionsScreen({ client, data, amountsVisible }: ScreenProps) {
   const money = (value: number) => formatFinancialAmount(value, amountsVisible)
   const [status, setStatus] = useState('all')
   const [search, setSearch] = useState('')
-  const [selectedId, setSelectedId] = useState<string>()
-  const [reason, setReason] = useState('Customer changed mind')
-  const [restock, setRestock] = useState(true)
   const [receiptId, setReceiptId] = useState<string>()
   const [receiptItems, setReceiptItems] = useState<TransactionItem[]>([])
   const [receiptLoading, setReceiptLoading] = useState(false)
   const [receiptError, setReceiptError] = useState('')
   const receiptTransaction = data.transactions.find((transaction) => transaction.id === receiptId)
+  const reversalByTransaction = new Map((data.saleReversals ?? []).map((reversal) => [reversal.transaction_id, reversal]))
   async function viewReceipt(transactionId: string) {
     setReceiptId(transactionId)
     setReceiptItems([])
@@ -933,11 +931,103 @@ export function TransactionsScreen({ client, data, onRefresh, onError, amountsVi
     catch (error) { setReceiptError(getErrorMessage(error)) }
     finally { setReceiptLoading(false) }
   }
-  const filtered = data.transactions.filter((transaction) => (status === 'all' || transaction.status === status) && transaction.receipt_number.toLowerCase().includes(search.toLowerCase()))
-  async function reverse() { if (!selectedId || !reason.trim()) return; try { await reverseTransaction(client, selectedId, reason.trim(), restock); setSelectedId(undefined); await onRefresh() } catch (error) { onError(getErrorMessage(error)) } }
-  return <><Panel title="Transaction history" description="Review sales receipts and reverse an eligible transaction with an audit reason." action={<div className="flex gap-2"><Input aria-label="Search receipts" placeholder="Receipt number" value={search} onChange={(event) => setSearch(event.target.value)} /><Select aria-label="Filter status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="completed">Completed</option><option value="voided">Voided</option><option value="refunded">Refunded</option></Select></div>}>{filtered.length === 0 ? <EmptyState title="No transactions found" description="Sales will appear here after the POS syncs them." /> : <Table><TableHead><th className="px-3 py-3">Receipt</th><th className="px-3 py-3">Date</th><th className="px-3 py-3">Total</th><th className="px-3 py-3">Status</th><th className="px-3 py-3">Actions</th></TableHead><tbody>{filtered.map((transaction) => <tr key={transaction.id} className="border-b border-slate-100"><TableCell className="font-medium">{transaction.receipt_number}</TableCell><TableCell>{dateTime.format(new Date(transaction.occurred_at))}</TableCell><TableCell>{money(transaction.total_amount)}</TableCell><TableCell><Badge tone={transaction.status === 'completed' ? 'success' : transaction.status === 'voided' ? 'danger' : 'warning'}>{transaction.status}</Badge></TableCell><TableCell><div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => void viewReceipt(transaction.id)}>View receipt</Button>{transaction.status === 'completed' && <Button variant="danger" onClick={() => setSelectedId(transaction.id)}>Void / reverse</Button>}</div></TableCell></tr>)}</tbody></Table>}{selectedId && <div className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4"><p className="font-semibold text-red-800">Reverse transaction</p><p className="mt-1 text-sm text-red-700">Choose whether the sold stock should return to inventory.</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><Select label="Reason" value={reason} onChange={(event) => setReason(event.target.value)}><option>Customer changed mind</option><option>Incorrect order</option><option>Quality issue</option></Select><Select label="Stock action" value={restock ? 'restock' : 'waste'} onChange={(event) => setRestock(event.target.value === 'restock')}><option value="restock">Restock items</option><option value="waste">Waste stock</option></Select></div><div className="mt-3 flex gap-2"><Button variant="danger" onClick={() => void reverse()}>Confirm reversal</Button><Button variant="ghost" onClick={() => setSelectedId(undefined)}>Cancel</Button></div></div>}</Panel>{receiptTransaction && <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#18002f]/55 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReceiptId(undefined) }}><section aria-label={`Receipt ${receiptTransaction.receipt_number}`} aria-modal="true" className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl" role="dialog"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-widest text-[#5a1bb0]">{data.stall?.name ?? 'Coolerz'}</p><h2 className="mt-1 text-xl font-black text-[#220046]">Receipt {receiptTransaction.receipt_number}</h2><p className="mt-1 text-sm text-slate-500">{dateTime.format(new Date(receiptTransaction.occurred_at))}</p></div><Button variant="ghost" onClick={() => setReceiptId(undefined)}>Close</Button></div><div className="mt-4"><Badge tone={receiptTransaction.status === 'completed' ? 'success' : receiptTransaction.status === 'voided' ? 'danger' : 'warning'}>{receiptTransaction.status}</Badge></div><div className="mt-5 border-y border-slate-200 py-3">{receiptLoading ? <p className="text-sm text-slate-500">Loading items…</p> : receiptError ? <Notice tone="error">{receiptError}</Notice> : receiptItems.length === 0 ? <p className="text-sm text-slate-500">No line items found for this transaction.</p> : receiptItems.map((item) => <div className="flex justify-between gap-3 py-1 text-sm" key={item.id}><div><p className="font-medium">{item.product_name}</p><p className="text-slate-500">{item.quantity} × {money(item.unit_price)}</p></div><p>{money(item.line_total)}</p></div>)}</div><div className="mt-3 space-y-2 text-sm"><div className="flex justify-between"><span>Subtotal</span><span>{money(receiptTransaction.subtotal)}</span></div><div className="flex justify-between font-bold"><span>Total</span><span>{money(receiptTransaction.total_amount)}</span></div>{receiptTransaction.cash_received !== null && <div className="flex justify-between"><span>Cash received</span><span>{money(receiptTransaction.cash_received)}</span></div>}{receiptTransaction.change_amount !== null && <div className="flex justify-between"><span>Change</span><span>{money(receiptTransaction.change_amount)}</span></div>}</div></section></div>}</>
-}
+  const filtered = data.transactions.filter((transaction) =>
+    (status === 'all' || transaction.status === status) &&
+    transaction.receipt_number.toLowerCase().includes(search.toLowerCase()))
 
+  return <>
+    <Panel title="Transaction history" description="Review POS receipts and their cashier refund or void audit records."
+      action={<div className="flex gap-2">
+        <Input aria-label="Search receipts" placeholder="Receipt number" value={search} onChange={(event) => setSearch(event.target.value)} />
+        <Select aria-label="Filter status" value={status} onChange={(event) => setStatus(event.target.value)}>
+          <option value="all">All statuses</option><option value="completed">Completed</option>
+          <option value="voided">Voided</option><option value="refunded">Refunded</option>
+        </Select>
+      </div>}>
+      {filtered.length === 0 ? <EmptyState title="No transactions found" description="Sales will appear here after the POS syncs them." /> :
+        <Table><TableHead><th className="px-3 py-3">Receipt</th><th className="px-3 py-3">Date</th>
+          <th className="px-3 py-3">Total</th><th className="px-3 py-3">Status</th><th className="px-3 py-3">Audit</th></TableHead>
+          <tbody>{filtered.map((transaction) => {
+            const reversal = reversalByTransaction.get(transaction.id)
+            return <tr key={transaction.id} className="border-b border-slate-100">
+              <TableCell className="font-medium">{transaction.receipt_number}</TableCell>
+              <TableCell>{dateTime.format(new Date(transaction.occurred_at))}</TableCell>
+              <TableCell>{money(transaction.total_amount)}</TableCell>
+              <TableCell><Badge tone={transaction.status === 'completed' ? 'success' : transaction.status === 'voided' ? 'danger' : 'warning'}>{transaction.status}</Badge></TableCell>
+              <TableCell><Button variant="secondary" onClick={() => void viewReceipt(transaction.id)}>View receipt</Button>
+                {reversal && <p className="mt-1 text-xs text-slate-600">{reversal.kind}: {reversal.reason}</p>}</TableCell>
+            </tr>
+          })}</tbody>
+        </Table>}
+    </Panel>
+    <Panel title="Refund and void audit" description="The original day carries the corrected sale and profit. Cash returned is recorded on the payout day.">
+      {(data.saleReversals ?? []).length === 0 ? <EmptyState title="No reversals" description="Cashier corrections will appear after POS sync." /> :
+        <Table><TableHead><th className="px-3 py-3">Receipt</th><th className="px-3 py-3">Action</th>
+          <th className="px-3 py-3">Reason / stock</th><th className="px-3 py-3">Cash returned</th>
+          <th className="px-3 py-3">Original day</th><th className="px-3 py-3">Payout day</th>
+          <th className="px-3 py-3">Cashier / time</th></TableHead>
+          <tbody>{(data.saleReversals ?? []).map((reversal) => {
+            const sale = data.transactions.find((transaction) => transaction.id === reversal.transaction_id)
+            return <tr key={reversal.id} className="border-b border-slate-100">
+              <TableCell>{sale?.receipt_number ?? reversal.transaction_id}</TableCell>
+              <TableCell>{reversal.kind}</TableCell>
+              <TableCell>{reversal.reason} · {reversal.restock ? 'restocked' : 'wasted'}</TableCell>
+              <TableCell>{money(reversal.cash_returned)}</TableCell>
+              <TableCell>{reversal.original_business_date}</TableCell>
+              <TableCell>{reversal.payout_business_date}</TableCell>
+              <TableCell>{reversal.cashier_id}<br />{dateTime.format(new Date(reversal.occurred_at))}</TableCell>
+            </tr>
+          })}</tbody>
+        </Table>}
+    </Panel>
+    {(data.closedDayCorrections ?? []).length > 0 && <Panel title="Sales uploaded after closing"
+      description="These queued sales were posted after a day had closed. IMS corrected revenue, cost, profit and expected cash; review the original receipt and counted cash.">
+      <Table><TableHead><th className="px-3 py-3">Receipt</th><th className="px-3 py-3">Operating day</th>
+        <th className="px-3 py-3">Added sales</th><th className="px-3 py-3">Booked cost</th>
+        <th className="px-3 py-3">Posted</th></TableHead>
+        <tbody>{(data.closedDayCorrections ?? []).map((correction) => {
+          const sale = data.transactions.find((transaction) => transaction.id === correction.transaction_id)
+          return <tr key={correction.transaction_id} className="border-b border-slate-100">
+            <TableCell>{sale?.receipt_number ?? correction.transaction_id}</TableCell>
+            <TableCell>{correction.business_date}</TableCell>
+            <TableCell>{money(correction.added_gross)}</TableCell>
+            <TableCell>{money(correction.added_cogs)}</TableCell>
+            <TableCell>{dateTime.format(new Date(correction.posted_at))}</TableCell>
+          </tr>
+        })}</tbody>
+      </Table>
+    </Panel>}
+    {receiptTransaction && <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#18002f]/55 p-4"
+      role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReceiptId(undefined) }}>
+      <section aria-label={`Receipt ${receiptTransaction.receipt_number}`} aria-modal="true"
+        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl" role="dialog">
+        <div className="flex items-start justify-between gap-3">
+          <div><p className="text-xs font-semibold uppercase tracking-widest text-[#5a1bb0]">{data.stall?.name ?? 'Coolerz'}</p>
+            <h2 className="mt-1 text-xl font-black text-[#220046]">Receipt {receiptTransaction.receipt_number}</h2>
+            <p className="mt-1 text-sm text-slate-500">{dateTime.format(new Date(receiptTransaction.occurred_at))}</p></div>
+          <Button variant="ghost" onClick={() => setReceiptId(undefined)}>Close</Button>
+        </div>
+        <div className="mt-4"><Badge tone={receiptTransaction.status === 'completed' ? 'success' : receiptTransaction.status === 'voided' ? 'danger' : 'warning'}>{receiptTransaction.status}</Badge></div>
+        <div className="mt-5 border-y border-slate-200 py-3">
+          {receiptLoading ? <p className="text-sm text-slate-500">Loading items…</p> :
+            receiptError ? <Notice tone="error">{receiptError}</Notice> :
+            receiptItems.length === 0 ? <p className="text-sm text-slate-500">No line items found for this transaction.</p> :
+            receiptItems.map((item) => <div className="flex justify-between gap-3 py-1 text-sm" key={item.id}>
+              <div><p className="font-medium">{item.product_name}</p>
+                <p className="text-slate-500">{item.quantity} × {money(item.unit_price)}</p></div>
+              <p>{money(item.line_total)}</p>
+            </div>)}
+        </div>
+        <div className="mt-3 space-y-2 text-sm">
+          <div className="flex justify-between"><span>Subtotal</span><span>{money(receiptTransaction.subtotal)}</span></div>
+          <div className="flex justify-between font-bold"><span>Total</span><span>{money(receiptTransaction.total_amount)}</span></div>
+          {receiptTransaction.cash_received !== null && <div className="flex justify-between"><span>Cash received</span><span>{money(receiptTransaction.cash_received)}</span></div>}
+          {receiptTransaction.change_amount !== null && <div className="flex justify-between"><span>Change</span><span>{money(receiptTransaction.change_amount)}</span></div>}
+        </div>
+      </section>
+    </div>}
+  </>
+}
 export function ProductPerformanceScreen({ data, amountsVisible }: ScreenProps) {
   const money = (value: number) => formatFinancialAmount(value, amountsVisible)
   const today = getBusinessDateKey()
@@ -1006,6 +1096,7 @@ export function ReportsScreen({ data, amountsVisible }: ScreenProps) {
       data.stall?.financial_report_reset_at,
       data.revenueDeductions,
       data.dailyClosings,
+      data.saleComponents,
     ),
     [data, from, to, overheadItems],
   )
@@ -1090,7 +1181,7 @@ export function DailyCloseScreen({ data, amountsVisible }: ScreenProps) {
   const [date, setDate] = useState(getBusinessDateKey())
   const [physical, setPhysical] = useState<Record<string, string>>({})
   const overheadItems = data.stall?.overhead_config?.length ? data.stall.overhead_config : DEFAULT_OVERHEAD_ITEMS
-  const [report] = getDailyProfitReport(data.products, data.inventory, data.transactions, data.transactionItems, date, date, overheadItems, data.businessDays.map((day) => day.business_date), data.stall?.financial_report_reset_at, data.revenueDeductions, data.dailyClosings)
+  const [report] = getDailyProfitReport(data.products, data.inventory, data.transactions, data.transactionItems, date, date, overheadItems, data.businessDays.map((day) => day.business_date), data.stall?.financial_report_reset_at, data.revenueDeductions, data.dailyClosings, data.saleComponents)
   const emptyReport = { businessDate: date, revenue: 0, cogs: 0, wasteCost: 0, fixedOverhead: 0, revenueDeduction: 0, profitDeduction: 0, netProfit: 0, completedSales: 0, voidedSales: 0 }
   const day = report ?? emptyReport
   const reconciliation = getDailyReconciliation(date, data.products, data.recipes, data.inventory, data.transactions, data.transactionItems,

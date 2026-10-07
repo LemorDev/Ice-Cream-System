@@ -11,6 +11,7 @@ import com.icecreampost.pos.data.local.dao.BusinessDayDao
 import com.icecreampost.pos.data.local.dao.ProductRecipeDao
 import com.icecreampost.pos.data.local.dao.DailyStoreClosingDao
 import com.icecreampost.pos.data.local.dao.RevenueDeductionDao
+import com.icecreampost.pos.data.local.dao.SaleReversalDao
 import com.icecreampost.pos.data.local.database.CoolerzDatabase
 import dagger.Module
 import dagger.Provides
@@ -38,6 +39,7 @@ object DatabaseModule {
                 CoolerzDatabase.MIGRATION_9_10,
                 CoolerzDatabase.MIGRATION_10_11,
                 CoolerzDatabase.MIGRATION_11_12,
+                CoolerzDatabase.MIGRATION_12_13,
             )
             .build()
 
@@ -50,4 +52,5 @@ object DatabaseModule {
     @Provides fun provideProductRecipeDao(database: CoolerzDatabase): ProductRecipeDao = database.productRecipeDao()
     @Provides fun provideDailyStoreClosingDao(database: CoolerzDatabase): DailyStoreClosingDao = database.dailyStoreClosingDao()
     @Provides fun provideRevenueDeductionDao(database: CoolerzDatabase): RevenueDeductionDao = database.revenueDeductionDao()
+    @Provides fun provideSaleReversalDao(database: CoolerzDatabase): SaleReversalDao = database.saleReversalDao()
 }

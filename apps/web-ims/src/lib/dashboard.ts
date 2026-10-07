@@ -1,4 +1,4 @@
-import type { DailyProfitReport, DailyStoreClosing, InventoryEntry, OverheadItem, Product, RevenueDeduction, Transaction, TransactionItem } from './types'
+import type { DailyProfitReport, DailyStoreClosing, InventoryEntry, OverheadItem, Product, RevenueDeduction, SaleComponent, Transaction, TransactionItem } from './types'
 
 export const DEFAULT_OVERHEAD_ITEMS: OverheadItem[] = [
   { key: 'cashier', label: 'Cashier pay', dailyRate: 500.0, icon: 'cashier', description: 'Daily cashier wage' },
@@ -151,6 +151,7 @@ export function getDailyProfitReport(
   reportResetAt: string | null = null,
   deductions: RevenueDeduction[] = [],
   closings: DailyStoreClosing[] = [],
+  saleComponents: SaleComponent[] = [],
 ): DailyProfitReport[] {
   const costMap = buildCostMap(products)
   const baseUnitCostMap = buildBaseUnitCostMap(products)
@@ -225,11 +226,17 @@ export function getDailyProfitReport(
     for (const entry of wasteEntries) {
       const unitCost = costMap[entry.product_id] ?? 0
       if (entry.movement_type === 'void_waste') {
-        // A reversal creates one zero-delta marker per sale item. Match the
-        // transaction and product, counting repeated product lines only once.
         const wasteKey = entry.reference_id ? `${entry.reference_id}:${entry.product_id}` : entry.id
         if (countedWasteProducts.has(wasteKey)) continue
         countedWasteProducts.add(wasteKey)
+        const snapshot = saleComponents.find((component) => component.transaction_id === entry.reference_id &&
+          component.product_id === entry.product_id)
+        if (snapshot) {
+          wasteCost += snapshot.cost_total
+          continue
+        }
+        // A reversal creates one zero-delta marker per sale item. Match the
+        // transaction and product, counting repeated product lines only once.
         const refItems = transactionItems.filter(
           (item) => item.transaction_id === entry.reference_id && item.product_id === entry.product_id,
         )

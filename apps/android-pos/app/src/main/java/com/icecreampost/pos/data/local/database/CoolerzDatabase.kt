@@ -26,6 +26,8 @@ import com.icecreampost.pos.data.local.entity.ProductRecipeEntity
 import com.icecreampost.pos.data.local.entity.DailyStoreClosingEntity
 import com.icecreampost.pos.data.local.dao.RevenueDeductionDao
 import com.icecreampost.pos.data.local.entity.RevenueDeductionEntity
+import com.icecreampost.pos.data.local.entity.SaleReversalEntity
+import com.icecreampost.pos.data.local.dao.SaleReversalDao
 
 @Database(
     entities = [
@@ -41,8 +43,9 @@ import com.icecreampost.pos.data.local.entity.RevenueDeductionEntity
         ProductRecipeEntity::class,
         DailyStoreClosingEntity::class,
         RevenueDeductionEntity::class,
+        SaleReversalEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = true,
 )
 abstract class CoolerzDatabase : RoomDatabase() {
@@ -56,6 +59,7 @@ abstract class CoolerzDatabase : RoomDatabase() {
     abstract fun productRecipeDao(): ProductRecipeDao
     abstract fun dailyStoreClosingDao(): DailyStoreClosingDao
     abstract fun revenueDeductionDao(): RevenueDeductionDao
+    abstract fun saleReversalDao(): SaleReversalDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -166,6 +170,12 @@ abstract class CoolerzDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE inventory_ledger ADD COLUMN costTotalCents INTEGER")
                 db.execSQL("UPDATE transactions SET businessDayId=(SELECT day.id FROM business_days day WHERE day.stallId=transactions.stallId AND transactions.occurredAt>=day.openedAt AND transactions.occurredAt<=COALESCE(day.closedAt,'9999-12-31T23:59:59Z') ORDER BY day.openedAt DESC LIMIT 1)")
                 db.execSQL("UPDATE inventory_ledger SET businessDayId=(SELECT day.id FROM business_days day WHERE day.stallId=inventory_ledger.stallId AND inventory_ledger.occurredAt>=day.openedAt AND inventory_ledger.occurredAt<=COALESCE(day.closedAt,'9999-12-31T23:59:59Z') ORDER BY day.openedAt DESC LIMIT 1)")
+            }
+        }
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS sale_reversals (id TEXT NOT NULL PRIMARY KEY, transactionId TEXT NOT NULL, stallId TEXT NOT NULL, originalDayId TEXT NOT NULL, payoutDayId TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, restock INTEGER NOT NULL, cashReturnedCents INTEGER NOT NULL, occurredAt TEXT NOT NULL, isSynced INTEGER NOT NULL, syncError TEXT)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_sale_reversals_transactionId ON sale_reversals (transactionId)")
             }
         }
     }

@@ -127,6 +127,17 @@ test('waste uses the referenced sale quantity instead of assuming one unit', () 
   assert.equal(report.netProfit, -30)
 })
 
+test('recipe ingredient waste uses the original component cost after catalog edits', () => {
+  const marker = { ...wasteMarker('waste-powder', 'powder'), business_date: '2026-08-04',
+    occurred_at: '2026-08-05T02:05:00Z' }
+  const [report] = getDailyProfitReport(
+    costProducts, [marker], transactions, [], '2026-08-04', '2026-08-04', [], [], null, [], [],
+    [{ id: 'component-1', transaction_id: 'void-1', product_id: 'powder', quantity: 80, cost_total: 40 }],
+  )
+
+  assert.equal(report.wasteCost, 40)
+})
+
 test('waste counts each product quantity once across multi-product and repeated product lines', () => {
   const items = [
     { transaction_id: 'void-1', product_id: 'vanilla', quantity: 3 },

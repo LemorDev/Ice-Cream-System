@@ -14,6 +14,7 @@ import com.icecreampost.pos.data.repository.ProductRepository
 import com.icecreampost.pos.data.repository.SessionRepository
 import com.icecreampost.pos.data.repository.SyncRepository
 import com.icecreampost.pos.data.repository.BusinessDayRepository
+import com.icecreampost.pos.data.repository.SaleReversalRepository
 import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.domain.model.CartLine
 import com.icecreampost.pos.domain.model.additionalMenuPortions
@@ -40,6 +41,7 @@ class PosViewModel @Inject constructor(
     private val syncRepository: SyncRepository,
     private val syncStateDao: SyncStateDao,
     private val businessDayRepository: BusinessDayRepository,
+    private val saleReversalRepository: SaleReversalRepository,
 ) : ViewModel() {
     val session: StateFlow<AppSessionEntity?> = sessionRepository.observeSession()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -65,6 +67,8 @@ class PosViewModel @Inject constructor(
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val transactions: StateFlow<List<TransactionEntity>> = checkoutRepository.observeTransactions()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val saleReversals = saleReversalRepository.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val syncState: StateFlow<SyncStateEntity?> = syncStateDao.observe("sync")
@@ -200,6 +204,11 @@ class PosViewModel @Inject constructor(
         runAction(onSuccess) { businessDayRepository.recordDeduction(amountCents, reason, affectsProfit) }
     }
 
+    fun reverseSale(transactionId: String, kind: String, reason: String, restock: Boolean, cashReturnedCents: Long,
+                    onSuccess: () -> Unit = {}) {
+        runAction(onSuccess) { saleReversalRepository.reverse(transactionId, kind, reason, restock, cashReturnedCents) }
+    }
+
     fun signIn(stallCode: String, email: String, password: String) {
         runAction {
             val signedIn = sessionRepository.signIn(stallCode, email, password)
@@ -290,6 +299,7 @@ class PosViewModel @Inject constructor(
                         if (report.ledgerEntriesSynced > 0) add(if (report.ledgerEntriesSynced == 1) "1 inventory movement" else "${report.ledgerEntriesSynced} inventory movements")
                         if (report.closingsSynced > 0) add(if (report.closingsSynced == 1) "1 daily closing" else "${report.closingsSynced} daily closings")
                         if (report.deductionsSynced > 0) add(if (report.deductionsSynced == 1) "1 deduction" else "${report.deductionsSynced} deductions")
+                        if (report.reversalsSynced > 0) add(if (report.reversalsSynced == 1) "1 reversal" else "${report.reversalsSynced} reversals")
                     }
                     "${uploads.joinToString(" and ").ifBlank { "No queued changes" }} uploaded. Catalog and inventory updated."
                 } else {

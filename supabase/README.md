@@ -27,6 +27,12 @@ installed from all repository migrations on 2026-10-03. Never use
 database, never a live sales database. The linked project reference is kept in
 ignored `supabase/.temp/` files.
 
+On 2026-10-07, the development project matched all 43 repository migrations
+through `202610070008_late_sale_reconciliation.sql`; a fresh `db push --dry-run`
+showed no pending files. The [R08 evidence](../docs/R08_DEVELOPMENT_DATABASE_EVIDENCE.md)
+records the development-only contract checks. Production migration history is
+still a separate release gate.
+
 ## Apply the database schema
 
 1. Apply migrations to the development project using the CLI workflow above. The push includes no seed data.
@@ -77,4 +83,6 @@ The password login RPCs share a per-account limit: after five incorrect password
 
 The rollback-only SQL fixtures in `tests/` cover sale/reversal behavior and the RBAC, stall assignment, device activation, operating-day, and deduction contracts. Run them only against a disposable database after applying every migration. The PGlite regression runner can exercise the activation and deduction fixtures locally with `node supabase/tests/pos_stock_receiving.integration.mjs --activation`; still validate the migrations on a development Supabase project before production.
 
-Before production, validate the login limit and other migrations against the development Supabase project, define the account recovery process, and complete the release checks in `docs/PROJECT_REVIEW.md`.
+Before production, rehearse account recovery with the actual staff, verify the
+production migration history separately, and complete the release checks in
+`docs/PROJECT_REVIEW.md`.

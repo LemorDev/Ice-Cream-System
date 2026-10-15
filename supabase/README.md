@@ -41,3 +41,14 @@ The current business has one active stall. The schema and Owner dashboard alread
 The rollback-only SQL fixtures in `tests/` cover sale/reversal behavior and the RBAC, stall assignment, device activation, and operating-day contracts. Run them only against a disposable database after applying every migration. They have been prepared locally but were not executed during this implementation because no local PostgreSQL runtime is configured.
 
 Before production, also add login rate limiting and an account recovery process, validate the migrations against a development Supabase project, and complete the release checks in `docs/PROJECT_REVIEW.md`.
+
+## Product pictures
+
+Apply `202610140001_product_images.sql` before deploying the IMS image uploader.
+It adds the optional product image URL, creates the public `product-images` bucket
+(JPG, PNG and WebP, maximum 5 MB), restricts uploads to System Administrators, and
+includes pictures in the device-bound POS catalog. Pictures are public catalog
+assets; do not upload private documents. The IMS supports adding, replacing and
+removing a picture through Add/Edit product. Sync the POS after saving; existing
+installs keep their local data through Room migration 3 → 4. The POS caches viewed
+pictures and shows a placeholder if a picture cannot be loaded.

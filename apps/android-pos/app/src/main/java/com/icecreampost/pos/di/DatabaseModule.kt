@@ -23,7 +23,7 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): CoolerzDatabase =
         Room.databaseBuilder(context, CoolerzDatabase::class.java, "coolerz-pos.db")
-            .addMigrations(CoolerzDatabase.MIGRATION_1_2, CoolerzDatabase.MIGRATION_2_3)
+            .addMigrations(CoolerzDatabase.MIGRATION_1_2, CoolerzDatabase.MIGRATION_2_3, CoolerzDatabase.MIGRATION_3_4)
             .build()
 
     @Provides fun provideProductDao(database: CoolerzDatabase): ProductDao = database.productDao()

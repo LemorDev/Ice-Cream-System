@@ -35,6 +35,7 @@ export type Product = {
   pack_size: number
   conversion_rate: number
   is_sellable: boolean
+  image_url?: string | null
   updated_at: string
   deleted_at: string | null
 }

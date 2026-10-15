@@ -22,9 +22,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.icecreampost.pos.BuildConfig
 import com.icecreampost.pos.ui.PosViewModel
 import com.icecreampost.pos.ui.component.SyncStatusCard
+import com.icecreampost.pos.ui.component.FingerprintActionButton
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 
 @Composable
 fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit) {
+    val fingerprintEnabled by viewModel.fingerprintEnabled.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
     val syncMessage by viewModel.syncMessage.collectAsStateWithLifecycle()
@@ -48,7 +52,7 @@ fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit) {
             },
         )
     }
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         OutlinedButton(onClick = onBack) { Text("Back") }
         Text("Settings and device info", style = MaterialTheme.typography.headlineMedium)
         SyncStatusCard(syncState)
@@ -65,7 +69,26 @@ fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit) {
             Text(if (busy) "Syncing…" else "Sync to IMS")
         }
         syncMessage?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
-        error?.let { Text("Sync failed: $it", color = MaterialTheme.colorScheme.error) }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        Text("Fingerprint login", style = MaterialTheme.typography.titleMedium)
+        if (fingerprintEnabled) {
+            Text("Enabled for this Cashier. The POS locks when you leave the app. Signing out requires password sign-in next time.")
+            OutlinedButton(onClick = viewModel::lockPos, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                Text("Lock POS")
+            }
+            OutlinedButton(onClick = viewModel::disableFingerprintLogin, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                Text("Turn off fingerprint login")
+            }
+        } else {
+            Text("Use this phone's enrolled fingerprint to unlock your saved Cashier session. Expired sessions still require your password.")
+            FingerprintActionButton(
+                label = "Enable fingerprint login",
+                title = "Enable fingerprint login",
+                enabled = !busy,
+                prepareCipher = viewModel::prepareFingerprintEnrollment,
+                onAuthenticated = viewModel::enableFingerprintLogin,
+            )
+        }
         OutlinedButton(onClick = { showSignOutConfirmation = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
             Text("Sign out")
         }

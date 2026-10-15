@@ -22,4 +22,5 @@ data class ProductEntity(
     val updatedAt: String,
     val deletedAt: String? = null,
     val localUpdatedAt: String = updatedAt,
+    val imageUrl: String? = null,
 )

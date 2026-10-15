@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -23,12 +24,14 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.icecreampost.pos.ui.PosViewModel
+import com.icecreampost.pos.ui.component.FingerprintActionButton
 
 @Composable
 fun LoginScreen(viewModel: PosViewModel) {
     var stallCode by rememberSaveable { mutableStateOf("") }
     var email by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    val fingerprintUnlockRequired by viewModel.fingerprintUnlockRequired.collectAsStateWithLifecycle()
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
 
@@ -41,7 +44,18 @@ fun LoginScreen(viewModel: PosViewModel) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Coolerz POS", style = MaterialTheme.typography.headlineLarge)
-        Text("Sign in with the stall code and Cashier account. This phone will reuse its active POS registration.")
+        if (fingerprintUnlockRequired) {
+            Text("POS is locked. Use your fingerprint to unlock your Cashier session, or sign in with your password.")
+            FingerprintActionButton(
+                label = "Sign in with fingerprint",
+                title = "Unlock Coolerz POS",
+                enabled = !busy,
+                prepareCipher = viewModel::prepareFingerprintUnlock,
+                onAuthenticated = viewModel::unlockWithFingerprint,
+            )
+        } else {
+            Text("Sign in with the stall code and Cashier account. This phone will reuse its active POS registration.")
+        }
         OutlinedTextField(
             stallCode,
             { stallCode = it.uppercase() },
@@ -61,11 +75,15 @@ fun LoginScreen(viewModel: PosViewModel) {
         )
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(
-            onClick = { viewModel.signIn(stallCode, email, password) },
+            onClick = {
+                val enteredPassword = password
+                password = ""
+                viewModel.signIn(stallCode, email, enteredPassword)
+            },
             enabled = !busy,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            if (busy) CircularProgressIndicator() else Text("Sign in")
+            if (busy) CircularProgressIndicator() else Text("Sign in with password")
         }
         Text("First activation requires a network connection. Completed sales afterward are saved locally.")
     }

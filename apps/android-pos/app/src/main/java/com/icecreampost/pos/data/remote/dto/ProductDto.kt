@@ -19,5 +19,6 @@ data class ProductDto(
     @SerialName("conversion_rate") val conversionRate: Double = 1.0,
     @SerialName("is_sellable") val isSellable: Boolean = true,
     @SerialName("updated_at") val updatedAt: String = "",
+    @SerialName("image_url") val imageUrl: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 )

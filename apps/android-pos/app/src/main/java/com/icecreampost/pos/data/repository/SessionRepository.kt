@@ -22,7 +22,7 @@ class SessionRepository @Inject constructor(
 ) {
     fun observeSession(): Flow<AppSessionEntity?> = sessionDao.observeCurrent()
 
-    suspend fun restoreStoredSession(allowExpiredForOfflineWork: Boolean = false): AppSessionEntity? {
+    suspend fun restoreStoredSession(allowExpiredForOfflineWork: Boolean = false, activateToken: Boolean = true): AppSessionEntity? {
         val current = sessionDao.getCurrent()
         val storedToken = current?.sessionToken?.takeIf { it.isNotBlank() }
         val isExpired = current?.expiresAt?.let { expiresAt ->
@@ -33,7 +33,7 @@ class SessionRepository @Inject constructor(
             sessionDao.clear()
             return null
         }
-        sessionTokenStore.token = storedToken
+        sessionTokenStore.token = if (activateToken) storedToken else null
         return current
     }
 

@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.icecreampost.pos.ui.PosViewModel
 import com.icecreampost.pos.ui.component.AmountVisibilityButton
@@ -58,14 +58,32 @@ fun HomeScreen(
             (visibleDay.closedAt == null || it.occurredAt <= visibleDay.closedAt)
     }
     val salesTotal = completedSales.sumOf { it.totalCents }
-    var showCloseDialog by remember { mutableStateOf(false) }
-    var closingNotes by remember { mutableStateOf("") }
+    var showOpenDialog by rememberSaveable { mutableStateOf(false) }
+    var showCloseDialog by rememberSaveable { mutableStateOf(false) }
+    var closingNotes by rememberSaveable { mutableStateOf("") }
 
-    if (showCloseDialog) {
+    if (showOpenDialog && !isOpen && !alreadyOperatedToday) {
+        AlertDialog(
+            onDismissRequest = { showOpenDialog = false },
+            title = { Text("Open today's stall?") },
+            text = { Text("This will start today's operating day and allow you to accept sales.") },
+            confirmButton = {
+                Button(onClick = {
+                    showOpenDialog = false
+                    viewModel.openDay()
+                }, enabled = !busy) { Text("Open stall") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showOpenDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+    if (showCloseDialog && isOpen) {
         AlertDialog(
             onDismissRequest = { showCloseDialog = false },
             title = { Text("Close operating day?") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("This will end the operating day and stop new sales. You cannot reopen the same business date.")
                 Text("Cash sales recorded on this device: ${formatMoney(salesTotal, amountsVisible)}")
                 OutlinedTextField(closingNotes, { closingNotes = it }, label = { Text("Closing notes (optional)") })
             } },
@@ -113,7 +131,7 @@ fun HomeScreen(
                     } else if (alreadyOperatedToday) {
                         Text("Today's operating day is closed. The next day can be opened after midnight.", style = MaterialTheme.typography.bodySmall)
                     } else {
-                        Button(onClick = { viewModel.openDay() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Open today's stall") }
+                        Button(onClick = { showOpenDialog = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Open today's stall") }
                     }
                 }
             }

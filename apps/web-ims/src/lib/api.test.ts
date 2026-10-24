@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createClient } from '@supabase/supabase-js'
-import { archiveCategory, archiveProduct, getOverheadForStall, getTransactionReceiptItems, resetStockLevels, resetTransactionsAndRevenue, saveProductWithRecipe, setStockOnHand, updateStall } from './api.ts'
+import { archiveCategory, archiveProduct, getOverheadForStall, getTransactionReceiptItems, resetStockLevels, resetTransactionsAndRevenue, saveProductWithRecipe, setStockOnHand, updateStall, uploadProductImage, validateProductImage } from './api.ts'
 
 test('product save keeps POS category separate from flavor for catalog sync', async () => {
   let request: { url: string; body: { p_product: { category_id: string; sell_category: string } } } | undefined
@@ -198,4 +198,48 @@ test('physical stock count sends the target base units to the atomic correction 
     p_reason: 'Correct test receipt',
   })
   assert.equal(result.quantity_delta, 9_990)
+})
+
+test('product images accept supported formats and reject empty, oversized and unsupported files', () => {
+  for (const type of ['image/jpeg', 'image/png', 'image/webp']) {
+    assert.doesNotThrow(() => validateProductImage({ type, size: 5 * 1024 * 1024 }))
+  }
+  assert.throws(() => validateProductImage({ type: 'image/svg+xml', size: 100 }), /JPG, PNG or WebP/)
+  assert.throws(() => validateProductImage({ type: 'image/png', size: 0 }), /5 MB/)
+  assert.throws(() => validateProductImage({ type: 'image/png', size: 5 * 1024 * 1024 + 1 }), /5 MB/)
+})
+
+test('upload stores a unique image under its stall and returns the public POS URL', async () => {
+  let requestUrl = ''
+  let requestHeaders = new Headers()
+  const client = createClient('https://example.invalid', 'test-key', {
+    auth: { persistSession: false },
+    global: {
+      headers: { 'X-Session-Token': 'admin-session' },
+      fetch: async (input, init) => {
+        requestUrl = String(input)
+        requestHeaders = new Headers(init?.headers)
+        return new Response(JSON.stringify({ Key: 'product-images/stall-1/photo.png' }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        })
+      },
+    },
+  })
+  const url = await uploadProductImage(client, 'stall-1', new File(['image'], 'photo.png', { type: 'image/png' }))
+  assert.match(requestUrl, /\/storage\/v1\/object\/product-images\/stall-1\/[\da-f-]+\.png$/)
+  assert.match(url, /\/storage\/v1\/object\/public\/product-images\/stall-1\/[\da-f-]+\.png$/)
+  assert.equal(requestHeaders.get('X-Session-Token'), 'admin-session')
+  assert.equal(requestHeaders.get('x-upsert'), 'false')
+})
+
+test('failed image uploads report the error instead of returning a broken image URL', async () => {
+  const client = createClient('https://example.invalid', 'test-key', {
+    auth: { persistSession: false },
+    global: {
+      fetch: async () => new Response(JSON.stringify({ message: 'Permission denied' }), {
+        status: 403, headers: { 'Content-Type': 'application/json' },
+      }),
+    },
+  })
+  await assert.rejects(uploadProductImage(client, 'stall-1', new File(['image'], 'photo.png', { type: 'image/png' })), /Product picture upload failed: Permission denied/)
 })

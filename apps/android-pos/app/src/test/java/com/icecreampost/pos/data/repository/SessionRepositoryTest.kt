@@ -202,6 +202,23 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `biometric-locked session can be checked without exposing its token`() = runTest {
+        val current = AppSessionEntity(
+            userId = "cashier-1", displayName = "Cashier", role = "cashier",
+            sessionToken = "token-1", expiresAt = "2999-01-01T00:00:00Z",
+        )
+        coEvery { sessionDao.getCurrent() } returns current
+        tokenStore.token = "previous-token"
+
+        assertEquals(current, repository.restoreStoredSession(activateToken = false))
+        assertEquals(null, tokenStore.token)
+        coVerify(exactly = 0) { sessionDao.clear() }
+
+        assertEquals(current, repository.restoreStoredSession())
+        assertEquals("token-1", tokenStore.token)
+    }
+
+    @Test
     fun `expired session requires sign in again on the next app launch`() = runTest {
         coEvery { sessionDao.getCurrent() } returns AppSessionEntity(
             displayName = "Cashier",

@@ -24,9 +24,9 @@ declare
   opened_at timestamptz := now() - interval '30 minutes';
 begin
   insert into public.stalls (id, name, code) values
-    (stall_a, 'RBAC stall A', 'RBAC-' || substr(stall_a::text, 1, 8)),
-    (stall_b, 'RBAC stall B', 'RBAC-' || substr(stall_b::text, 1, 8)),
-    (stall_c, 'RBAC stall C', 'RBAC-' || substr(stall_c::text, 1, 8));
+    (stall_a, 'RBAC stall A', 'RBAC-' || upper(substr(stall_a::text, 1, 8))),
+    (stall_b, 'RBAC stall B', 'RBAC-' || upper(substr(stall_b::text, 1, 8))),
+    (stall_c, 'RBAC stall C', 'RBAC-' || upper(substr(stall_c::text, 1, 8)));
   insert into public.app_users (id, stall_id, email, display_name, role, password_hash) values
     (admin_id, stall_a, admin_id::text || '@example.invalid', 'System admin fixture', 'system_admin', 'unused'),
     (owner_id, stall_a, owner_id::text || '@example.invalid', 'Owner fixture', 'owner', 'unused'),

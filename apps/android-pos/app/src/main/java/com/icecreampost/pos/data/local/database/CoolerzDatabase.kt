@@ -45,7 +45,7 @@ import com.icecreampost.pos.data.local.dao.SaleReversalDao
         RevenueDeductionEntity::class,
         SaleReversalEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = true,
 )
 abstract class CoolerzDatabase : RoomDatabase() {
@@ -62,6 +62,46 @@ abstract class CoolerzDatabase : RoomDatabase() {
     abstract fun saleReversalDao(): SaleReversalDao
 
     companion object {
+        // PR #2 used version 4 for pictures; the local development lineage used
+        // version 4 for recipes. Room chooses this bridge for either lineage.
+        val MIGRATION_4_15 = object : Migration(4, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val hasRecipes = db.query("PRAGMA table_info(products)").use { columns ->
+                    val nameIndex = columns.getColumnIndexOrThrow("name")
+                    var found = false
+                    while (columns.moveToNext()) {
+                        if (columns.getString(nameIndex) == "productType") found = true
+                    }
+                    found
+                }
+                if (!hasRecipes) {
+                    db.execSQL("CREATE TEMP TABLE product_image_upgrade AS SELECT id,imageUrl FROM products")
+                    MIGRATION_3_4.migrate(db)
+                }
+                MIGRATION_4_5.migrate(db)
+                MIGRATION_5_6.migrate(db)
+                MIGRATION_6_7.migrate(db)
+                MIGRATION_7_8.migrate(db)
+                MIGRATION_8_9.migrate(db)
+                MIGRATION_9_10.migrate(db)
+                MIGRATION_10_11.migrate(db)
+                MIGRATION_11_12.migrate(db)
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
+                if (!hasRecipes) {
+                    db.execSQL("UPDATE products SET imageUrl=(SELECT imageUrl FROM product_image_upgrade WHERE product_image_upgrade.id=products.id)")
+                    db.execSQL("DROP TABLE product_image_upgrade")
+                }
+            }
+        }
+
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE products ADD COLUMN imageUrl TEXT")
+            }
+        }
+
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE products ADD COLUMN stallId TEXT NOT NULL DEFAULT ''")

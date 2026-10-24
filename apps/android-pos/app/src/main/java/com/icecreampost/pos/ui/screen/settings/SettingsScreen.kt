@@ -17,8 +17,24 @@ import com.icecreampost.pos.ui.component.*
 @Composable
 fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit) {
     val visible by viewModel.amountsVisible.collectAsStateWithLifecycle()
+    val fingerprintEnabled by viewModel.fingerprintEnabled.collectAsStateWithLifecycle()
+    val busy by viewModel.isBusy.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ScreenHeader("Settings", onBack = onBack) }
+        item {
+            Text("Fingerprint login", style = MaterialTheme.typography.titleMedium)
+            if (fingerprintEnabled) {
+                Text("The POS locks when you leave the app. Unlock with your fingerprint or sign in with your password.")
+                OutlinedButton(onClick = viewModel::lockPos, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Lock POS") }
+                OutlinedButton(onClick = viewModel::disableFingerprintLogin, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Turn off fingerprint login") }
+            } else {
+                Text("Unlock your saved Cashier session with this phone's fingerprint. Expired sessions require password sign-in.")
+                FingerprintActionButton("Enable fingerprint login", "Enable fingerprint login", !busy,
+                    viewModel::prepareFingerprintEnrollment, viewModel::enableFingerprintLogin)
+            }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {

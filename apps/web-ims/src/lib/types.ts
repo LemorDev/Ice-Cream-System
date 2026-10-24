@@ -41,6 +41,7 @@ export type Product = {
   is_sellable: boolean
   product_type: 'raw' | 'packaging' | 'sellable'
   base_unit: 'g' | 'ml' | 'piece'
+  image_url?: string | null
   updated_at: string
   deleted_at: string | null
 }

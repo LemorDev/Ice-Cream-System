@@ -20,6 +20,9 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -36,6 +39,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
+import coil.compose.SubcomposeAsyncImage
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -171,21 +178,22 @@ fun ProductCatalogScreen(
             if (products.isEmpty()) {
                 EmptyCatalog(query = query, modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp))
             } else {
-                LazyColumn(
+                Text(
+                    "${products.size} ${if (products.size == 1) "product" else "products"}",
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 128.dp),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    item {
-                        Text(
-                            "${products.size} ${if (products.size == 1) "product" else "products"}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    items(products, key = { it.id }) { product ->
+                    gridItems(products, key = { it.id }) { product ->
                         val quantityInCart = cartLines.firstOrNull { it.product.id == product.id }?.quantity ?: 0
-                        ProductRow(
+                        ProductTile(
                             product = product,
                             quantityInCart = quantityInCart,
                             onAdd = { viewModel.addToCart(product) },
@@ -276,7 +284,7 @@ fun ProductCatalogScreen(
 }
 
 @Composable
-private fun ProductRow(
+private fun ProductTile(
     product: ProductEntity,
     quantityInCart: Int,
     onAdd: () -> Unit,
@@ -291,39 +299,23 @@ private fun ProductRow(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         shape = MaterialTheme.shapes.medium,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(product.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("${formatMoney(product.priceCents)} / ${product.unit}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                    Text(
-                        menuAvailabilityLabel(availability, product.unitsInStock),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (additionalAvailable == 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            SubcomposeAsyncImage(
+                model = product.imageUrl, contentDescription = product.name, contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxWidth().height(110.dp).clip(MaterialTheme.shapes.small),
+                loading = { ProductImagePlaceholder() }, error = { ProductImagePlaceholder() },
+            )
+            Text(product.name, style = MaterialTheme.typography.titleSmall, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(formatMoney(product.priceCents), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Text(menuAvailabilityLabel(availability, product.unitsInStock), style = MaterialTheme.typography.labelSmall,
+                color = if (additionalAvailable == 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (quantityInCart == 0) {
-                Button(
-                    onClick = onAdd,
-                    modifier = Modifier.semantics { contentDescription = "Add ${product.name}" },
-                    enabled = !busy && additionalAvailable > 0,
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                ) { Text("Add") }
+                Button(onClick = onAdd, modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Add ${product.name}" },
+                    enabled = !busy && additionalAvailable > 0) { Text("Add") }
             } else {
-                QuantityStepper(
-                    quantity = quantityInCart,
-                    onDecrease = onRemove,
-                    onIncrease = onAdd,
-                    canIncrease = !busy && additionalAvailable > 0,
-                    canDecrease = !busy,
-                )
+                QuantityStepper(quantityInCart, onRemove, onAdd, modifier = Modifier.align(Alignment.CenterHorizontally),
+                    canIncrease = !busy && additionalAvailable > 0, canDecrease = !busy)
             }
         }
     }
@@ -487,3 +479,12 @@ private fun sanitizeCashInput(value: String): String =
         val parts = filtered.split('.', limit = 2)
         if (parts.size == 2) "${parts[0]}.${parts[1].take(2)}" else parts[0]
     }
+
+@Composable
+private fun ProductImagePlaceholder() {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxSize()) {
+        Box(contentAlignment = Alignment.Center) {
+            Text("🍦", style = MaterialTheme.typography.headlineMedium)
+        }
+    }
+}

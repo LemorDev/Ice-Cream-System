@@ -25,6 +25,8 @@ import com.icecreampost.pos.ui.component.ServingFilter
 import com.icecreampost.pos.ui.component.menuServings
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import javax.crypto.Cipher
+import com.icecreampost.pos.security.FingerprintLoginStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -46,9 +48,17 @@ class PosViewModel @Inject constructor(
     private val syncStateDao: SyncStateDao,
     private val businessDayRepository: BusinessDayRepository,
     private val saleReversalRepository: SaleReversalRepository,
+    private val fingerprintLoginStore: FingerprintLoginStore,
 ) : ViewModel() {
-    val session: StateFlow<AppSessionEntity?> = sessionRepository.observeSession()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    private val unlockedSessionToken = MutableStateFlow<String?>(null)
+    private val _fingerprintEnabled = MutableStateFlow(fingerprintLoginStore.isEnabled)
+    private val _fingerprintUnlockRequired = MutableStateFlow(false)
+    private var appInForeground = true
+    val fingerprintEnabled = _fingerprintEnabled.asStateFlow()
+    val fingerprintUnlockRequired = _fingerprintUnlockRequired.asStateFlow()
+    val session: StateFlow<AppSessionEntity?> = combine(sessionRepository.observeSession(), unlockedSessionToken) { saved, token ->
+        saved?.takeIf { token != null && it.sessionToken == token }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val products: StateFlow<List<ProductEntity>> = productRepository.observeProducts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -122,12 +132,14 @@ class PosViewModel @Inject constructor(
         viewModelScope.launch {
             var restoredSession: AppSessionEntity? = null
             try {
-                restoredSession = sessionRepository.restoreStoredSession()
+                restoredSession = sessionRepository.restoreStoredSession(activateToken = !_fingerprintEnabled.value)
+                _fingerprintUnlockRequired.value = restoredSession != null && _fingerprintEnabled.value
+                unlockedSessionToken.value = restoredSession?.sessionToken?.takeUnless { _fingerprintUnlockRequired.value }
                 if (restoredSession != null) syncRepository.resetStatus()
             } finally {
                 _sessionReady.value = true
             }
-            if (restoredSession?.isActivated == true) syncToIms()
+            if (restoredSession?.isActivated == true && !_fingerprintUnlockRequired.value) syncToIms()
         }
     }
 
@@ -220,6 +232,12 @@ class PosViewModel @Inject constructor(
     fun signIn(stallCode: String, employeeId: String, password: String) {
         runAction {
             val signedIn = sessionRepository.signIn(stallCode, employeeId, password)
+            // Password sign-in starts a fresh enrollment, including when changing Cashiers.
+            fingerprintLoginStore.disable()
+            _fingerprintEnabled.value = false
+            _fingerprintUnlockRequired.value = false
+            unlockedSessionToken.value = signedIn.sessionToken
+            cart.value = emptyMap()
             syncRepository.resetStatus()
             if (signedIn.isActivated) {
                 syncRepository.sync()
@@ -256,6 +274,69 @@ class PosViewModel @Inject constructor(
             selectedServing.value = null
             dismissReceipt()
             dismissHistoricalReceipt()
+            fingerprintLoginStore.disable()
+            _fingerprintEnabled.value = false
+            _fingerprintUnlockRequired.value = false
+            unlockedSessionToken.value = null
+            cart.value = emptyMap()
+        }
+    }
+
+    fun prepareFingerprintEnrollment(): Cipher = fingerprintLoginStore.prepareEnableCipher()
+    fun prepareFingerprintUnlock(): Cipher = fingerprintLoginStore.prepareUnlockCipher()
+
+    fun enableFingerprintLogin(cipher: Cipher) {
+        runAction {
+            val userId = requireNotNull(session.value?.userId) { "Sign in before enabling fingerprint login." }
+            fingerprintLoginStore.enable(userId, cipher)
+            _fingerprintEnabled.value = true
+            if (!appInForeground) lockPos()
+        }
+    }
+
+    fun disableFingerprintLogin() {
+        runAction {
+            fingerprintLoginStore.disable()
+            _fingerprintEnabled.value = false
+        }
+    }
+
+    fun unlockWithFingerprint(cipher: Cipher) {
+        runAction {
+            val saved = sessionRepository.restoreStoredSession(activateToken = false)
+            if (saved == null) {
+                _fingerprintUnlockRequired.value = false
+                error("Your session has expired. Sign in with your password.")
+            }
+            fingerprintLoginStore.verifyAccount(saved.userId, cipher)
+            if (appInForeground) {
+                val restored = sessionRepository.restoreStoredSession()
+                if (restored == null) {
+                    _fingerprintUnlockRequired.value = false
+                    error("Your session has expired. Sign in with your password.")
+                }
+                if (!appInForeground) {
+                    sessionRepository.restoreStoredSession(activateToken = false)
+                    return@runAction
+                }
+                unlockedSessionToken.value = restored.sessionToken
+                _fingerprintUnlockRequired.value = false
+                if (restored.isActivated) syncRepository.sync()
+            }
+        }
+    }
+
+    fun onAppForegrounded() { appInForeground = true }
+    fun onAppBackgrounded() {
+        appInForeground = false
+        lockPos()
+    }
+
+    fun lockPos() {
+        if (_fingerprintEnabled.value && unlockedSessionToken.value != null) {
+            unlockedSessionToken.value = null
+            _fingerprintUnlockRequired.value = true
+            _error.value = null
         }
     }
 
@@ -271,8 +352,6 @@ class PosViewModel @Inject constructor(
     }
 
     fun receiveStock(productId: String, quantity: Double, notes: String, onSuccess: () -> Unit) {
-        if (_busy.value) return
-        _busy.value = true
         runAction(onSuccess) { stockReceivingRepository.receive(productId, quantity, notes) }
     }
 
@@ -326,8 +405,9 @@ class PosViewModel @Inject constructor(
     }
 
     private fun runAction(onSuccess: () -> Unit = {}, action: suspend () -> Unit) {
+        if (_busy.value) return
+        _busy.value = true
         viewModelScope.launch {
-            _busy.value = true
             _error.value = null
             try {
                 action()

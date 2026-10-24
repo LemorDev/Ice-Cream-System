@@ -22,6 +22,7 @@ data class ProductDto(
     @SerialName("product_type") val productType: String = if (isSellable) "sellable" else "raw",
     @SerialName("base_unit") val baseUnit: String = "piece",
     @SerialName("updated_at") val updatedAt: String = "",
+    @SerialName("image_url") val imageUrl: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 )
 

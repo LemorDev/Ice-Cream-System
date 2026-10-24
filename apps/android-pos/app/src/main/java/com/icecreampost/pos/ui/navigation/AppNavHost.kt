@@ -11,6 +11,13 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.*
 import com.icecreampost.pos.ui.PosViewModel
@@ -30,6 +37,19 @@ import com.icecreampost.pos.ui.screen.settings.*
 
 @Composable
 fun AppNavHost(viewModel: PosViewModel) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val activity = LocalContext.current.findActivity()
+    DisposableEffect(lifecycleOwner, viewModel, activity) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.onAppForegrounded()
+                Lifecycle.Event.ON_STOP -> if (activity?.isChangingConfigurations != true) viewModel.onAppBackgrounded()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val session by viewModel.session.collectAsStateWithLifecycle()
     val sessionReady by viewModel.sessionReady.collectAsStateWithLifecycle()
     if (!sessionReady) { LoadingScreen(); return }
@@ -128,7 +148,7 @@ fun AppNavHost(viewModel: PosViewModel) {
     }
 }
 
-private fun Context.findActivity(): Activity? = when (this) {
+private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
     else -> null

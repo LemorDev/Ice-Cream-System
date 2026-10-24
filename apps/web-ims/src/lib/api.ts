@@ -330,3 +330,23 @@ export async function resetTransactionsAndRevenue(client: DbClient, stallId: str
 export async function resetStockLevels(client: DbClient, stallId: string) {
   return throwIfError(await client.rpc('reset_stall_stock', { p_stall_id: stallId })) as DataResetResult
 }
+
+const PRODUCT_IMAGE_BUCKET = 'product-images'
+const PRODUCT_IMAGE_TYPES: Record<string, string> = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
+}
+
+export function validateProductImage(file: Pick<File, 'type' | 'size'>) {
+  if (!PRODUCT_IMAGE_TYPES[file.type]) throw new Error('Choose a JPG, PNG or WebP picture.')
+  if (file.size === 0 || file.size > 5 * 1024 * 1024) throw new Error('Product pictures must be between 1 byte and 5 MB.')
+}
+
+export async function uploadProductImage(client: DbClient, stallId: string, file: File): Promise<string> {
+  validateProductImage(file)
+  const path = `${stallId}/${crypto.randomUUID()}.${PRODUCT_IMAGE_TYPES[file.type]}`
+  const { error } = await client.storage.from(PRODUCT_IMAGE_BUCKET).upload(path, file, {
+    contentType: file.type, cacheControl: '31536000', upsert: false,
+  })
+  if (error) throw new Error(`Product picture upload failed: ${error.message}`)
+  return client.storage.from(PRODUCT_IMAGE_BUCKET).getPublicUrl(path).data.publicUrl
+}

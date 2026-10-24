@@ -11,6 +11,10 @@ const { PGlite } = requireRuntime('@electric-sql/pglite');
 const db = new PGlite();
 try {
   await db.exec(`create role anon; create role authenticated; create schema extensions;
+    create schema storage;
+    create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
+    create table storage.objects(id uuid default gen_random_uuid(),bucket_id text,name text);
+    create function storage.foldername(name text) returns text[] language sql as $$ select string_to_array(name,'/') $$;
     create function public.digest(value text, algorithm text) returns bytea language sql as
     $$ select sha256(convert_to(value, 'UTF8')) $$;
     create function public.digest(value bytea, algorithm text) returns bytea language sql as
@@ -45,7 +49,7 @@ try {
   await db.exec(await readFile('supabase/migrations/202609300002_fix_pos_inventory_movement_enum.sql','utf8'));
   await db.exec(fixture);
   console.log('PASS: corrected receipt integration fixture (stock totals, repeat deliveries, retry idempotency, input validation, permissions)');
-  const regressionFiles = ['stockable_product_classification.sql', 'set_stock_on_hand.sql', 'password_login_limits.sql', 'r06_replay_and_reset.sql', 'r06_catalog_pages.sql', 'r06_sale_snapshots.sql', 'r08_development_contract.sql', 'powder_pack_inventory.sql'];
+  const regressionFiles = ['stockable_product_classification.sql', 'set_stock_on_hand.sql', 'password_login_limits.sql', 'r06_replay_and_reset.sql', 'r06_catalog_pages.sql', 'r06_sale_snapshots.sql', 'r08_development_contract.sql', 'powder_pack_inventory.sql', 'product_images.sql'];
   if (process.argv.includes('--extended')) regressionFiles.push('recipes_and_closings.sql');
   if (process.argv.includes('--activation')) regressionFiles.push('activation_alignment.sql', 'separate_revenue_deductions.sql', 'system_admin_data_reset.sql', 'admin_close_open_business_day.sql');
   for (const file of regressionFiles) {

@@ -63,6 +63,7 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
     val deductionTotal = dayDeductions.sumOf { it.amountCents } + (visibleDay?.recoveryKnownDeductionsCents ?: 0)
     val expectedCash = cashSales - deductionTotal - refundPayout
     var showCloseDialog by rememberSaveable { mutableStateOf(false) }
+    var showOpenDialog by rememberSaveable { mutableStateOf(false) }
     var showFinalCloseConfirmation by rememberSaveable { mutableStateOf(false) }
     var showDeductionDialog by rememberSaveable { mutableStateOf(false) }
     var closingNotes by rememberSaveable { mutableStateOf("") }
@@ -73,6 +74,15 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
     val deductionError = validateRevenueDeduction(revenueDeduction, deductionReason, cashSales - deductionTotal)
     val cashError = collectedCash.isNotBlank() && collectedCash.toCentsOrNull() == null
 
+    if (showOpenDialog && !isOpen && !alreadyOperatedToday) {
+        AlertDialog(
+            onDismissRequest = { showOpenDialog = false },
+            title = { Text("Open today's stall?") },
+            text = { Text("Start the operating day and allow sales on this POS?") },
+            confirmButton = { Button(onClick = { viewModel.openDay(); showOpenDialog = false }, enabled = !busy) { Text("Open stall") } },
+            dismissButton = { OutlinedButton(onClick = { showOpenDialog = false }) { Text("Cancel") } },
+        )
+    }
     if (showDeductionDialog) {
         AlertDialog(
             onDismissRequest = { showDeductionDialog = false },
@@ -209,7 +219,7 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
         } else if (alreadyOperatedToday) {
             item { Text("Today's operating day is closed. The next day can be opened after midnight.") }
         } else {
-            item { Button(onClick = { viewModel.openDay() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Open today's stall") } }
+            item { Button(onClick = { showOpenDialog = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Open today's stall") } }
         }
     }
 }

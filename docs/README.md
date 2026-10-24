@@ -131,6 +131,26 @@ supabase/migrations/202608140001_android_sync_contract.sql
 
 It creates the idempotent `push_pos_transaction(jsonb)` RPC used by Android; later migrations include necessary corrections. The endpoint, payload, header, cursor, retry, and recovery rules are documented in [ANDROID_SYNC_CONTRACT.md](ANDROID_SYNC_CONTRACT.md). See [PROJECT_REVIEW.md](PROJECT_REVIEW.md) for remaining gaps between the intended contract and current behavior.
 
-When that migration is ready, open a terminal in the project folder and run this one command:
-pnpm exec supabase db push --skip-vault
-It will apply the pending migration to the linked development project and record it in Supabase’s history.
+## Fingerprint login in the POS
+
+1. Add a fingerprint in the phone's Android Settings, then sign in to the POS with
+   the cashier's stall code, employee ID and password.
+2. Open **Settings → Enable fingerprint login** and authenticate with Android's
+   biometric prompt. The setting applies to the current cashier on this phone.
+3. Leaving the app or pressing **Lock POS** locks the retained session. Use
+   **Sign in with fingerprint** when returning. A valid retained session can be
+   unlocked offline; an expired session requires online password sign-in.
+4. Use **Turn off fingerprint login** to disable locking, or **Sign out** to clear
+   the session and enrollment. Password sign-in resets enrollment, including when
+   switching cashiers; enable fingerprint login again afterward if desired.
+
+Android verifies a Class 3 biometric (fingerprint, or another supported strong
+biometric). The app stores no fingerprint data or saved password. An account marker
+is encrypted with an authentication-required Android Keystore key and excluded
+from backups. Changing enrolled biometrics invalidates that key; password sign-in
+and re-enabling fingerprint login restores access. Background sale synchronization
+continues independently of the screen lock.
+
+To verify on a device, check successful unlock, cancellation, unrecognized fingers,
+sensor lockout/unavailability, no enrolled fingerprint, app restart/backgrounding,
+expired sessions, changed biometric enrollment, switching cashiers, and sign-out.

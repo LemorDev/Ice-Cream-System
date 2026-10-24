@@ -48,7 +48,7 @@ class PosViewModelPresentationTest {
         every { reversals.observeAll() } returns flowOf(emptyList())
         every { ledger.observeActive() } returns flowOf(emptyList())
         model = PosViewModel(mockk(relaxed = true), mockk<PowderPackRepository>(relaxed = true), ledger,
-            products, checkout, sessions, sync, state, days, reversals)
+            products, checkout, sessions, sync, state, days, reversals, mockk(relaxed = true))
         store.put("pos", model)
     }
 

@@ -75,6 +75,7 @@ class ProductRepository @Inject constructor(
                     categoryId = dto.categoryId,
                     sku = dto.sku,
                     name = dto.name,
+                    imageUrl = dto.imageUrl,
                     category = dto.categoryName,
                     unit = dto.unit,
                     priceCents = (dto.salePrice * 100).toLong(),

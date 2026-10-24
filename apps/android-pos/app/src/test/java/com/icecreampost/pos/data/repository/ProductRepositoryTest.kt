@@ -112,6 +112,25 @@ class ProductRepositoryTest {
     }
 
     @Test
+    fun `catalog sync saves replaces and removes product pictures`() = runTest {
+        val firstUrl = "https://example.com/product-images/vanilla.jpg"
+        val secondUrl = "https://example.com/product-images/vanilla-new.jpg"
+        stubProducts(listOf(remoteProduct.copy(imageUrl = firstUrl)))
+        repository.refreshFromCloud()
+        assertEquals(firstUrl, products.getValue("product-1").imageUrl)
+
+        stubProducts(listOf(remoteProduct.copy(imageUrl = secondUrl, updatedAt = secondTime)))
+        repository.refreshFromCloud()
+        assertEquals(secondUrl, products.getValue("product-1").imageUrl)
+        assertEquals(10.0, products.getValue("product-1").unitsInStock, 0.001)
+
+        stubProducts(listOf(remoteProduct.copy(imageUrl = null, updatedAt = thirdTime)))
+        repository.refreshFromCloud()
+        assertEquals(null, products.getValue("product-1").imageUrl)
+        assertEquals(10.0, products.getValue("product-1").unitsInStock, 0.001)
+    }
+
+    @Test
     fun `first pull counts opening inventory once`() = runTest {
         repository.refreshFromCloud()
         assertEquals(10.0, products.getValue("product-1").unitsInStock, 0.001)

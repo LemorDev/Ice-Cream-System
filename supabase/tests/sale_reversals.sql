@@ -31,14 +31,13 @@ begin
   insert into public.app_users (id, stall_id, email, display_name, role, password_hash) values
     (own_user, own_stall, own_user::text || '@example.invalid', 'Owner fixture', 'owner', 'unused'),
     (own_cashier, own_stall, own_cashier::text || '@example.invalid', 'Cashier fixture', 'cashier', 'unused'),
-    (other_user, other_stall, other_user::text || '@example.invalid', 'Other fixture', 'owner', 'unused');
+    (other_user, other_stall, other_user::text || '@example.invalid', 'Other cashier fixture', 'cashier', 'unused');
   insert into public.app_sessions (user_id, token_hash, expires_at) values
     (own_user, encode(digest(owner_token, 'sha256'), 'hex'), now() + interval '1 hour'),
     (own_cashier, encode(digest(cashier_token, 'sha256'), 'hex'), now() + interval '1 hour'),
     (other_user, encode(digest(other_token, 'sha256'), 'hex'), now() + interval '1 hour');
   insert into public.owner_stall_access (user_id, stall_id) values
-    (own_user, own_stall),
-    (other_user, other_stall);
+    (own_user, own_stall);
   insert into public.devices (id, stall_id, device_name, activation_code_hash, hardware_id)
   values (device_id, own_stall, 'Regression POS', encode(digest(gen_random_bytes(32), 'sha256'), 'hex'), hardware_id);
   insert into public.products (id, stall_id, sku, name, unit) values
@@ -50,7 +49,7 @@ begin
   insert into public.transactions (id, stall_id, cashier_id, receipt_number, subtotal, total_amount) values
     (waste_tx, own_stall, own_cashier, waste_tx::text, 150, 150),
     (restock_tx, own_stall, own_cashier, restock_tx::text, 100, 100),
-    (other_tx, other_stall, null, other_tx::text, 50, 50);
+    (other_tx, other_stall, other_user, other_tx::text, 50, 50);
   insert into public.transaction_items (transaction_id, product_id, product_name, quantity, unit_price, line_total) values
     (waste_tx, own_product, 'Product fixture', 3, 50, 150),
     (restock_tx, own_product, 'Product fixture', 2, 50, 100),
@@ -91,6 +90,32 @@ begin
   begin
     perform public.reverse_sale_inventory_ledger(other_tx, 'Incorrect order', true);
     raise exception 'Cross-stall reversal was accepted';
+  exception when no_data_found then null;
+  end;
+
+  -- Owners monitor their own stall but cannot mutate its sale records.
+  begin
+    perform public.post_sale_inventory_ledger(waste_tx);
+    raise exception 'Read-only Owner was allowed to post a sale';
+  exception when no_data_found then null;
+  end;
+  begin
+    perform public.reverse_sale_inventory_ledger(restock_tx, 'Incorrect order', true);
+    raise exception 'Read-only Owner was allowed to reverse a sale';
+  exception when no_data_found then null;
+  end;
+
+  -- Exercise mutations as the Cashier who owns these transactions.
+  perform set_config('request.headers', jsonb_build_object('x-session-token', cashier_token)::text, true);
+
+  begin
+    perform public.post_sale_inventory_ledger(other_tx);
+    raise exception 'Cashier posted another stall sale';
+  exception when no_data_found then null;
+  end;
+  begin
+    perform public.reverse_sale_inventory_ledger(other_tx, 'Incorrect order', true);
+    raise exception 'Cashier reversed another stall sale';
   exception when no_data_found then null;
   end;
 

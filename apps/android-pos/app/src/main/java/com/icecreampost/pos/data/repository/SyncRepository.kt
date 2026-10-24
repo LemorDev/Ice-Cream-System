@@ -20,8 +20,12 @@ import com.icecreampost.pos.data.remote.dto.PushBusinessDayPayload
 import com.icecreampost.pos.data.remote.dto.PushBusinessDayRequest
 import com.icecreampost.pos.data.remote.dto.PushInventoryEntryPayload
 import com.icecreampost.pos.data.remote.dto.PushInventoryEntryRequest
+import com.icecreampost.pos.data.remote.dto.PushPackUnsealPayload
+import com.icecreampost.pos.data.remote.dto.PushPackUnsealRequest
 import com.icecreampost.pos.data.remote.dto.PushDailyClosingPayload
 import com.icecreampost.pos.data.remote.dto.PushDailyClosingRequest
+import com.icecreampost.pos.data.remote.dto.ClosingCountsRequest
+import com.icecreampost.pos.data.remote.dto.ClosingCountsResponse
 import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionPayload
 import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionRequest
 import com.icecreampost.pos.data.remote.dto.PushSaleReversalPayload
@@ -127,10 +131,17 @@ class SyncRepository @Inject constructor(
 
         for (entry in inventoryLedgerDao.getUnsynced()) {
             try {
-                val response = api.pushInventoryEntry(PushInventoryEntryRequest(PushInventoryEntryPayload(
+                val response = if (entry.movementType == "pack_unsealed") {
+                    api.pushPackUnseal(PushPackUnsealRequest(PushPackUnsealPayload(
+                        id = entry.id, stallId = entry.stallId, businessDayId = requireNotNull(entry.businessDayId),
+                        productId = entry.productId, packsOpened = -entry.sealedPacksDelta,
+                        occurredAt = entry.occurredAt,
+                    )))
+                } else api.pushInventoryEntry(PushInventoryEntryRequest(PushInventoryEntryPayload(
                     id = entry.id, stallId = entry.stallId, businessDayId = entry.businessDayId,
-                    productId = entry.productId, quantityDelta = entry.quantityDelta, movementType = entry.movementType,
-                    reason = entry.reason, referenceId = entry.referenceId, occurredAt = entry.occurredAt,
+                    productId = entry.productId, quantityDelta = entry.quantityDelta, sealedPacksDelta = entry.sealedPacksDelta,
+                    movementType = entry.movementType, reason = entry.reason,
+                    referenceId = entry.referenceId, occurredAt = entry.occurredAt,
                 )))
                 check(response.status == "accepted" || response.status == "duplicate") { "IMS rejected an inventory movement." }
                 check(response.ledgerId == entry.id) { "IMS acknowledged a different stock movement." }
@@ -243,6 +254,24 @@ class SyncRepository @Inject constructor(
                     deductionReason = if (cashDeductions > 0) "See recorded deductions" else null,
                 )
                 if (currentClosing != closing) dailyStoreClosingDao.upsert(currentClosing)
+                val localCounts = ClosingCountsResponse(
+                    saleCount = transactionDao.countForDay(closing.stallId, closing.businessDayId),
+                    movementCount = inventoryLedgerDao.countForDay(closing.stallId, closing.businessDayId, day.openedAt, closing.closedAt),
+                    deductionCount = revenueDeductionDao.countForDay(closing.businessDayId),
+                    reversalCount = reversalDao.countForPayoutDay(closing.businessDayId),
+                )
+                val closingCounts = if (day.isRecoveryDay) {
+                    // The recovered opening snapshot includes server-only rows that
+                    // are deliberately absent from this phone's local database.
+                    api.getDayClosingCounts(ClosingCountsRequest(day.id, day.deviceId)).also { serverCounts ->
+                        check(serverCounts.saleCount == localCounts.saleCount + day.recoveryKnownOrders &&
+                            serverCounts.movementCount >= localCounts.movementCount &&
+                            serverCounts.deductionCount >= localCounts.deductionCount &&
+                            serverCounts.reversalCount >= localCounts.reversalCount) {
+                            "The recovered operating day's server counts do not match this POS."
+                        }
+                    }
+                } else localCounts
                 val response = api.pushDailyClosing(PushDailyClosingRequest(PushDailyClosingPayload(
                     id = closing.id,
                     stallId = closing.stallId,
@@ -259,10 +288,10 @@ class SyncRepository @Inject constructor(
                     closedAt = closing.closedAt,
                     revenueDeduction = currentClosing.revenueDeductionCents / 100.0,
                     deductionReason = currentClosing.deductionReason,
-                    saleCount = transactionDao.countForDay(closing.stallId, closing.businessDayId),
-                    movementCount = inventoryLedgerDao.countForDay(closing.stallId, closing.businessDayId, day.openedAt, closing.closedAt),
-                    deductionCount = revenueDeductionDao.countForDay(closing.businessDayId),
-                    reversalCount = reversalDao.countForPayoutDay(closing.businessDayId),
+                    saleCount = closingCounts.saleCount,
+                    movementCount = closingCounts.movementCount,
+                    deductionCount = closingCounts.deductionCount,
+                    reversalCount = closingCounts.reversalCount,
                 )))
                 check(response.status == "accepted" || response.status == "duplicate") { "IMS rejected the daily closing." }
                 check(response.closingId == closing.id) { "IMS acknowledged a different closing." }

@@ -1,6 +1,6 @@
 // Read-only PostgREST smoke test. It sends anonymous requests only, so every
 // protected RPC must exist but deny access. Positive role behavior is covered
-// by r08_development_contract.sql on the verified development project.
+// by r08_development_contract.sql in the disposable local database suite.
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 
@@ -20,8 +20,10 @@ const calls = [
   ['get_pos_products_page', {}],
   ['get_pos_recipes_page', {}],
   ['get_pos_inventory_ledger_page_v2', {}],
+  ['get_recovered_pos_day', { p_device_id: randomUUID() }],
   ['push_pos_transaction_v2', { p_transaction: {} }],
   ['push_pos_inventory_entry_v2', { p_entry: {} }],
+  ['push_pos_pack_unseal', { p_entry: {} }],
   ['push_revenue_deduction_v2', { p_deduction: {} }],
   ['push_pos_sale_reversal', { p_reversal: {} }],
   ['push_daily_store_closing_v2', { p_closing: {} }],
@@ -43,4 +45,23 @@ for (const [name, body] of calls) {
     throw new Error(`${name}: expected protected RPC denial, got HTTP ${response.status} / ${result.code ?? 'no code'}`);
   }
   console.log(`PASS: ${name} exists and denies anonymous access`);
+}
+
+// Random nonexistent identifiers cannot match an account or mutate its lockout
+// state. These calls verify parameter names and the empty-array login contract.
+for (const [name, body] of [
+  ['login_pos_with_password', { p_stall_code: `MISSING-${randomUUID()}`, p_employee_id: 'MISSING', p_password: 'no-account' }],
+  ['login_with_password', { p_identifier: `missing-${randomUUID()}@example.invalid`, p_password: 'no-account' }],
+]) {
+  const response = await fetch(new URL(`/rest/v1/rpc/${name}`, url), {
+    method: 'POST', signal: AbortSignal.timeout(15000),
+    headers: { apikey: env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${env.VITE_SUPABASE_ANON_KEY}`,
+      'X-Device-Id': 'read-only-contract-check', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const result = await response.json();
+  if (response.status !== 200 || !Array.isArray(result) || result.length !== 0) {
+    throw new Error(`${name}: expected empty-array denial for a nonexistent identifier, got HTTP ${response.status}`);
+  }
+  console.log(`PASS: ${name} accepts current identifier parameters and returns no session for a nonexistent account`);
 }

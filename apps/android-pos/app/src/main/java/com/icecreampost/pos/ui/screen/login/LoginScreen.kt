@@ -31,7 +31,7 @@ import com.icecreampost.pos.ui.component.CoolerzLogo
 @Composable
 fun LoginScreen(viewModel: PosViewModel) {
     var stallCode by rememberSaveable { mutableStateOf("") }
-    var email by rememberSaveable { mutableStateOf("") }
+    var employeeId by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
@@ -60,7 +60,7 @@ fun LoginScreen(viewModel: PosViewModel) {
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(employeeId, { employeeId = it.uppercase() }, label = { Text("Employee ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(
             password,
             { password = it },
@@ -71,7 +71,7 @@ fun LoginScreen(viewModel: PosViewModel) {
         )
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(
-            onClick = { viewModel.signIn(stallCode, email, password) },
+            onClick = { viewModel.signIn(stallCode, employeeId, password) },
             enabled = !busy,
             modifier = Modifier.fillMaxWidth(),
         ) {

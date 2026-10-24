@@ -10,6 +10,7 @@ data class InventoryLedgerEntity(
     val businessDayId: String? = null,
     val productId: String,
     val quantityDelta: Double,
+    val sealedPacksDelta: Int = 0,
     val costTotalCents: Long? = null,
     val movementType: String,
     val reason: String? = null,

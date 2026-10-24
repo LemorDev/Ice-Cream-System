@@ -30,6 +30,17 @@ android {
         jvmTarget = "17"
     }
 
+    signingConfigs {
+        getByName("debug") {
+            localProperties.getProperty("debug.keystore.path")?.takeIf { it.isNotBlank() }?.let {
+                storeFile = rootProject.file(it)
+                storePassword = "android"
+                keyAlias = "AndroidDebugKey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "com.icecreampost.pos"
         minSdk = 26

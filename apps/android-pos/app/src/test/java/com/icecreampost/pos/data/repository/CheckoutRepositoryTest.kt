@@ -136,6 +136,23 @@ class CheckoutRepositoryTest {
     }
 
     @Test
+    fun `checkout preserves stock and queue when the operating day has a sync error`() {
+        coEvery { businessDayDao.findOpen("stall-1") } returns BusinessDayEntity(
+            id = "day-1", stallId = "stall-1", deviceId = "device-1", cashierId = "cashier-1",
+            businessDate = "2026-09-08", openedAt = "2026-09-08T00:00:00Z",
+            updatedAt = "2026-09-08T00:00:00Z", syncError = "OPERATING_DAY_TRANSFER_REQUIRED",
+        )
+
+        assertThrows(IllegalStateException::class.java) {
+            runTest { repository.checkout(listOf(CartLine(cartProduct, 1)), 2_000) }
+        }
+
+        coVerify(exactly = 0) { transactionDao.upsert(any()) }
+        coVerify(exactly = 0) { productDao.updateStock(any(), any(), any()) }
+        verify(exactly = 0) { syncTrigger.triggerNow() }
+    }
+
+    @Test
     fun `recipe checkout atomically backflushes ingredients instead of the menu item`() = runTest {
         val powder = cartProduct.copy(id = "powder", name = "Vanilla powder", isSellable = false, productType = "raw", baseUnit = "g", unitsInStock = 1_000.0, costPriceCents = 50_000, packSize = 1_000.0)
         val cone = cartProduct.copy(id = "cone", name = "Cone", isSellable = false, productType = "packaging", unitsInStock = 30.0, costPriceCents = 10_000, packSize = 50.0)

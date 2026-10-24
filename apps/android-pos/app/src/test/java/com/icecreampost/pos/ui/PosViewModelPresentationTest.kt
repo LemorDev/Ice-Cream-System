@@ -2,6 +2,7 @@ package com.icecreampost.pos.ui
 
 import androidx.lifecycle.ViewModelStore
 import com.icecreampost.pos.data.local.dao.SyncStateDao
+import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
 import com.icecreampost.pos.data.repository.*
 import io.mockk.*
 import kotlinx.coroutines.CompletableDeferred
@@ -28,6 +29,7 @@ class PosViewModelPresentationTest {
     private val state = mockk<SyncStateDao>()
     private val days = mockk<BusinessDayRepository>()
     private val reversals = mockk<SaleReversalRepository>()
+    private val ledger = mockk<InventoryLedgerDao>()
     private val store = ViewModelStore()
     private lateinit var model: PosViewModel
     private val catalog = MutableStateFlow<List<ProductEntity>>(emptyList())
@@ -44,7 +46,9 @@ class PosViewModelPresentationTest {
         every { days.observeLatest() } returns flowOf(null)
         every { days.observeDeductions() } returns flowOf(emptyList())
         every { reversals.observeAll() } returns flowOf(emptyList())
-        model = PosViewModel(mockk(relaxed = true), products, checkout, sessions, sync, state, days, reversals)
+        every { ledger.observeActive() } returns flowOf(emptyList())
+        model = PosViewModel(mockk(relaxed = true), mockk<PowderPackRepository>(relaxed = true), ledger,
+            products, checkout, sessions, sync, state, days, reversals)
         store.put("pos", model)
     }
 

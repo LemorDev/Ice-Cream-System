@@ -17,6 +17,7 @@ data class ProductEntity(
     val lowStockThreshold: Double = 0.0,
     val packSize: Double = 1.0,
     val conversionRate: Double = 1.0,
+    val tracksPowderPacks: Boolean = false,
     val isSellable: Boolean = true,
     val productType: String = if (isSellable) "sellable" else "raw",
     val baseUnit: String = "piece",

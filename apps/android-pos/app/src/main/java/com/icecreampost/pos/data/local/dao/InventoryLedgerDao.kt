@@ -4,9 +4,15 @@ import androidx.room.Dao
 import androidx.room.Query
 import androidx.room.Upsert
 import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface InventoryLedgerDao {
+    @Query("SELECT * FROM inventory_ledger WHERE deletedAt IS NULL")
+    fun observeActive(): Flow<List<InventoryLedgerEntity>>
+
+    @Query("SELECT COALESCE(SUM(sealedPacksDelta), 0) FROM inventory_ledger WHERE productId = :productId AND deletedAt IS NULL")
+    suspend fun getSealedPacks(productId: String): Int
     @Query("SELECT * FROM inventory_ledger WHERE referenceId = :transactionId AND movementType = 'sale' AND deletedAt IS NULL ORDER BY productId")
     suspend fun getSaleComponents(transactionId: String): List<InventoryLedgerEntity>
     @Query("SELECT * FROM inventory_ledger WHERE referenceId = :transactionId AND movementType IN ('void_restock','void_waste') AND deletedAt IS NULL ORDER BY productId")

@@ -83,6 +83,9 @@ class CheckoutRepository @Inject constructor(
             val openDay = requireNotNull(businessDayDao.findOpen(resolvedStallId)) {
                 "Open the operating day before starting a sale."
             }
+            check(openDay.syncError == null) {
+                "The operating day needs sync attention before another sale. Resolve its sync error first."
+            }
             lines.forEach { line ->
                 val current = productDao.findById(line.product.id)
                     ?: error("${line.product.name} is no longer available locally.")

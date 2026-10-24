@@ -33,6 +33,20 @@ test('dashboard stock sums ledger movements and flags threshold breaches', () =>
   assert.equal(result.activeProducts, 1)
 })
 
+test('opening a powder pack leaves the purchasing threshold based on total grams', () => {
+  const powder = [{ id: 'powder', is_sellable: false, low_stock_threshold: 2000, tracks_powder_packs: true }] as Product[]
+  const movements = [
+    { product_id: 'powder', quantity_delta: 3000, sealed_packs_delta: 3, movement_type: 'receive' },
+    { product_id: 'powder', quantity_delta: 0, sealed_packs_delta: -1, movement_type: 'pack_unsealed' },
+    { product_id: 'powder', quantity_delta: -45, sealed_packs_delta: 0, movement_type: 'sale' },
+  ] as InventoryEntry[]
+  const before = getDashboardMetrics(powder, movements, [], '2026-08-04')
+  assert.equal(before.stock.powder, 2955)
+  assert.deepEqual(before.lowStock, [])
+  const after = getDashboardMetrics(powder, [...movements, { product_id: 'powder', quantity_delta: -1000 } as InventoryEntry], [], '2026-08-04')
+  assert.deepEqual(after.lowStock, ['powder'])
+})
+
 test('business reporting uses the Manila calendar date', () => {
   assert.equal(getBusinessDateKey('2026-08-04T23:30:00Z'), '2026-08-05')
 })

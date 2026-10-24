@@ -51,6 +51,7 @@ class ProductRepository @Inject constructor(
                 businessDayId = entry.businessDayId,
                 productId = entry.productId,
                 quantityDelta = entry.quantityDelta,
+                sealedPacksDelta = entry.sealedPacksDelta,
                 costTotalCents = entry.unitCost?.let { cost ->
                     kotlin.math.round(kotlin.math.abs(entry.quantityDelta) * cost * 100).toLong()
                 },
@@ -81,6 +82,7 @@ class ProductRepository @Inject constructor(
                     lowStockThreshold = dto.lowStockThreshold,
                     packSize = dto.packSize,
                     conversionRate = dto.conversionRate,
+                    tracksPowderPacks = dto.tracksPowderPacks,
                     isSellable = dto.isSellable,
                     productType = dto.productType,
                     baseUnit = dto.baseUnit,

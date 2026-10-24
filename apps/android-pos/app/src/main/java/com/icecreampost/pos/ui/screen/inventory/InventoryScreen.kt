@@ -24,6 +24,7 @@ fun InventoryScreen(viewModel: PosViewModel) {
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val lowStock by viewModel.lowStockProducts.collectAsStateWithLifecycle()
+    val sealedPacks by viewModel.sealedPacks.collectAsStateWithLifecycle()
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var search by rememberSaveable { mutableStateOf("") }
     var quantity by rememberSaveable { mutableStateOf("") }
@@ -31,10 +32,39 @@ fun InventoryScreen(viewModel: PosViewModel) {
     var success by rememberSaveable { mutableStateOf<String?>(null) }
     var showReceiptConfirmation by rememberSaveable { mutableStateOf(false) }
     var selectingToReceive by rememberSaveable { mutableStateOf(false) }
+    var openProductId by rememberSaveable { mutableStateOf<String?>(null) }
+    var packsToOpen by rememberSaveable { mutableStateOf("1") }
     val stockItems = products.filter { it.stallId == session?.stallId && it.deletedAt == null && it.productType in listOf("raw", "packaging") }
     val selected = stockItems.firstOrNull { it.id == selectedId }
+    val openProduct = stockItems.firstOrNull { it.id == openProductId && it.tracksPowderPacks }
+    if (openProduct != null) {
+        val available = sealedPacks[openProduct.id] ?: 0
+        val parsed = packsToOpen.toIntOrNull()?.takeIf { it in 1..available }
+        AlertDialog(
+            onDismissRequest = { if (!busy) openProductId = null },
+            title = { Text("Open Powder Pack") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("${openProduct.name}: $available sealed packs available.")
+                    OutlinedTextField(packsToOpen, { packsToOpen = it }, label = { Text("Packs to open") },
+                        singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        isError = packsToOpen.isNotBlank() && parsed == null,
+                        supportingText = { Text("Each pack adds 1,000g to the hopper without changing total stock.") })
+                    parsed?.let { Text("Hopper after opening: ${formatStock(openProduct.unitsInStock - available * 1000.0 + it * 1000.0, "g")}") }
+                    error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            },
+            confirmButton = { Button(enabled = !busy && parsed != null, onClick = {
+                viewModel.openPowderPacks(openProduct.id, parsed!!) {
+                    success = "Opened $parsed pack(s) of ${openProduct.name}. Saved on this device."
+                    openProductId = null
+                }
+            }) { Text(if (busy) "Saving…" else "Open packs") } },
+            dismissButton = { OutlinedButton(enabled = !busy, onClick = { openProductId = null }) { Text("Cancel") } },
+        )
+    }
     if (selected != null && showReceiptConfirmation) {
-        val parsed = receivedQuantityOrNull(quantity)
+        val parsed = if (selected.tracksPowderPacks) receivedQuantityOrNull(quantity)?.takeIf { it % 1.0 == 0.0 }?.times(1000.0) else receivedQuantityOrNull(quantity)
         AlertDialog(
             onDismissRequest = { if (!busy) showReceiptConfirmation = false },
             title = { Text("Confirm stock receipt") },
@@ -64,18 +94,18 @@ fun InventoryScreen(viewModel: PosViewModel) {
             },
         )
     } else if (selected != null) {
-        val parsed = receivedQuantityOrNull(quantity)
+        val parsed = if (selected.tracksPowderPacks) receivedQuantityOrNull(quantity)?.takeIf { it % 1.0 == 0.0 }?.times(1000.0) else receivedQuantityOrNull(quantity)
         AlertDialog(
             onDismissRequest = { if (!busy) selectedId = null },
             title = { Text("Receive ${selected.name}") },
             text = {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Current stock: ${formatStock(selected.unitsInStock, selected.baseUnit)}")
-                    Text("Enter the quantity in ${displayUnit(selected.baseUnit)}, not packs.")
-                    OutlinedTextField(quantity, { quantity = it }, label = { Text("Quantity (${displayUnit(selected.baseUnit)})") },
+                    Text(if (selected.tracksPowderPacks) "Enter whole sealed packs. Each pack contains 1,000g." else "Enter the quantity in ${displayUnit(selected.baseUnit)}, not packs.")
+                    OutlinedTextField(quantity, { quantity = it }, label = { Text(if (selected.tracksPowderPacks) "Sealed packs" else "Quantity (${displayUnit(selected.baseUnit)})") },
                         enabled = !busy, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         isError = quantity.isNotBlank() && parsed == null,
-                        supportingText = { Text("Greater than zero; up to 3 decimal places.") })
+                        supportingText = { Text(if (selected.tracksPowderPacks) "Whole packs greater than zero." else "Greater than zero; up to 3 decimal places.") })
                     OutlinedTextField(notes, { notes = it.take(500) }, enabled = !busy, label = { Text("Delivery reference / notes (optional)") })
                     parsed?.let { Text("Stock after receiving: ${formatStock(selected.unitsInStock + it, selected.baseUnit)}") }
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -109,6 +139,7 @@ fun InventoryScreen(viewModel: PosViewModel) {
         val visible = stockItems.filter { it.name.contains(search.trim(), true) || it.sku.contains(search.trim(), true) }.sortedBy { it.name }
         if (visible.isEmpty()) item { Text("No stock items found. Try another search or sync the catalog from More.") }
         items(visible, key = { it.id }) { product ->
+            val sealed = sealedPacks[product.id] ?: 0
             Surface(onClick = {
                 selectedId = product.id; quantity = ""; notes = ""; success = null
                 showReceiptConfirmation = false; viewModel.dismissError()
@@ -117,11 +148,16 @@ fun InventoryScreen(viewModel: PosViewModel) {
                     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(product.name, style = MaterialTheme.typography.titleMedium)
                         if (lowStock.any { it.id == product.id }) Text("Low stock", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        if (product.tracksPowderPacks) {
+                            Text("$sealed sealed packs · ${formatStock(product.unitsInStock - sealed * 1000.0, "g")} hopper", style = MaterialTheme.typography.bodySmall)
+                            if (product.unitsInStock - sealed * 1000.0 < 0.0) Text("You may have forgotten to log an opened powder pack!", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        }
                     }
                     Text(formatStock(product.unitsInStock, product.baseUnit), style = MaterialTheme.typography.bodyLarge)
                     if (selectingToReceive) Text("  ›", color = MaterialTheme.colorScheme.primary)
                 }
             }
+            if (product.tracksPowderPacks) TextButton(onClick = { openProductId = product.id; packsToOpen = "1"; viewModel.dismissError() }, enabled = !busy && sealed > 0) { Text("Open Powder Pack") }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
     }

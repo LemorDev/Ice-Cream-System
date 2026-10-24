@@ -17,6 +17,7 @@ data class ProductDto(
     @SerialName("low_stock_threshold") val lowStockThreshold: Double = 0.0,
     @SerialName("pack_size") val packSize: Double = 1.0,
     @SerialName("conversion_rate") val conversionRate: Double = 1.0,
+    @SerialName("tracks_powder_packs") val tracksPowderPacks: Boolean = false,
     @SerialName("is_sellable") val isSellable: Boolean = true,
     @SerialName("product_type") val productType: String = if (isSellable) "sellable" else "raw",
     @SerialName("base_unit") val baseUnit: String = "piece",

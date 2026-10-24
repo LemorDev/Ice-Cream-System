@@ -95,6 +95,7 @@ data class PushInventoryEntryPayload(
     @SerialName("business_day_id") val businessDayId: String? = null,
     @SerialName("product_id") val productId: String,
     @SerialName("quantity_delta") val quantityDelta: Double,
+    @SerialName("sealed_packs_delta") val sealedPacksDelta: Int = 0,
     @SerialName("movement_type") val movementType: String,
     val reason: String? = null,
     @SerialName("reference_id") val referenceId: String? = null,
@@ -103,6 +104,16 @@ data class PushInventoryEntryPayload(
 
 @Serializable data class PushInventoryEntryRequest(@SerialName("p_entry") val entry: PushInventoryEntryPayload)
 @Serializable data class PushInventoryEntryResponse(val status: String, @SerialName("ledger_id") val ledgerId: String)
+
+@Serializable data class PushPackUnsealPayload(
+    val id: String,
+    @SerialName("stall_id") val stallId: String,
+    @SerialName("business_day_id") val businessDayId: String,
+    @SerialName("product_id") val productId: String,
+    @SerialName("packs_opened") val packsOpened: Int,
+    @SerialName("occurred_at") val occurredAt: String,
+)
+@Serializable data class PushPackUnsealRequest(@SerialName("p_entry") val entry: PushPackUnsealPayload)
 
 @Serializable
 data class PushDailyClosingPayload(
@@ -129,6 +140,18 @@ data class PushDailyClosingPayload(
 
 @Serializable data class PushDailyClosingRequest(@SerialName("p_closing") val closing: PushDailyClosingPayload)
 @Serializable data class PushDailyClosingResponse(val status: String, @SerialName("closing_id") val closingId: String)
+
+@Serializable data class ClosingCountsRequest(
+    @SerialName("p_business_day_id") val businessDayId: String,
+    @SerialName("p_device_id") val deviceId: String,
+)
+
+@Serializable data class ClosingCountsResponse(
+    @SerialName("sale_count") val saleCount: Int,
+    @SerialName("movement_count") val movementCount: Int,
+    @SerialName("deduction_count") val deductionCount: Int,
+    @SerialName("reversal_count") val reversalCount: Int,
+)
 
 @Serializable
 data class PushRevenueDeductionPayload(

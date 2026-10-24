@@ -169,8 +169,8 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
         }
         if (visibleDay?.isRecoveryDay == true) item {
             Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Lost POS recovery in progress", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
-                Text("IMS has ${formatMoney(visibleDay.recoveryKnownSalesCents, amountsVisible)} in synced sales and ${formatMoney(visibleDay.recoveryKnownDeductionsCents, amountsVisible)} in synced deductions for this day. These are the server-known totals when the old phone was reported lost; any unsynced queue on that phone is missing here. Count the cash and receipts physically, then close this day with the actual amount counted.",
+                Text("Earlier synced day activity", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("IMS has ${formatMoney(visibleDay.recoveryKnownSalesCents, amountsVisible)} in synced sales and ${formatMoney(visibleDay.recoveryKnownDeductionsCents, amountsVisible)} in synced deductions for this day. These are server-known totals from before this installation resumed the day; receipts that existed only in an earlier installation may be missing here. Count the cash and receipts physically, then close this day with the actual amount counted.",
                     style = MaterialTheme.typography.bodyMedium)
             }
         }

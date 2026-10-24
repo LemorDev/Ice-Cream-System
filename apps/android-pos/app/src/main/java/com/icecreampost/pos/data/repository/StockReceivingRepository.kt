@@ -41,11 +41,17 @@ class StockReceivingRepository @Inject constructor(
             require(day.deviceId == session.deviceId) { "Receive stock on the POS that opened the day." }
             val stock = product.unitsInStock + quantity
             require(stock.isFinite()) { "Stock quantity is too large." }
+            val sealedPacks = if (product.tracksPowderPacks) {
+                require(product.baseUnit == "g" && product.packSize == 1000.0 && quantity % 1000.0 == 0.0) {
+                    "Receive tracked powder in whole 1,000g packs."
+                }
+                (quantity / 1000.0).toInt()
+            } else 0
             val now = Instant.now().toString()
             ledgerDao.upsertAll(listOf(InventoryLedgerEntity(
                 id = UUID.randomUUID().toString(), stallId = product.stallId,
                 businessDayId = day.id, productId = product.id,
-                quantityDelta = quantity, movementType = "receive", reason = notes.trim().ifBlank { null },
+                quantityDelta = quantity, sealedPacksDelta = sealedPacks, movementType = "receive", reason = notes.trim().ifBlank { null },
                 occurredAt = now, updatedAt = now,
             )))
             productDao.updateStock(product.id, stock, now)

@@ -130,3 +130,7 @@ supabase/migrations/202608140001_android_sync_contract.sql
 ```
 
 It creates the idempotent `push_pos_transaction(jsonb)` RPC used by Android; later migrations include necessary corrections. The endpoint, payload, header, cursor, retry, and recovery rules are documented in [ANDROID_SYNC_CONTRACT.md](ANDROID_SYNC_CONTRACT.md). See [PROJECT_REVIEW.md](PROJECT_REVIEW.md) for remaining gaps between the intended contract and current behavior.
+
+When that migration is ready, open a terminal in the project folder and run this one command:
+pnpm exec supabase db push --skip-vault
+It will apply the pending migration to the linked development project and record it in Supabase’s history.

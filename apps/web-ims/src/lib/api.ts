@@ -46,7 +46,7 @@ export async function getTransactionReceiptItems(client: DbClient, transactionId
     .eq('transaction_id', transactionId)
     .is('deleted_at', null)
     .order('id')
-  return throwIfError(result).map((item) => ({
+  return (throwIfError(result) as TransactionItem[]).map((item) => ({
     ...item,
     quantity: Number(item.quantity),
     unit_price: Number(item.unit_price),
@@ -107,17 +107,20 @@ export async function loadWorkspace(client: DbClient, stallId: string): Promise<
     products: throwIfError(productResult).map((product) => ({
       ...product,
       sell_category: product.sell_category ?? null,
+      purchase_unit_name: product.purchase_unit_name ?? (product.product_type === 'sellable' ? null : 'Pack'),
       sale_price: Number(product.sale_price),
       cost_price: Number(product.cost_price),
       low_stock_threshold: Number(product.low_stock_threshold),
       pack_size: Number(product.pack_size ?? 1),
       conversion_rate: Number(product.conversion_rate ?? 1),
+      tracks_powder_packs: Boolean(product.tracks_powder_packs),
       product_type: product.product_type ?? (product.is_sellable ? 'sellable' : 'raw'),
       base_unit: product.base_unit ?? (product.unit === 'ml' ? 'ml' : product.unit === 'g' ? 'g' : 'piece'),
     })) as Product[],
     inventory: newestFirst(throwIfError(inventoryResult).map((entry) => ({
       ...entry,
       quantity_delta: Number(entry.quantity_delta),
+      sealed_packs_delta: Number(entry.sealed_packs_delta ?? 0),
       unit_cost: entry.unit_cost == null ? null : Number(entry.unit_cost),
       business_date: businessDateFor(entry.business_day_id, entry.occurred_at),
     })) as InventoryEntry[], 'occurred_at'),
@@ -170,14 +173,24 @@ export async function listManagedUsers(client: DbClient, stallId: string) {
 }
 
 export async function saveManagedUser(client: DbClient, values: {
-  stallId: string; email: string; displayName: string; role: 'owner' | 'cashier'
+  stallId: string; username?: string; employeeId?: string; displayName: string; role: 'owner' | 'cashier'
   password?: string; userId?: string; isActive: boolean
 }) {
-  return throwIfError(await client.rpc('save_managed_user', {
-    p_stall_id: values.stallId, p_email: values.email, p_display_name: values.displayName,
+  const result = await client.rpc('save_managed_user', {
+    p_stall_id: values.stallId, p_username: values.username?.trim().toLowerCase() || null,
+    p_employee_id: values.employeeId?.trim().toUpperCase() || null, p_display_name: values.displayName,
     p_role: values.role, p_password: values.password || null, p_user_id: values.userId || null,
     p_is_active: values.isActive,
-  })) as ManagedUser
+  })
+  if (result.error) {
+    const error = result.error as { code?: string; message: string; details?: string; constraint?: string }
+    if (error.code === '23505') {
+      throw new Error('That username or employee ID is already in use. Choose a different one or edit the existing account.')
+    }
+    throw new Error(error.message)
+  }
+  if (result.data === null) throw new Error('The database returned no data.')
+  return result.data as ManagedUser
 }
 
 export async function setOwnerStalls(client: DbClient, ownerId: string, stallIds: string[]) {
@@ -254,7 +267,7 @@ export async function archiveCategory(client: DbClient, categoryId: string) {
   if (error) throw new Error(error.message)
 }
 
-export async function saveProduct(client: DbClient, values: Omit<Product, 'id' | 'updated_at' | 'deleted_at' | 'sku' | 'sell_category'> & { sku?: string; sell_category?: string | null }, productId?: string) {
+export async function saveProduct(client: DbClient, values: Omit<Product, 'id' | 'updated_at' | 'deleted_at' | 'sku' | 'sell_category' | 'purchase_unit_name'> & { sku?: string; sell_category?: string | null; purchase_unit_name?: string | null }, productId?: string) {
   const query = productId
     ? client.from('products').update(values).eq('id', productId).select().single()
     : client.from('products').insert(values).select().single()
@@ -263,7 +276,7 @@ export async function saveProduct(client: DbClient, values: Omit<Product, 'id' |
 
 export async function saveProductWithRecipe(
   client: DbClient,
-  values: Omit<Product, 'id' | 'updated_at' | 'deleted_at' | 'sku'> & { sku?: string },
+  values: Omit<Product, 'id' | 'updated_at' | 'deleted_at' | 'sku' | 'purchase_unit_name'> & { sku?: string; purchase_unit_name?: string | null; purchase_quantity?: number },
   recipe: Array<Pick<ProductRecipe, 'ingredient_product_id' | 'quantity'>>,
   productId?: string,
 ) {
@@ -275,6 +288,14 @@ export async function saveProductWithRecipe(
     p_product: { ...values, id: productId ?? null },
     p_recipe: recipe,
   })) as Product
+}
+
+export async function setPowderSealedPacks(client: DbClient, productId: string, count: number) {
+  return throwIfError(await client.rpc('set_powder_sealed_packs', {
+    p_product_id: productId,
+    p_count: count,
+    p_reason: 'Sealed pack count from IMS',
+  })) as number
 }
 
 export async function archiveProduct(client: DbClient, productId: string) {

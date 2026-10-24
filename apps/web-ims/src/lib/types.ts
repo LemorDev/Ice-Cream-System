@@ -33,9 +33,11 @@ export type Product = {
   unit: string
   sale_price: number
   cost_price: number
+  purchase_unit_name: string | null
   low_stock_threshold: number
   pack_size: number
   conversion_rate: number
+  tracks_powder_packs?: boolean
   is_sellable: boolean
   product_type: 'raw' | 'packaging' | 'sellable'
   base_unit: 'g' | 'ml' | 'piece'
@@ -76,7 +78,8 @@ export type InventoryEntry = {
   business_date?: string
   unit_cost?: number | null
   quantity_delta: number
-  movement_type: 'receive' | 'sale' | 'void_restock' | 'void_waste' | 'adjustment' | 'opening_balance'
+  sealed_packs_delta?: number
+  movement_type: 'receive' | 'sale' | 'void_restock' | 'void_waste' | 'adjustment' | 'opening_balance' | 'pack_unsealed' | 'pack_reclassified'
   reason: string | null
   reference_id: string | null
   occurred_at: string
@@ -170,7 +173,9 @@ export type ClosedDayCorrection = {
 export type ManagedUser = {
   id: string
   stall_id: string
-  email: string
+  email: string | null
+  username: string | null
+  employee_id: string | null
   display_name: string
   role: 'owner' | 'cashier'
   is_active: boolean

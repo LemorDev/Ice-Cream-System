@@ -7,6 +7,7 @@ import com.icecreampost.pos.data.local.entity.ProductEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
 import com.icecreampost.pos.data.local.entity.SyncStateEntity
 import com.icecreampost.pos.data.local.dao.SyncStateDao
+import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
 import com.icecreampost.pos.data.repository.CheckoutReceipt
 import com.icecreampost.pos.data.repository.HistoricalReceipt
 import com.icecreampost.pos.data.repository.CheckoutRepository
@@ -30,11 +31,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 @HiltViewModel
 class PosViewModel @Inject constructor(
     private val stockReceivingRepository: com.icecreampost.pos.data.repository.StockReceivingRepository,
+    private val powderPackRepository: com.icecreampost.pos.data.repository.PowderPackRepository,
+    private val inventoryLedgerDao: InventoryLedgerDao,
     private val productRepository: ProductRepository,
     private val checkoutRepository: CheckoutRepository,
     private val sessionRepository: SessionRepository,
@@ -48,6 +52,10 @@ class PosViewModel @Inject constructor(
 
     val products: StateFlow<List<ProductEntity>> = productRepository.observeProducts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val sealedPacks: StateFlow<Map<String, Int>> = inventoryLedgerDao.observeActive()
+        .map { entries -> entries.groupBy { it.productId }.mapValues { (_, rows) -> rows.sumOf { it.sealedPacksDelta } } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val recipes = productRepository.observeRecipes()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -209,9 +217,9 @@ class PosViewModel @Inject constructor(
         runAction(onSuccess) { saleReversalRepository.reverse(transactionId, kind, reason, restock, cashReturnedCents) }
     }
 
-    fun signIn(stallCode: String, email: String, password: String) {
+    fun signIn(stallCode: String, employeeId: String, password: String) {
         runAction {
-            val signedIn = sessionRepository.signIn(stallCode, email, password)
+            val signedIn = sessionRepository.signIn(stallCode, employeeId, password)
             syncRepository.resetStatus()
             if (signedIn.isActivated) {
                 syncRepository.sync()
@@ -266,6 +274,10 @@ class PosViewModel @Inject constructor(
         if (_busy.value) return
         _busy.value = true
         runAction(onSuccess) { stockReceivingRepository.receive(productId, quantity, notes) }
+    }
+
+    fun openPowderPacks(productId: String, packs: Int, onSuccess: () -> Unit) {
+        runAction(onSuccess) { powderPackRepository.open(productId, packs) }
     }
 
     fun dismissError() { _error.value = null }

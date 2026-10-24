@@ -45,7 +45,7 @@ import com.icecreampost.pos.data.local.dao.SaleReversalDao
         RevenueDeductionEntity::class,
         SaleReversalEntity::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = true,
 )
 abstract class CoolerzDatabase : RoomDatabase() {
@@ -176,6 +176,12 @@ abstract class CoolerzDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS sale_reversals (id TEXT NOT NULL PRIMARY KEY, transactionId TEXT NOT NULL, stallId TEXT NOT NULL, originalDayId TEXT NOT NULL, payoutDayId TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, restock INTEGER NOT NULL, cashReturnedCents INTEGER NOT NULL, occurredAt TEXT NOT NULL, isSynced INTEGER NOT NULL, syncError TEXT)")
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_sale_reversals_transactionId ON sale_reversals (transactionId)")
+            }
+        }
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE products ADD COLUMN tracksPowderPacks INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE inventory_ledger ADD COLUMN sealedPacksDelta INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

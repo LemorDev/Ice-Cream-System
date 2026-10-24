@@ -14,6 +14,7 @@ begin
   insert into public.app_users(id, stall_id, email, display_name, role, password_hash) values
     (admin_id, stall_id, admin_id::text || '@example.invalid', 'Admin', 'system_admin', 'unused'),
     (cashier_id, stall_id, cashier_id::text || '@example.invalid', 'Cashier', 'cashier', crypt('fixture-password', gen_salt('bf')));
+  update public.app_users set employee_id='ACT01',email=null where id=cashier_id;
   insert into public.app_sessions(user_id, token_hash, expires_at) values
     (admin_id, encode(digest(admin_token, 'sha256'), 'hex'), now() + interval '1 hour'),
     (cashier_id, encode(digest(cashier_token, 'sha256'), 'hex'), now() + interval '1 hour');
@@ -40,7 +41,7 @@ begin
   perform set_config('request.headers', jsonb_build_object('x-session-token', cashier_token, 'x-device-id', 'old-hardware')::text, true);
   perform public.prepare_pos_replacement(old_device);
   select * into signed_in from public.login_pos_with_password(
-    (select code from public.stalls where id = stall_id), cashier_id::text || '@example.invalid', 'fixture-password');
+    (select code from public.stalls where id = stall_id), 'ACT01', 'fixture-password');
   if signed_in.device_id is distinct from old_device or not signed_in.is_activated
     or (select transfer_ready_at from public.devices where id = old_device) is not null then
     raise exception 'Fresh sign-in did not restore the device and cancel preparation';

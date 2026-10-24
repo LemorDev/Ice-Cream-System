@@ -4,10 +4,13 @@ import com.icecreampost.pos.data.local.dao.SessionDao
 import com.icecreampost.pos.data.local.dao.BusinessDayDao
 import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.entity.AppSessionEntity
+import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.data.local.entity.SyncStateEntity
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.ActivateDeviceResponse
 import com.icecreampost.pos.data.remote.dto.LoginResponse
+import com.icecreampost.pos.data.remote.dto.RecoveredDayResponse
+import com.icecreampost.pos.data.remote.dto.RecoveredBusinessDay
 import com.icecreampost.pos.data.remote.interceptor.DeviceIdentity
 import com.icecreampost.pos.data.remote.interceptor.SessionTokenStore
 import io.mockk.coEvery
@@ -27,6 +30,7 @@ class SessionRepositoryTest {
     private val tokenStore = SessionTokenStore()
     private val deviceIdentity = mockk<DeviceIdentity>()
     private val syncStateDao = mockk<SyncStateDao>(relaxed = true)
+    private val businessDayDao = mockk<BusinessDayDao>(relaxed = true)
     private lateinit var repository: SessionRepository
 
     @Before
@@ -36,7 +40,7 @@ class SessionRepositoryTest {
         coEvery { syncStateDao.findPersistedStallIds() } returns emptyList()
         coEvery { sessionDao.getCurrent() } returns null
         repository = SessionRepository(sessionDao, api, tokenStore, deviceIdentity,
-            mockk(relaxed = true), syncStateDao)
+            businessDayDao, syncStateDao)
     }
 
     @Test
@@ -97,7 +101,7 @@ class SessionRepositoryTest {
 
     @Test
     fun `cashier login restores an active registration for the same device`() = runTest {
-        coEvery { api.getRecoveredDay(any()) } returns null
+        coEvery { api.getResumableDay(any()) } returns RecoveredDayResponse(null)
         coEvery { api.login(any()) } returns listOf(
             login(role = "cashier", deviceId = "device-1", isActivated = true),
         )
@@ -108,6 +112,47 @@ class SessionRepositoryTest {
 
         assertEquals("device-1", saved.captured.deviceId)
         assertEquals(true, saved.captured.isActivated)
+    }
+
+    @Test
+    fun `fresh install resumes the active server day with its known totals`() = runTest {
+        val serverDay = RecoveredBusinessDay(
+            id = "server-day", businessDate = "2026-10-13", openedAt = "2026-10-12T18:04:46Z",
+            cashierId = "cashier-1", knownSales = 50.0, knownOrders = 1, knownCogs = 4.04,
+        )
+        coEvery { api.login(any()) } returns listOf(login(role = "cashier", deviceId = "device-1", isActivated = true))
+        coEvery { api.getResumableDay(any()) } returns RecoveredDayResponse(serverDay)
+        coEvery { businessDayDao.findByDate("stall-1", "2026-10-13") } returns null
+        val saved = slot<BusinessDayEntity>()
+        coEvery { businessDayDao.upsert(capture(saved)) } returns Unit
+
+        repository.signIn("MAIN-001", "cashier-1", "password")
+
+        assertEquals("server-day", saved.captured.id)
+        assertEquals(5000L, saved.captured.recoveryKnownSalesCents)
+        assertEquals(1, saved.captured.recoveryKnownOrders)
+        assertEquals(404L, saved.captured.recoveryKnownCogsCents)
+        assertEquals(true, saved.captured.isSynced)
+        coVerify(exactly = 1) { businessDayDao.upsert(any()) }
+    }
+
+    @Test
+    fun `existing local day is not double counted when signing in again`() = runTest {
+        val serverDay = RecoveredBusinessDay(
+            id = "server-day", businessDate = "2026-10-13", openedAt = "2026-10-12T18:04:46Z",
+            cashierId = "cashier-1", knownSales = 75.0, knownOrders = 2, knownCogs = 6.06,
+        )
+        coEvery { api.login(any()) } returns listOf(login(role = "cashier", deviceId = "device-1", isActivated = true))
+        coEvery { api.getResumableDay(any()) } returns RecoveredDayResponse(serverDay)
+        coEvery { businessDayDao.findByDate("stall-1", "2026-10-13") } returns BusinessDayEntity(
+            id = "server-day", stallId = "stall-1", deviceId = "device-1", cashierId = "cashier-1",
+            businessDate = "2026-10-13", openedAt = "2026-10-12T18:04:46Z",
+            updatedAt = "2026-10-13T09:00:00Z", recoveryKnownSalesCents = 5000,
+        )
+
+        repository.signIn("MAIN-001", "cashier-1", "password")
+
+        coVerify(exactly = 0) { businessDayDao.upsert(any()) }
     }
 
     @Test

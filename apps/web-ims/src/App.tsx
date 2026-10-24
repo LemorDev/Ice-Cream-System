@@ -46,7 +46,7 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
 }
 
 function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void }) {
-  const [email, setEmail] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -55,14 +55,14 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void
     event.preventDefault()
     setError('')
 
-    if (!email.trim() || password.length < 1) {
-      setError('Enter your email and password.')
+    if (!identifier.trim() || password.length < 1) {
+      setError('Enter your email or username and password.')
       return
     }
 
     setIsLoading(true)
     try {
-      onSignedIn(await signIn(email, password))
+      onSignedIn(await signIn(identifier, password))
       setPassword('')
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to sign in.')
@@ -76,15 +76,15 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void
         <form className="w-full max-w-md rounded-2xl border border-[#e6deed] bg-white p-6 shadow-[0_18px_50px_rgba(34,0,70,0.10)] sm:p-8" onSubmit={submit}>
           <div className="flex justify-center"><BrandMark compact /></div>
           <h2 className="mt-6 text-center text-2xl font-black tracking-tight text-[#220046]">Management sign in</h2>
-          <p className="mt-2 text-center text-slate-500">Owners and system administrators can use this dashboard.</p>
+
 
           <label className="mt-7 block text-sm font-medium text-[#39235f]">
-            Email
+            Email or username
             <input
               className="mt-1 w-full rounded-xl border border-[#dfd4f3] bg-white px-3 py-3 text-sm outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-[#eadcff]"
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              type="text"
+              value={identifier}
+              onChange={(event) => setIdentifier(event.target.value)}
               autoComplete="username"
               required
             />
@@ -200,7 +200,7 @@ function EyeIcon({ visible }: { visible: boolean }) {
 }
 
 function SignOutDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
-  return <ConfirmationDialog confirmLabel="Sign out" description="You will need your email and password to open the dashboard again." onCancel={onCancel} onConfirm={onConfirm} title="Sign out?" tone="primary" />
+  return <ConfirmationDialog confirmLabel="Sign out" description="You will need your administrator email or owner username and password to open the dashboard again." onCancel={onCancel} onConfirm={onConfirm} title="Sign out?" tone="primary" />
 }
 
 function Sidebar({ activeView, onNavigate, onSignOut, session, open, collapsed, onClose, onToggle }: { activeView: WebView; onNavigate: (view: WebView) => void; onSignOut: () => void; session: AppSession; open: boolean; collapsed: boolean; onClose: () => void; onToggle: () => void }) {
@@ -519,7 +519,7 @@ export function App() {
         <div className="max-w-md space-y-4 rounded-3xl border border-[#eadcff] bg-white p-8 text-center shadow-lg">
           <img alt="Coolerz Ice Cream logo" className="mx-auto h-20 w-20 rounded-2xl object-cover shadow-md" src={brandLogo} />
           <h1 className="text-2xl font-black text-[#220046]">Owner access required</h1>
-          <p className="text-slate-600">Cashiers use the activated Android POS. This dashboard is for Owners and System admins.</p>
+    <p className="text-slate-600">Cashiers use the activated Android POS. This dashboard is for Owners and System admins.</p>
           <Button onClick={() => { signOut(); setSession(null) }}>Sign out</Button>
         </div>
       </main>

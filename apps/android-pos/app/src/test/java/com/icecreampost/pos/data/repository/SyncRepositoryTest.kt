@@ -18,6 +18,7 @@ import com.icecreampost.pos.data.local.entity.SaleReversalEntity
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.PushBusinessDayResponse
 import com.icecreampost.pos.data.remote.dto.PushDailyClosingResponse
+import com.icecreampost.pos.data.remote.dto.ClosingCountsResponse
 import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionResponse
 import com.icecreampost.pos.data.remote.dto.PushTransactionResponse
 import com.icecreampost.pos.data.remote.dto.PushSaleReversalResponse
@@ -336,6 +337,62 @@ class SyncRepositoryTest {
             dailyStoreClosingDao.upsert(match { it.id == closing.id && it.wasteCostCents == 500L && it.netProfitCents == -500L })
             api.pushDailyClosing(match { it.closing.wasteCost == 5.0 && it.closing.movementCount == 1 })
         }
+    }
+
+    @Test
+    fun `recovered day closing uses server counts for its server-only opening sale`() = runTest {
+        val closing = DailyStoreClosingEntity(
+            id = "c672218c-e417-4a43-8122-c4d9e105d275", stallId = transaction.stallId,
+            businessDayId = transaction.businessDayId!!, businessDate = "2026-09-29",
+            grossSalesCents = 7_500, cogsCents = 606, wasteCostCents = 0, overheadCostCents = 0,
+            netProfitCents = 6_894, expectedCashCents = 7_500, collectedCashCents = 7_500,
+            deviceId = "786706d8-cfaa-46f1-909a-123f2cc9385a", closedAt = "2026-09-29T07:00:00Z",
+        )
+        coEvery { transactionDao.getUnsynced() } returns emptyList()
+        coEvery { dailyStoreClosingDao.getUnsynced() } returns listOf(closing)
+        coEvery { businessDayDao.findByDate(any(), closing.businessDate) } returns
+            closingDay(closing.businessDate, closing.closedAt).copy(
+                isRecoveryDay = true, recoveryKnownOrders = 1,
+                recoveryKnownSalesCents = 5_000, recoveryKnownCogsCents = 404,
+            )
+        coEvery { transactionDao.getCompletedTotalBetween(any(), any(), any()) } returns 2_500
+        coEvery { transactionDao.getCashSalesBetween(any(), any(), any()) } returns 2_500
+        coEvery { transactionDao.getCompletedCogsBetween(any(), any(), any()) } returns 202
+        coEvery { transactionDao.countForDay(any(), any()) } returns 1
+        coEvery { inventoryLedgerDao.countForDay(any(), any(), any(), any()) } returns 2
+        coEvery { api.getDayClosingCounts(any()) } returns ClosingCountsResponse(2, 4, 0, 0)
+        coEvery { api.pushDailyClosing(any()) } returns PushDailyClosingResponse("accepted", closing.id)
+
+        assertEquals(1, repository.sync().closingsSynced)
+        coVerify(exactly = 1) {
+            api.pushDailyClosing(match {
+                it.closing.saleCount == 2 && it.closing.movementCount == 4 &&
+                    it.closing.grossSales == 75.0 && it.closing.cogs == 6.06
+            })
+        }
+        coVerify(exactly = 1) { dailyStoreClosingDao.markSynced(closing.id) }
+    }
+
+    @Test
+    fun `recovered day count mismatch leaves closing queued`() = runTest {
+        val closing = DailyStoreClosingEntity(
+            id = "c672218c-e417-4a43-8122-c4d9e105d275", stallId = transaction.stallId,
+            businessDayId = transaction.businessDayId!!, businessDate = "2026-09-29",
+            grossSalesCents = 7_500, cogsCents = 606, wasteCostCents = 0, overheadCostCents = 0,
+            netProfitCents = 6_894, expectedCashCents = 7_500, collectedCashCents = 7_500,
+            deviceId = "786706d8-cfaa-46f1-909a-123f2cc9385a", closedAt = "2026-09-29T07:00:00Z",
+        )
+        coEvery { transactionDao.getUnsynced() } returns emptyList()
+        coEvery { dailyStoreClosingDao.getUnsynced() } returns listOf(closing)
+        coEvery { businessDayDao.findByDate(any(), closing.businessDate) } returns
+            closingDay(closing.businessDate, closing.closedAt).copy(isRecoveryDay = true, recoveryKnownOrders = 1)
+        coEvery { transactionDao.countForDay(any(), any()) } returns 1
+        coEvery { inventoryLedgerDao.countForDay(any(), any(), any(), any()) } returns 2
+        coEvery { api.getDayClosingCounts(any()) } returns ClosingCountsResponse(3, 4, 0, 0)
+
+        assertEquals(1, repository.sync().permanentFailures)
+        coVerify(exactly = 0) { api.pushDailyClosing(any()) }
+        coVerify(exactly = 1) { dailyStoreClosingDao.markSyncError(closing.id, any()) }
     }
 
     @Test

@@ -7,7 +7,7 @@ import com.icecreampost.pos.data.remote.dto.ActivateDeviceRequest
 import com.icecreampost.pos.data.remote.dto.ActivateDeviceResponse
 import com.icecreampost.pos.data.remote.dto.PrepareReplacementRequest
 import com.icecreampost.pos.data.remote.dto.PrepareReplacementResponse
-import com.icecreampost.pos.data.remote.dto.RecoveredBusinessDay
+import com.icecreampost.pos.data.remote.dto.RecoveredDayResponse
 import com.icecreampost.pos.data.remote.dto.RecoveredDayRequest
 import com.icecreampost.pos.data.remote.dto.InventoryLedgerDto
 import com.icecreampost.pos.data.remote.dto.PushTransactionPayload
@@ -22,6 +22,8 @@ import com.icecreampost.pos.data.remote.dto.PushInventoryEntryRequest
 import com.icecreampost.pos.data.remote.dto.PushInventoryEntryResponse
 import com.icecreampost.pos.data.remote.dto.PushDailyClosingRequest
 import com.icecreampost.pos.data.remote.dto.PushDailyClosingResponse
+import com.icecreampost.pos.data.remote.dto.ClosingCountsRequest
+import com.icecreampost.pos.data.remote.dto.ClosingCountsResponse
 import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionRequest
 import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionResponse
 import com.icecreampost.pos.data.remote.dto.PushSaleReversalRequest
@@ -41,8 +43,8 @@ interface SupabaseApi {
     @POST("rest/v1/rpc/prepare_pos_replacement")
     suspend fun prepareReplacement(@Body request: PrepareReplacementRequest): PrepareReplacementResponse
 
-    @POST("rest/v1/rpc/get_recovered_pos_day")
-    suspend fun getRecoveredDay(@Body request: RecoveredDayRequest): RecoveredBusinessDay?
+    @POST("rest/v1/rpc/get_resumable_pos_day")
+    suspend fun getResumableDay(@Body request: RecoveredDayRequest): RecoveredDayResponse
 
     @POST("rest/v1/rpc/push_pos_transaction_v2")
     suspend fun pushTransaction(@Body request: PushTransactionRpcRequest): PushTransactionResponse
@@ -68,8 +70,14 @@ interface SupabaseApi {
     @POST("rest/v1/rpc/push_pos_inventory_entry_v2")
     suspend fun pushInventoryEntry(@Body request: PushInventoryEntryRequest): PushInventoryEntryResponse
 
+    @POST("rest/v1/rpc/push_pos_pack_unseal")
+    suspend fun pushPackUnseal(@Body request: com.icecreampost.pos.data.remote.dto.PushPackUnsealRequest): PushInventoryEntryResponse
+
     @POST("rest/v1/rpc/push_daily_store_closing_v2")
     suspend fun pushDailyClosing(@Body request: PushDailyClosingRequest): PushDailyClosingResponse
+
+    @POST("rest/v1/rpc/get_pos_day_closing_counts")
+    suspend fun getDayClosingCounts(@Body request: ClosingCountsRequest): ClosingCountsResponse
 
     @POST("rest/v1/rpc/push_revenue_deduction_v2")
     suspend fun pushRevenueDeduction(@Body request: PushRevenueDeductionRequest): PushRevenueDeductionResponse

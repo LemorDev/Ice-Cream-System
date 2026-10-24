@@ -52,26 +52,24 @@ class SessionRepository @Inject constructor(
         return current
     }
 
-    suspend fun signIn(stallCode: String, email: String, password: String): AppSessionEntity {
+    suspend fun signIn(stallCode: String, employeeId: String, password: String): AppSessionEntity {
         require(stallCode.isNotBlank()) { "Stall code is required." }
-        require(email.isNotBlank()) { "Email is required." }
+        require(employeeId.isNotBlank()) { "Employee ID is required." }
         require(password.isNotBlank()) { "Password is required." }
         val response = try {
-            api.login(LoginRequest(stallCode.trim().uppercase(), email.trim(), password)).firstOrNull()
+            api.login(LoginRequest(stallCode.trim().uppercase(), employeeId.trim().uppercase(), password)).firstOrNull()
         } catch (error: HttpException) {
             if (error.code() == 401 || error.code() == 403) {
-                throw IllegalArgumentException("The stall code, email, or password is incorrect, or this Cashier account is inactive.")
+                throw IllegalArgumentException("The stall code, employee ID, or password is incorrect, or this Cashier account is inactive.")
             }
             throw error
-        } ?: error("The stall code, email, or password is incorrect.")
+        } ?: error("The stall code, employee ID, or password is incorrect.")
         require(response.role == "cashier") { "Use the Owner web dashboard for this account." }
         check(isCompatibleStall(response.stallId) &&
             (sessionDao.getCurrent()?.stallId == null || sessionDao.getCurrent()?.stallId == response.stallId)) {
             "This phone contains data from another stall. Use that stall's account and resolve its queue on this phone; a different stall needs a separate POS device."
         }
-        // Persist the assignment even when there are no sales yet. Sign-out
-        // must never make another stall's catalog or queue visible on this phone.
-        syncStateDao.upsert(SyncStateEntity(key = "device-stall", value = response.stallId))
+        val previousToken = sessionTokenStore.token
         sessionTokenStore.token = response.sessionToken
         val session = AppSessionEntity(
                 userId = response.userId,
@@ -83,11 +81,19 @@ class SessionRepository @Inject constructor(
                 deviceId = response.deviceId.takeIf { response.isActivated },
                 isActivated = response.isActivated && response.deviceId != null,
             )
-        if (session.isActivated && session.deviceId != null) {
-            importRecoveredDay(session.stallId ?: error("The stall is missing."), session.deviceId,
-                api.getRecoveredDay(RecoveredDayRequest(session.deviceId)))
+        try {
+            if (session.isActivated && session.deviceId != null) {
+                importRecoveredDay(session.stallId ?: error("The stall is missing."), session.deviceId,
+                    api.getResumableDay(RecoveredDayRequest(session.deviceId)).day)
+            }
+            // Persist the assignment even when there are no sales yet. Sign-out
+            // must never make another stall's catalog or queue visible on this phone.
+            syncStateDao.upsert(SyncStateEntity(key = "device-stall", value = response.stallId))
+            sessionDao.save(session)
+        } catch (error: Throwable) {
+            sessionTokenStore.token = previousToken
+            throw error
         }
-        sessionDao.save(session)
         return session
     }
 
@@ -119,15 +125,18 @@ class SessionRepository @Inject constructor(
         check(existing == null || existing.id == recovered.id) {
             "This phone has a different local operating day for ${recovered.businessDate}. Resolve its queued data before continuing."
         }
+        // Existing local sales already contribute to this day's totals. Import
+        // server-known totals only when this installation has no local day.
+        if (existing != null) return
         require(recovered.knownSales >= 0 && recovered.knownOrders >= 0 && recovered.knownDeductions >= 0 && recovered.knownProfitDeductions >= 0 && recovered.knownCogs >= 0 && recovered.knownWaste >= 0) {
             "Invalid recovery totals from IMS."
         }
-        val day = (existing ?: BusinessDayEntity(
+        val day = BusinessDayEntity(
             id = recovered.id, stallId = stallId, deviceId = deviceId,
             cashierId = recovered.cashierId, businessDate = recovered.businessDate,
             openedAt = recovered.openedAt, openingNotes = recovered.openingNotes,
             updatedAt = Instant.now().toString(),
-        )).copy(
+        ).copy(
             deviceId = deviceId,
             recoveryKnownSalesCents = (recovered.knownSales * 100).roundToLong(),
             recoveryKnownOrders = recovered.knownOrders,
@@ -138,9 +147,6 @@ class SessionRepository @Inject constructor(
             isRecoveryDay = true, isSynced = true, updatedAt = Instant.now().toString(),
         )
         businessDayDao.upsert(day)
-        val now = Instant.now().toString()
-        businessDayDao.upsert(businessDayDao.findByDate(stallId, recovered.businessDate)!!
-            .copy(deviceId = deviceId, isRecoveryDay = true, isSynced = true, updatedAt = now))
     }
 
     suspend fun prepareReplacement() {

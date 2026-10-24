@@ -19,6 +19,9 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -36,6 +39,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
+import coil.compose.SubcomposeAsyncImage
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -143,21 +150,22 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
             if (products.isEmpty()) {
                 EmptyCatalog(query = query, modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp))
             } else {
-                LazyColumn(
+                Text(
+                    "${products.size} ${if (products.size == 1) "product" else "products"}",
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 128.dp),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 18.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    item {
-                        Text(
-                            "${products.size} ${if (products.size == 1) "product" else "products"}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    items(products, key = { it.id }) { product ->
+                    gridItems(products, key = { it.id }) { product ->
                         val quantityInCart = cartLines.firstOrNull { it.product.id == product.id }?.quantity ?: 0
-                        ProductRow(
+                        ProductTile(
                             product = product,
                             quantityInCart = quantityInCart,
                             onAdd = { viewModel.addToCart(product) },
@@ -244,7 +252,7 @@ fun ProductCatalogScreen(viewModel: PosViewModel, onSaleComplete: () -> Unit, on
 }
 
 @Composable
-private fun ProductRow(
+private fun ProductTile(
     product: ProductEntity,
     quantityInCart: Int,
     onAdd: () -> Unit,
@@ -258,41 +266,44 @@ private fun ProductRow(
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         shape = MaterialTheme.shapes.medium,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(product.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "${product.category} · per ${product.unit}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(formatMoney(product.priceCents), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                    Text("  ·  ", color = MaterialTheme.colorScheme.outline)
-                    Text(
-                        "$remainingStock left",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (lowStock) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
-                    )
-                }
-            }
-            Spacer(Modifier.width(8.dp))
+            SubcomposeAsyncImage(
+                model = product.imageUrl,
+                contentDescription = product.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxWidth().height(110.dp).clip(MaterialTheme.shapes.small),
+                loading = { ProductImagePlaceholder() },
+                error = { ProductImagePlaceholder() },
+            )
+            Text(product.name, style = MaterialTheme.typography.titleSmall, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                "${product.category} · per ${product.unit}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(formatMoney(product.priceCents), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "$remainingStock left",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (lowStock) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
+            )
             if (quantityInCart == 0) {
                 Button(
                     onClick = onAdd,
                     enabled = product.unitsInStock > 0,
-                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 ) { Text("Add") }
             } else {
                 QuantityStepper(
                     quantity = quantityInCart,
                     onDecrease = onRemove,
                     onIncrease = onAdd,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
                     canIncrease = quantityInCart < product.unitsInStock,
                 )
             }
@@ -490,3 +501,12 @@ private fun sanitizeCashInput(value: String): String =
         val parts = filtered.split('.', limit = 2)
         if (parts.size == 2) "${parts[0]}.${parts[1].take(2)}" else parts[0]
     }
+
+@Composable
+private fun ProductImagePlaceholder() {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxSize()) {
+        Box(contentAlignment = Alignment.Center) {
+            Text("🍦", style = MaterialTheme.typography.headlineMedium)
+        }
+    }
+}

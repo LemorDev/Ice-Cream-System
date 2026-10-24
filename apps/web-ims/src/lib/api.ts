@@ -33,7 +33,7 @@ export async function loadWorkspace(client: DbClient, stallId: string): Promise<
   const [stallResult, categoryResult, productResult, inventoryResult, transactionResult, itemResult, businessDayResult] = await Promise.all([
     client.from('stalls').select('*').eq('id', stallId).is('deleted_at', null).single(),
     client.from('product_categories').select('id, name, sort_order').eq('stall_id', stallId).is('deleted_at', null).order('sort_order').order('name'),
-    client.from('products').select('id, stall_id, category_id, sku, name, unit, sale_price, cost_price, low_stock_threshold, pack_size, conversion_rate, is_sellable, updated_at, deleted_at').eq('stall_id', stallId).is('deleted_at', null).order('name'),
+    client.from('products').select('id, stall_id, category_id, sku, name, unit, sale_price, cost_price, low_stock_threshold, pack_size, conversion_rate, is_sellable, image_url, updated_at, deleted_at').eq('stall_id', stallId).is('deleted_at', null).order('name'),
     client.from('inventory_ledger').select('id, product_id, quantity_delta, movement_type, reason, reference_id, occurred_at').eq('stall_id', stallId).is('deleted_at', null).order('occurred_at', { ascending: false }).limit(5000),
     client.from('transactions').select('id, receipt_number, status, subtotal, total_amount, cash_received, change_amount, occurred_at').eq('stall_id', stallId).is('deleted_at', null).order('occurred_at', { ascending: false }).limit(1000),
     client.from('transaction_items').select('id, transaction_id, product_id, product_name, quantity, unit_price, line_total').is('deleted_at', null).limit(5000),
@@ -164,4 +164,24 @@ export async function reverseTransaction(client: DbClient, transactionId: string
     p_reason: reason,
     p_restock: restock,
   })) as number
+}
+
+const PRODUCT_IMAGE_BUCKET = 'product-images'
+const PRODUCT_IMAGE_TYPES: Record<string, string> = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
+}
+
+export function validateProductImage(file: Pick<File, 'type' | 'size'>) {
+  if (!PRODUCT_IMAGE_TYPES[file.type]) throw new Error('Choose a JPG, PNG or WebP picture.')
+  if (file.size === 0 || file.size > 5 * 1024 * 1024) throw new Error('Product pictures must be between 1 byte and 5 MB.')
+}
+
+export async function uploadProductImage(client: DbClient, stallId: string, file: File): Promise<string> {
+  validateProductImage(file)
+  const path = `${stallId}/${crypto.randomUUID()}.${PRODUCT_IMAGE_TYPES[file.type]}`
+  const { error } = await client.storage.from(PRODUCT_IMAGE_BUCKET).upload(path, file, {
+    contentType: file.type, cacheControl: '31536000', upsert: false,
+  })
+  if (error) throw new Error(`Product picture upload failed: ${error.message}`)
+  return client.storage.from(PRODUCT_IMAGE_BUCKET).getPublicUrl(path).data.publicUrl
 }

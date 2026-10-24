@@ -1,0 +1,83 @@
+name: PR checks
+
+on:
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Web checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.21.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/web-ims lint
+      - run: pnpm --dir apps/web-ims test
+      - run: pnpm --dir apps/web-ims build
+        env:
+          VITE_SUPABASE_URL: https://ci-development.invalid
+          VITE_SUPABASE_ANON_KEY: ci-public-placeholder
+
+  android:
+    name: Android checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Configure isolated CI endpoints
+        working-directory: apps/android-pos
+        run: |
+          cat > local.properties <<'EOF'
+          supabase.dev.url=https://ci-development.invalid
+          supabase.dev.anonKey=ci-public-placeholder
+          supabase.production.url=https://ci-production.invalid
+          supabase.production.anonKey=ci-public-placeholder
+          EOF
+      - run: bash ./gradlew :app:testDevDebugUnitTest :app:assembleDevDebug --no-daemon
+        working-directory: apps/android-pos
+
+  database:
+    name: Database checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.118.0
+      - name: Initialize disposable local Supabase
+        run: supabase init
+      - name: Apply migrations to disposable local database
+        run: |
+          supabase start
+          supabase db reset --local --no-seed
+      - name: Run rollback-only database fixtures
+        run: |
+          db_container=$(docker ps --filter 'name=supabase_db_' --format '{{.Names}}')
+          test -n "$db_container"
+          for fixture in supabase/tests/*.sql; do
+            echo "Checking $fixture"
+            docker exec -i "$db_container" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$fixture"
+          done
+      - name: Stop disposable local Supabase
+        if: always()
+        run: supabase stop --no-backup

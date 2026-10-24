@@ -33,7 +33,7 @@ import com.icecreampost.pos.data.local.dao.BusinessDayDao
         AppSessionEntity::class,
         BusinessDayEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class CoolerzDatabase : RoomDatabase() {
@@ -46,6 +46,12 @@ abstract class CoolerzDatabase : RoomDatabase() {
     abstract fun businessDayDao(): BusinessDayDao
 
     companion object {
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE products ADD COLUMN imageUrl TEXT")
+            }
+        }
+
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE products ADD COLUMN stallId TEXT NOT NULL DEFAULT ''")

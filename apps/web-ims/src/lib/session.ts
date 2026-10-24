@@ -21,13 +21,13 @@ type LoginRow = {
   expires_at: string
 }
 
-export async function signIn(email: string, password: string): Promise<AppSession> {
+export async function signIn(identifier: string, password: string): Promise<AppSession> {
   let data
   let error
 
   try {
     const response = await createSupabaseClient().rpc('login_with_password', {
-      p_email: email,
+      p_identifier: identifier,
       p_password: password,
     })
     data = response.data

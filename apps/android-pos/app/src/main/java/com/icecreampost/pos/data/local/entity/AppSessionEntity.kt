@@ -14,4 +14,5 @@ data class AppSessionEntity(
     val sessionToken: String? = null,
     val expiresAt: String? = null,
     val isActivated: Boolean = false,
+    val transferReady: Boolean = false,
 )

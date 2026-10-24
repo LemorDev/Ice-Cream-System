@@ -17,7 +17,21 @@ data class ProductDto(
     @SerialName("low_stock_threshold") val lowStockThreshold: Double = 0.0,
     @SerialName("pack_size") val packSize: Double = 1.0,
     @SerialName("conversion_rate") val conversionRate: Double = 1.0,
+    @SerialName("tracks_powder_packs") val tracksPowderPacks: Boolean = false,
     @SerialName("is_sellable") val isSellable: Boolean = true,
+    @SerialName("product_type") val productType: String = if (isSellable) "sellable" else "raw",
+    @SerialName("base_unit") val baseUnit: String = "piece",
     @SerialName("updated_at") val updatedAt: String = "",
+    @SerialName("image_url") val imageUrl: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
+)
+
+@Serializable
+data class ProductRecipeDto(
+    val id: String,
+    @SerialName("stall_id") val stallId: String,
+    @SerialName("parent_product_id") val parentProductId: String,
+    @SerialName("ingredient_product_id") val ingredientProductId: String,
+    val quantity: Double,
+    @SerialName("updated_at") val updatedAt: String,
 )

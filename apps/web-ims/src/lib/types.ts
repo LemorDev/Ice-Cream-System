@@ -14,6 +14,7 @@ export type Stall = {
   code: string
   updated_at: string
   overhead_config?: OverheadItem[] | null
+  financial_report_reset_at?: string | null
 }
 
 export type Category = {
@@ -26,24 +27,60 @@ export type Product = {
   id: string
   stall_id: string
   category_id: string | null
+  sell_category: string | null
   sku: string
   name: string
   unit: string
   sale_price: number
   cost_price: number
+  purchase_unit_name: string | null
   low_stock_threshold: number
   pack_size: number
   conversion_rate: number
+  tracks_powder_packs?: boolean
   is_sellable: boolean
+  product_type: 'raw' | 'packaging' | 'sellable'
+  base_unit: 'g' | 'ml' | 'piece'
+  image_url?: string | null
   updated_at: string
   deleted_at: string | null
+}
+
+export type ProductRecipe = {
+  id: string
+  stall_id: string
+  parent_product_id: string
+  ingredient_product_id: string
+  quantity: number
+  updated_at: string
+}
+
+export type DailyStoreClosing = {
+  id: string
+  stall_id: string
+  business_day_id: string | null
+  business_date: string
+  gross_sales: number
+  cogs: number
+  waste_cost: number
+  overhead_cost: number
+  revenue_deduction: number
+  net_profit: number
+  expected_cash: number
+  collected_cash: number
+  device_id: string | null
+  closed_at: string
 }
 
 export type InventoryEntry = {
   id: string
   product_id: string
+  business_day_id?: string | null
+  business_date?: string
+  unit_cost?: number | null
   quantity_delta: number
-  movement_type: 'receive' | 'sale' | 'void_restock' | 'void_waste' | 'adjustment' | 'opening_balance'
+  sealed_packs_delta?: number
+  movement_type: 'receive' | 'sale' | 'void_restock' | 'void_waste' | 'adjustment' | 'opening_balance' | 'pack_unsealed' | 'pack_reclassified'
   reason: string | null
   reference_id: string | null
   occurred_at: string
@@ -52,6 +89,9 @@ export type InventoryEntry = {
 export type Transaction = {
   id: string
   receipt_number: string
+  business_day_id?: string | null
+  business_date?: string
+  cogs?: number
   status: 'completed' | 'voided' | 'refunded'
   subtotal: number
   total_amount: number
@@ -70,6 +110,14 @@ export type TransactionItem = {
   line_total: number
 }
 
+export type SaleComponent = {
+  id: string
+  transaction_id: string
+  product_id: string
+  quantity: number
+  cost_total: number
+}
+
 export type BusinessDay = {
   id: string
   stall_id: string
@@ -84,10 +132,51 @@ export type BusinessDay = {
   updated_at: string
 }
 
+export type RevenueDeduction = {
+  id: string
+  stall_id: string
+  business_day_id: string
+  business_date: string
+  amount: number
+  affects_profit: boolean
+  reason: string
+  cashier_id: string
+  occurred_at: string
+}
+
+export type SaleReversal = {
+  id: string
+  transaction_id: string
+  stall_id: string
+  original_day_id: string
+  payout_day_id: string
+  original_business_date: string
+  payout_business_date: string
+  cashier_id: string
+  kind: 'refund' | 'void'
+  reason: string
+  restock: boolean
+  cash_returned: number
+  occurred_at: string
+}
+
+export type ClosedDayCorrection = {
+  transaction_id: string
+  stall_id: string
+  business_day_id: string | null
+  business_date: string
+  added_gross: number
+  added_cogs: number
+  reason: string
+  posted_at: string
+}
+
 export type ManagedUser = {
   id: string
   stall_id: string
-  email: string
+  email: string | null
+  username: string | null
+  employee_id: string | null
   display_name: string
   role: 'owner' | 'cashier'
   is_active: boolean
@@ -101,6 +190,8 @@ export type DailyProfitReport = {
   cogs: number
   wasteCost: number
   fixedOverhead: number
+  revenueDeduction: number
+  profitDeduction: number
   netProfit: number
   completedSales: number
   voidedSales: number
@@ -113,7 +204,14 @@ export type WorkspaceData = {
   inventory: InventoryEntry[]
   transactions: Transaction[]
   transactionItems: TransactionItem[]
+  saleComponents?: SaleComponent[]
   businessDays: BusinessDay[]
+  revenueDeductions: RevenueDeduction[]
+  saleReversals?: SaleReversal[]
+  closedDayCorrections?: ClosedDayCorrection[]
+  deductionsAvailable: boolean
+  recipes: ProductRecipe[]
+  dailyClosings: DailyStoreClosing[]
 }
 
 export type StockMap = Record<string, number>

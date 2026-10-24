@@ -5,5 +5,8 @@
     "dev": "pnpm --filter ice-cream-ims dev",
     "build": "pnpm --filter ice-cream-ims build",
     "test": "pnpm --filter ice-cream-ims test"
+  },
+  "devDependencies": {
+    "supabase": "2.118.0"
   }
 }

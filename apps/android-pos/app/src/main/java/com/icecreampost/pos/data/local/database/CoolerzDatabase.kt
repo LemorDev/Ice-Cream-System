@@ -20,6 +20,14 @@ import com.icecreampost.pos.data.local.entity.TransactionEntity
 import com.icecreampost.pos.data.local.entity.AppSessionEntity
 import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.data.local.dao.BusinessDayDao
+import com.icecreampost.pos.data.local.dao.ProductRecipeDao
+import com.icecreampost.pos.data.local.dao.DailyStoreClosingDao
+import com.icecreampost.pos.data.local.entity.ProductRecipeEntity
+import com.icecreampost.pos.data.local.entity.DailyStoreClosingEntity
+import com.icecreampost.pos.data.local.dao.RevenueDeductionDao
+import com.icecreampost.pos.data.local.entity.RevenueDeductionEntity
+import com.icecreampost.pos.data.local.entity.SaleReversalEntity
+import com.icecreampost.pos.data.local.dao.SaleReversalDao
 
 @Database(
     entities = [
@@ -32,8 +40,12 @@ import com.icecreampost.pos.data.local.dao.BusinessDayDao
         SyncStateEntity::class,
         AppSessionEntity::class,
         BusinessDayEntity::class,
+        ProductRecipeEntity::class,
+        DailyStoreClosingEntity::class,
+        RevenueDeductionEntity::class,
+        SaleReversalEntity::class,
     ],
-    version = 3,
+    version = 15,
     exportSchema = true,
 )
 abstract class CoolerzDatabase : RoomDatabase() {
@@ -44,8 +56,52 @@ abstract class CoolerzDatabase : RoomDatabase() {
     abstract fun syncStateDao(): SyncStateDao
     abstract fun sessionDao(): SessionDao
     abstract fun businessDayDao(): BusinessDayDao
+    abstract fun productRecipeDao(): ProductRecipeDao
+    abstract fun dailyStoreClosingDao(): DailyStoreClosingDao
+    abstract fun revenueDeductionDao(): RevenueDeductionDao
+    abstract fun saleReversalDao(): SaleReversalDao
 
     companion object {
+        // PR #2 used version 4 for pictures; the local development lineage used
+        // version 4 for recipes. Room chooses this bridge for either lineage.
+        val MIGRATION_4_15 = object : Migration(4, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val hasRecipes = db.query("PRAGMA table_info(products)").use { columns ->
+                    val nameIndex = columns.getColumnIndexOrThrow("name")
+                    var found = false
+                    while (columns.moveToNext()) {
+                        if (columns.getString(nameIndex) == "productType") found = true
+                    }
+                    found
+                }
+                if (!hasRecipes) {
+                    db.execSQL("CREATE TEMP TABLE product_image_upgrade AS SELECT id,imageUrl FROM products")
+                    MIGRATION_3_4.migrate(db)
+                }
+                MIGRATION_4_5.migrate(db)
+                MIGRATION_5_6.migrate(db)
+                MIGRATION_6_7.migrate(db)
+                MIGRATION_7_8.migrate(db)
+                MIGRATION_8_9.migrate(db)
+                MIGRATION_9_10.migrate(db)
+                MIGRATION_10_11.migrate(db)
+                MIGRATION_11_12.migrate(db)
+                MIGRATION_12_13.migrate(db)
+                MIGRATION_13_14.migrate(db)
+                MIGRATION_14_15.migrate(db)
+                if (!hasRecipes) {
+                    db.execSQL("UPDATE products SET imageUrl=(SELECT imageUrl FROM product_image_upgrade WHERE product_image_upgrade.id=products.id)")
+                    db.execSQL("DROP TABLE product_image_upgrade")
+                }
+            }
+        }
+
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE products ADD COLUMN imageUrl TEXT")
+            }
+        }
+
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE products ADD COLUMN stallId TEXT NOT NULL DEFAULT ''")
@@ -90,6 +146,82 @@ abstract class CoolerzDatabase : RoomDatabase() {
                 db.execSQL("UPDATE app_session SET isActivated = 0")
                 db.execSQL("CREATE TABLE IF NOT EXISTS business_days (id TEXT NOT NULL PRIMARY KEY, stallId TEXT NOT NULL, deviceId TEXT NOT NULL, cashierId TEXT NOT NULL, businessDate TEXT NOT NULL, openedAt TEXT NOT NULL, openingNotes TEXT, closedAt TEXT, closingCashCents INTEGER, closingNotes TEXT, updatedAt TEXT NOT NULL, isSynced INTEGER NOT NULL DEFAULT 0, syncError TEXT)")
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_business_days_stallId_businessDate ON business_days (stallId, businessDate)")
+            }
+        }
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE products_new (id TEXT NOT NULL PRIMARY KEY, stallId TEXT NOT NULL, categoryId TEXT, sku TEXT NOT NULL, name TEXT NOT NULL, category TEXT NOT NULL, unit TEXT NOT NULL, priceCents INTEGER NOT NULL, costPriceCents INTEGER NOT NULL, lowStockThreshold REAL NOT NULL, packSize REAL NOT NULL, conversionRate REAL NOT NULL, isSellable INTEGER NOT NULL, productType TEXT NOT NULL DEFAULT 'sellable', baseUnit TEXT NOT NULL DEFAULT 'piece', unitsInStock REAL NOT NULL, updatedAt TEXT NOT NULL, deletedAt TEXT, localUpdatedAt TEXT NOT NULL)")
+                db.execSQL("INSERT INTO products_new (id,stallId,categoryId,sku,name,category,unit,priceCents,costPriceCents,lowStockThreshold,packSize,conversionRate,isSellable,productType,baseUnit,unitsInStock,updatedAt,deletedAt,localUpdatedAt) SELECT id,stallId,categoryId,sku,name,category,unit,priceCents,costPriceCents,lowStockThreshold,packSize,conversionRate,isSellable,CASE WHEN isSellable = 1 THEN 'sellable' ELSE 'raw' END,CASE WHEN lower(unit) = 'g' THEN 'g' WHEN lower(unit) = 'ml' THEN 'ml' ELSE 'piece' END,CAST(unitsInStock AS REAL),updatedAt,deletedAt,localUpdatedAt FROM products")
+                db.execSQL("DROP TABLE products")
+                db.execSQL("ALTER TABLE products_new RENAME TO products")
+                db.execSQL("ALTER TABLE inventory_ledger ADD COLUMN isSynced INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE inventory_ledger ADD COLUMN syncError TEXT")
+                db.execSQL("CREATE TABLE IF NOT EXISTS product_recipes (id TEXT NOT NULL PRIMARY KEY, stallId TEXT NOT NULL, parentProductId TEXT NOT NULL, ingredientProductId TEXT NOT NULL, quantity REAL NOT NULL, updatedAt TEXT NOT NULL)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_product_recipes_parentProductId_ingredientProductId ON product_recipes (parentProductId, ingredientProductId)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS daily_store_closings (id TEXT NOT NULL PRIMARY KEY, stallId TEXT NOT NULL, businessDayId TEXT NOT NULL, businessDate TEXT NOT NULL, grossSalesCents INTEGER NOT NULL, cogsCents INTEGER NOT NULL, wasteCostCents INTEGER NOT NULL, overheadCostCents INTEGER NOT NULL, netProfitCents INTEGER NOT NULL, expectedCashCents INTEGER NOT NULL, collectedCashCents INTEGER NOT NULL, deviceId TEXT NOT NULL, closedAt TEXT NOT NULL, isSynced INTEGER NOT NULL DEFAULT 0, syncError TEXT)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_daily_store_closings_stallId_businessDate ON daily_store_closings (stallId, businessDate)")
+            }
+        }
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE daily_store_closings ADD COLUMN revenueDeductionCents INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE daily_store_closings ADD COLUMN deductionReason TEXT")
+            }
+        }
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS revenue_deductions (id TEXT NOT NULL, stallId TEXT NOT NULL, businessDayId TEXT NOT NULL, businessDate TEXT NOT NULL, amountCents INTEGER NOT NULL, reason TEXT NOT NULL, cashierId TEXT NOT NULL, occurredAt TEXT NOT NULL, isSynced INTEGER NOT NULL, syncError TEXT, PRIMARY KEY(id))")
+            }
+        }
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE revenue_deductions ADD COLUMN affectsProfit INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE app_session ADD COLUMN transferReady INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE business_days ADD COLUMN recoveryKnownSalesCents INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE business_days ADD COLUMN recoveryKnownDeductionsCents INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE business_days ADD COLUMN isRecoveryDay INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE business_days ADD COLUMN recoveryKnownCogsCents INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE business_days ADD COLUMN recoveryKnownWasteCents INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE business_days ADD COLUMN recoveryKnownProfitDeductionsCents INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE business_days ADD COLUMN recoveryKnownOrders INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE transactions ADD COLUMN businessDayId TEXT")
+                db.execSQL("ALTER TABLE transactions ADD COLUMN cogsCents INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE inventory_ledger ADD COLUMN businessDayId TEXT")
+                db.execSQL("ALTER TABLE inventory_ledger ADD COLUMN costTotalCents INTEGER")
+                db.execSQL("UPDATE transactions SET businessDayId=(SELECT day.id FROM business_days day WHERE day.stallId=transactions.stallId AND transactions.occurredAt>=day.openedAt AND transactions.occurredAt<=COALESCE(day.closedAt,'9999-12-31T23:59:59Z') ORDER BY day.openedAt DESC LIMIT 1)")
+                db.execSQL("UPDATE inventory_ledger SET businessDayId=(SELECT day.id FROM business_days day WHERE day.stallId=inventory_ledger.stallId AND inventory_ledger.occurredAt>=day.openedAt AND inventory_ledger.occurredAt<=COALESCE(day.closedAt,'9999-12-31T23:59:59Z') ORDER BY day.openedAt DESC LIMIT 1)")
+            }
+        }
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS sale_reversals (id TEXT NOT NULL PRIMARY KEY, transactionId TEXT NOT NULL, stallId TEXT NOT NULL, originalDayId TEXT NOT NULL, payoutDayId TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, restock INTEGER NOT NULL, cashReturnedCents INTEGER NOT NULL, occurredAt TEXT NOT NULL, isSynced INTEGER NOT NULL, syncError TEXT)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_sale_reversals_transactionId ON sale_reversals (transactionId)")
+            }
+        }
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE products ADD COLUMN tracksPowderPacks INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE inventory_ledger ADD COLUMN sealedPacksDelta INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

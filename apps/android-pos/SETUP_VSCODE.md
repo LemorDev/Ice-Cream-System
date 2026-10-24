@@ -50,6 +50,7 @@ adb devices
 ```
 
 The device status must be `device`, not `unauthorized` or `offline`.
+If ADB reports that the device was not found during install, reconnect the USB cable, unlock the phone, and run `adb devices` again before retrying.
 
 ## 5. Install and launch the development build
 
@@ -59,6 +60,7 @@ adb shell monkey -p com.icecreampost.pos.dev 1
 ```
 
 The app is named `Coolerz POS` and the dev variant has the package suffix `.dev`.
+If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the installed dev app was signed with a different debug key. Preserve its data by placing the original `debug.keystore` at `.local/debug.keystore` and adding `debug.keystore.path=.local/debug.keystore` to `local.properties` before rebuilding. The `.local` directory is ignored by Git.
 
 ## 6. Useful development commands
 

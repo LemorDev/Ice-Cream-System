@@ -17,6 +17,13 @@ data class BusinessDayEntity(
     val closingCashCents: Long? = null,
     val closingNotes: String? = null,
     val updatedAt: String,
+    val recoveryKnownSalesCents: Long = 0,
+    val recoveryKnownOrders: Int = 0,
+    val recoveryKnownDeductionsCents: Long = 0,
+    val recoveryKnownProfitDeductionsCents: Long = 0,
+    val recoveryKnownCogsCents: Long = 0,
+    val recoveryKnownWasteCents: Long = 0,
+    val isRecoveryDay: Boolean = false,
     val isSynced: Boolean = false,
     val syncError: String? = null,
 )

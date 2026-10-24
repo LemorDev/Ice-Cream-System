@@ -5,6 +5,7 @@ export type WebView =
   | 'overview'
   | 'stall'
   | 'staff'
+  | 'dataReset'
   | 'products'
   | 'receiving'
   | 'adjustments'
@@ -13,6 +14,7 @@ export type WebView =
   | 'reports'
   | 'productReport'
   | 'days'
+  | 'dailyClose'
 
 export type NavigationGroup = {
   label: string
@@ -21,17 +23,17 @@ export type NavigationGroup = {
 
 const commonOperations: NavigationGroup[] = [
   { label: 'Inventory', items: ['products', 'receiving', 'adjustments', 'pricing'] },
-  { label: 'Sales', items: ['transactions', 'reports', 'productReport', 'days'] },
+  { label: 'Sales', items: ['transactions', 'reports', 'productReport', 'dailyClose', 'days'] },
 ]
 
 const navigationByRole: Record<'system_admin' | 'owner', NavigationGroup[]> = {
   system_admin: [
-    { label: 'Administration', items: ['admin', 'stall', 'staff'] },
+    { label: 'Administration', items: ['admin', 'stall', 'staff', 'dataReset'] },
     { label: 'Selected stall', items: ['overview'] },
     ...commonOperations,
   ],
   owner: [
-    { label: 'Monitoring', items: ['overview', 'reports', 'productReport', 'days'] },
+    { label: 'Monitoring', items: ['overview', 'reports', 'productReport', 'dailyClose', 'days'] },
   ],
 }
 
@@ -40,6 +42,7 @@ const baseLabels: Record<WebView, string> = {
   overview: 'Overview',
   stall: 'Stall settings',
   staff: 'Staff & devices',
+  dataReset: 'Data reset',
   products: 'Products',
   receiving: 'Receive stock',
   adjustments: 'Adjust inventory',
@@ -48,6 +51,7 @@ const baseLabels: Record<WebView, string> = {
   reports: 'Sales reports',
   productReport: 'Product performance',
   days: 'Operating days',
+  dailyClose: 'Daily Close & Profit',
 }
 
 export function getNavigation(role: AppRole): NavigationGroup[] {

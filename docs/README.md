@@ -12,9 +12,17 @@ pnpm install
 pnpm dev
 ```
 
+`pnpm dev` is the root shortcut for `pnpm --dir apps/web-ims dev`.
+Both run the local development IMS against the development Supabase project;
+neither deploys the website. See the [first-release deployment plan](FIRST_RELEASE_DEPLOYMENT_PLAN.md)
+for the online IMS, Owner dashboard, and POS release workflow.
+
 Open the URL shown in the terminal, normally [http://localhost:5173](http://localhost:5173).
 
-Before signing in, create `apps/web-ims/.env.local` from `apps/web-ims/.env.example` and enter the Supabase project URL and anon key.
+Before signing in, configure the development URL and anon key in the ignored
+`apps/web-ims/.env.development.local` file using
+`apps/web-ims/.env.development.example` as the template. The development build
+also requires the production URL for its environment-isolation check.
 
 Owners can install the deployed dashboard on an iPhone from Safari using **Share → Add to Home Screen**. See [RBAC.md](RBAC.md) for roles, account setup, stall assignment, POS activation, and operating-day rules.
 
@@ -122,3 +130,28 @@ supabase/migrations/202608140001_android_sync_contract.sql
 ```
 
 It creates the idempotent `push_pos_transaction(jsonb)` RPC used by Android; later migrations include necessary corrections. The endpoint, payload, header, cursor, retry, and recovery rules are documented in [ANDROID_SYNC_CONTRACT.md](ANDROID_SYNC_CONTRACT.md). See [PROJECT_REVIEW.md](PROJECT_REVIEW.md) for remaining gaps between the intended contract and current behavior.
+
+## Fingerprint login in the POS
+
+1. Add a fingerprint in the phone's Android Settings, then sign in to the POS with
+   the cashier's stall code, employee ID and password.
+2. After password sign-in on an activated POS, tap **Enable fingerprint unlock**
+   and authenticate with Android's prompt. The offer appears when this phone can
+   use secure biometrics and the cashier has yet to enable them. Tap **Not now**
+   to continue. Setup is also available under **More → Settings → Fingerprint login**.
+3. Leaving the app or tapping **More → Lock POS** locks the retained session. Tap
+   **Unlock with fingerprint** to return. A valid retained session can unlock offline.
+4. Tap **Use password instead** to sign in online. This keeps the fingerprint setup
+   when the same cashier signs back into a locked session with working enrollment.
+   Signing out, switching cashiers, or recovering from an expired session clears setup.
+
+Android verifies a Class 3 biometric (fingerprint, or another supported strong
+biometric). The app stores no fingerprint data or saved password. An account marker
+is encrypted with an authentication-required Android Keystore key and excluded
+from backups. Changing enrolled biometrics invalidates that key; password sign-in
+and re-enabling fingerprint login restores access. Background sale synchronization
+continues independently of the screen lock.
+
+To verify on a device, check successful unlock, cancellation, unrecognized fingers,
+sensor lockout/unavailability, no enrolled fingerprint, app restart/backgrounding,
+expired sessions, changed biometric enrollment, switching cashiers, and sign-out.

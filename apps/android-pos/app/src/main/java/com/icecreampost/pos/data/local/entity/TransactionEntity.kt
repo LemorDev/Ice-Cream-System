@@ -7,12 +7,14 @@ import androidx.room.PrimaryKey
 data class TransactionEntity(
     @PrimaryKey val id: String,
     val stallId: String = "",
+    val businessDayId: String? = null,
     val deviceId: String? = null,
     val cashierId: String? = null,
     val receiptNumber: String = "",
     val status: String = "completed",
     val subtotalCents: Long = 0,
     val totalCents: Long,
+    val cogsCents: Long = 0,
     val cashReceivedCents: Long? = null,
     val changeAmountCents: Long? = null,
     val occurredAt: String = "",
@@ -23,4 +25,5 @@ data class TransactionEntity(
     val localCreatedAt: String = "",
     val lastSyncAttemptAt: String? = null,
     val deletedAt: String? = null,
+    val catalogRevisionId: String? = null,
 )

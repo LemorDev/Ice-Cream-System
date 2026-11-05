@@ -22,8 +22,9 @@ class SyncWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         return try {
             logger.info("Sync started")
+            sessionRepository.retryPendingRevocations()
             val session = sessionRepository.restoreStoredSession(allowExpiredForOfflineWork = true)
-            if (session == null || !session.isActivated) {
+            if (session == null || !session.isActivated || !sessionRepository.hasCloudToken()) {
                 logger.info("Sync skipped: no activated cashier session")
                 Result.success()
             } else {

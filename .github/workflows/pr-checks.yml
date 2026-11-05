@@ -1,0 +1,106 @@
+name: PR checks
+
+on:
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Web checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.21.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/web-ims lint
+      - run: pnpm --dir apps/web-ims test
+      - run: pnpm --dir apps/web-ims build:development
+        env:
+          VITE_APP_ENV: development
+          VITE_SUPABASE_URL: https://ci-development.invalid
+          VITE_SUPABASE_ANON_KEY: ci-public-placeholder
+          VITE_SUPABASE_PRODUCTION_URL: https://ci-production.invalid
+      - run: pnpm --dir apps/web-ims build:production
+        env:
+          VITE_APP_ENV: production
+          VITE_SUPABASE_URL: https://ci-production.invalid
+          VITE_SUPABASE_ANON_KEY: ci-public-placeholder
+      - run: pnpm audit --audit-level=moderate
+        if: ${{ !cancelled() }}
+
+  database:
+    name: Database checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SUPABASE_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.21.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.19.0
+      - name: Install locked database tooling
+        run: pnpm install --frozen-lockfile
+      - run: node supabase/tests/pos_stock_receiving.integration.mjs --extended --activation
+      - run: node supabase/tests/pos_gateway.integration.mjs
+      - run: node apps/android-pos/scripts/verify-room-upgrade.mjs
+      - name: Verify migrations on disposable local Supabase
+        run: |
+          pnpm exec supabase start
+          pnpm exec supabase db reset --local --no-seed
+          db_container=$(docker ps --filter 'name=supabase_db_' --format '{{.Names}}')
+          test -n "$db_container"
+          for fixture in app_authorization admin_passkey_assurance pos_device_proof_and_logout r08_development_contract system_admin_data_reset product_images powder_pack_inventory; do
+            docker exec -i "$db_container" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "supabase/tests/$fixture.sql"
+          done
+      - name: Stop disposable local Supabase
+        if: always()
+        run: pnpm exec supabase stop --no-backup
+
+  android:
+    name: Android checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - name: Configure isolated CI endpoints
+        run: |
+          cat > local.properties <<'EOF'
+          supabase.dev.url=https://ci-development.invalid
+          supabase.dev.anonKey=ci-public-placeholder
+          supabase.production.url=https://ci-production.invalid
+          supabase.production.anonKey=ci-public-placeholder
+          EOF
+        working-directory: apps/android-pos
+      - name: Verify dependencies and build Android variants
+        run: |
+          test -s gradle/verification-metadata.xml
+          bash ./gradlew :app:testDevDebugUnitTest :app:lintDevDebug :app:assembleDevDebug :app:assembleProductionRelease --dependency-verification=strict --no-daemon
+        working-directory: apps/android-pos

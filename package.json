@@ -5,5 +5,9 @@
     "dev": "pnpm --filter ice-cream-ims dev",
     "build": "pnpm --filter ice-cream-ims build",
     "test": "pnpm --filter ice-cream-ims test"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "supabase": "2.118.0"
   }
 }

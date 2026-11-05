@@ -1,166 +1,187 @@
 package com.icecreampost.pos.ui.screen.home
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.runtime.Composable
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import com.icecreampost.pos.ui.PosViewModel
-import com.icecreampost.pos.ui.component.AmountVisibilityButton
-import com.icecreampost.pos.ui.component.SyncStatusCard
-import com.icecreampost.pos.ui.component.formatMoney
-import java.time.Instant
+import com.icecreampost.pos.ui.component.*
+import com.icecreampost.pos.ui.screen.checkout.toCentsOrNull
 import java.time.LocalDate
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 @Composable
-fun HomeScreen(
-    viewModel: PosViewModel,
-    onCatalog: () -> Unit,
-    onHistory: () -> Unit,
-    onSettings: () -> Unit,
-) {
+fun HomeScreen(viewModel: PosViewModel, onCatalog: () -> Unit, onOperatingDay: () -> Unit, onInventory: () -> Unit) {
     val session by viewModel.session.collectAsStateWithLifecycle()
-    val syncState by viewModel.syncState.collectAsStateWithLifecycle()
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
+    val lowStockProducts by viewModel.lowStockProducts.collectAsStateWithLifecycle()
     val businessDay by viewModel.businessDay.collectAsStateWithLifecycle()
-    val error by viewModel.error.collectAsStateWithLifecycle()
-    val busy by viewModel.isBusy.collectAsStateWithLifecycle()
     val amountsVisible by viewModel.amountsVisible.collectAsStateWithLifecycle()
-    val isOpen = businessDay?.closedAt == null && businessDay != null
-    val today = LocalDate.now(ZoneId.of("Asia/Manila")).toString()
-    val alreadyOperatedToday = businessDay?.businessDate == today
-    val visibleDay = businessDay?.takeIf { isOpen || alreadyOperatedToday }
-    val completedSales = if (visibleDay == null) emptyList() else transactions.filter {
-        it.status == "completed" && it.stallId == visibleDay.stallId && it.occurredAt >= visibleDay.openedAt &&
-            (visibleDay.closedAt == null || it.occurredAt <= visibleDay.closedAt)
+    val today = LocalDate.now(businessZone).toString()
+    val day = businessDay?.takeIf { it.stallId == session?.stallId }
+    val stockAlerts = lowStockProducts.filter { it.stallId == session?.stallId && it.deletedAt == null }
+    val isOpen = day != null && day.closedAt == null
+    val visibleDay = day?.takeIf { isOpen || it.businessDate == today }
+    val completed = transactions.filter {
+        visibleDay != null && it.status == "completed" && it.stallId == visibleDay.stallId &&
+            it.occurredAt >= visibleDay.openedAt && (visibleDay.closedAt == null || it.occurredAt <= visibleDay.closedAt)
     }
-    val salesTotal = completedSales.sumOf { it.totalCents }
-    var showCloseDialog by remember { mutableStateOf(false) }
-    var closingNotes by remember { mutableStateOf("") }
-
-    if (showCloseDialog) {
-        AlertDialog(
-            onDismissRequest = { showCloseDialog = false },
-            title = { Text("Close operating day?") },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Cash sales recorded on this device: ${formatMoney(salesTotal, amountsVisible)}")
-                OutlinedTextField(closingNotes, { closingNotes = it }, label = { Text("Closing notes (optional)") })
-            } },
-            confirmButton = { Button(onClick = { viewModel.closeDay(closingNotes); closingNotes = ""; showCloseDialog = false }, enabled = !busy) { Text("Close day") } },
-            dismissButton = { OutlinedButton(onClick = { showCloseDialog = false }) { Text("Cancel") } },
-        )
-    }
-    LazyColumn(modifier = Modifier.fillMaxSize().safeDrawingPadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    val activitySalesCents = completed.sumOf { it.totalCents } + (visibleDay?.recoveryKnownSalesCents ?: 0)
+    val activityOrders = completed.size + (visibleDay?.recoveryKnownOrders ?: 0)
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text("COOLERZ POS", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                AmountVisibilityButton(visible = amountsVisible, onToggle = viewModel::toggleAmountsVisible)
-            }
-            Text("Good day, ${session?.displayName ?: "Cashier"}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        item { SyncStatusCard(syncState) }
-        error?.let { message ->
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
-                        OutlinedButton(onClick = viewModel::dismissError) { Text("Dismiss") }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                CoolerzLogo(Modifier.size(48.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("COOLERZ POS", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Text("Hello, ${session?.displayName ?: "Cashier"}", style = MaterialTheme.typography.titleLarge,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                    IconButton(onClick = onInventory, modifier = Modifier.semantics {
+                        contentDescription = if (stockAlerts.isEmpty()) "View inventory" else "View inventory, ${stockAlerts.size} stock alerts"
+                    }) {
+                        Box {
+                            PosIcon(PosSymbol.Bell)
+                            if (stockAlerts.isNotEmpty()) Box(
+                                Modifier.align(Alignment.TopEnd).size(7.dp).background(MaterialTheme.colorScheme.error, CircleShape)
+                            )
+                        }
                     }
                 }
             }
         }
         item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            StallStatusCard(
+                isOpen = isOpen,
+                date = formatBusinessDate(visibleDay?.businessDate ?: today),
+                detail = if (isOpen) "Opened ${formatReceiptTime(day!!.openedAt).substringAfter(" · ")}"
+                    else if (day?.businessDate == today) "Today's operating day is closed."
+                    else "Open the stall before accepting sales.",
+                onOperatingDay = onOperatingDay,
+            )
+        }
+        item {
+            Button(onClick = onCatalog, enabled = isOpen, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                shape = MaterialTheme.shapes.medium) {
+                PosIcon(PosSymbol.Add)
+                Spacer(Modifier.width(8.dp))
+                Text("New Sale", style = MaterialTheme.typography.titleMedium)
+            }
+        }
+        if (stockAlerts.isNotEmpty()) item {
+            val outOfStockCount = stockAlerts.count { it.unitsInStock <= 0.0 }
+            Surface(
+                onClick = onInventory,
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.errorContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
             ) {
-                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        if (isOpen) "Stall is open" else "Operating day is closed",
+                        if (outOfStockCount > 0) "Stock needs attention" else "Low stock alert",
                         style = MaterialTheme.typography.titleMedium,
-                        color = if (isOpen) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
                     )
-                    businessDay?.let { day ->
-                        Text("Business date: ${day.businessDate}", style = MaterialTheme.typography.bodyMedium)
-                        Text("Opened: ${formatTimestamp(day.openedAt)}", style = MaterialTheme.typography.bodySmall)
-                        day.closedAt?.let { Text("Closed: ${formatTimestamp(it)}", style = MaterialTheme.typography.bodySmall) }
+                    Text(
+                        buildString {
+                            append("${stockAlerts.size} stock item${if (stockAlerts.size == 1) "" else "s"} at or below its alert level")
+                            if (outOfStockCount > 0) append(" · $outOfStockCount out of stock")
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    stockAlerts.take(3).forEach { product ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(product.name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer)
+                            Text(formatStock(product.unitsInStock, product.baseUnit), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer)
+                        }
                     }
-                    if (isOpen) {
-                        OutlinedButton(onClick = { showCloseDialog = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Close operating day") }
-                    } else if (alreadyOperatedToday) {
-                        Text("Today's operating day is closed. The next day can be opened after midnight.", style = MaterialTheme.typography.bodySmall)
-                    } else {
-                        Button(onClick = { viewModel.openDay() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Open today's stall") }
-                    }
+                    if (stockAlerts.size > 3) Text("And ${stockAlerts.size - 3} more", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                    Text("Tap to review inventory", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onErrorContainer)
                 }
             }
         }
         item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("New sale", style = MaterialTheme.typography.titleLarge)
-                    Text(if (isOpen) "Build an order from your available products." else "Open the operating day before accepting sales.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Button(onClick = onCatalog, enabled = isOpen, modifier = Modifier.fillMaxWidth()) { Text("Start a sale  →") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Today's activity", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                AmountVisibilityButton(amountsVisible, viewModel::toggleAmountsVisible)
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Metric("Sales", formatMoney(activitySalesCents, amountsVisible), PosSymbol.Trend, Modifier.weight(1f))
+                Metric("Orders", activityOrders.toString(), PosSymbol.Orders, Modifier.weight(1f))
+            }
+        }
+        item { HomeAnalytics(transactions, session?.stallId, amountsVisible) }
+        item { SyncStatusLine(viewModel, showOfflineReadiness = true) }
+    }
+}
+
+@Composable
+private fun StallStatusCard(isOpen: Boolean, date: String, detail: String, onOperatingDay: () -> Unit) {
+    Surface(shape = MaterialTheme.shapes.large, color = Color(0xFF422775), contentColor = Color.White) {
+        Column(
+            Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF511B7E), Color(0xFF343477))))
+                .padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Ready for the day", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                Surface(shape = CircleShape, color = Color.White.copy(alpha = 0.14f), contentColor = Color.White) {
+                    Text(date, Modifier.padding(horizontal = 10.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
                 }
             }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                MetricCard("Sales", formatMoney(salesTotal, amountsVisible), Modifier.weight(1f))
-                MetricCard("Orders", completedSales.size.toString(), Modifier.weight(1f))
+            Surface(shape = CircleShape, color = if (isOpen) Color(0xFF20564F) else Color(0xFF57376F),
+                contentColor = if (isOpen) Color(0xFFA8F5D8) else Color.White) {
+                Text(if (isOpen) "Stall open" else "Stall closed",
+                    Modifier.padding(horizontal = 10.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
             }
-        }
-        item {
-            Text("More", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = onHistory, modifier = Modifier.weight(1f)) { Text("History") }
-                OutlinedButton(onClick = onSettings, modifier = Modifier.weight(1f)) { Text("Settings") }
+            HorizontalDivider(color = Color.White.copy(alpha = 0.2f))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(detail, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = onOperatingDay, colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) {
+                    Text(if (isOpen) "Update status" else "Operating day")
+                }
             }
         }
     }
 }
 
-private fun formatTimestamp(value: String): String = runCatching {
-    DateTimeFormatter.ofPattern("MMM d, yyyy · h:mm a")
-        .withZone(ZoneId.of("Asia/Manila")).format(Instant.parse(value))
-}.getOrDefault(value)
-
 @Composable
-private fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.titleLarge)
+private fun Metric(label: String, value: String, icon: PosSymbol, modifier: Modifier) {
+    Surface(modifier = modifier, shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), color = MaterialTheme.colorScheme.surface) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+                    PosIcon(icon, Modifier.padding(6.dp))
+                }
+            }
+            Text(value, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
+}
+
+internal fun validateRevenueDeduction(amount: String, reason: String, grossSalesCents: Long): String? {
+    if (amount.isBlank()) return null
+    val deductionCents = amount.toCentsOrNull() ?: return "Enter a valid deduction amount."
+    if (deductionCents <= 0) return "Enter a deduction greater than zero."
+    if (deductionCents > grossSalesCents) return "Deduction cannot exceed gross sales."
+    if (deductionCents > 0 && reason.isBlank()) return "Provide a reason for the deduction."
+    return null
 }

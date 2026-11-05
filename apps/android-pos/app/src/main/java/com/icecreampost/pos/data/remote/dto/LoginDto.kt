@@ -2,11 +2,15 @@ package com.icecreampost.pos.data.remote.dto
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.builtins.nullable
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 
 @Serializable
 data class LoginRequest(
     @SerialName("p_stall_code") val stallCode: String,
-    @SerialName("p_email") val email: String,
+    @SerialName("p_employee_id") val employeeId: String,
     @SerialName("p_password") val password: String,
 )
 
@@ -32,4 +36,41 @@ data class ActivateDeviceRequest(
 data class ActivateDeviceResponse(
     @SerialName("device_id") val deviceId: String,
     @SerialName("stall_id") val stallId: String,
+    @SerialName("resume_day") val resumeDay: RecoveredBusinessDay? = null,
 )
+
+@Serializable
+data class RecoveredBusinessDay(
+    val id: String,
+    @SerialName("business_date") val businessDate: String,
+    @SerialName("opened_at") val openedAt: String,
+    @SerialName("cashier_id") val cashierId: String,
+    @SerialName("opening_notes") val openingNotes: String? = null,
+    @SerialName("known_sales") val knownSales: Double = 0.0,
+    @SerialName("known_orders") val knownOrders: Int = 0,
+    @SerialName("known_deductions") val knownDeductions: Double = 0.0,
+    @SerialName("known_profit_deductions") val knownProfitDeductions: Double = 0.0,
+    @SerialName("known_cogs") val knownCogs: Double = 0.0,
+    @SerialName("known_waste") val knownWaste: Double = 0.0,
+)
+
+// Retrofit resolves the Java return type without Kotlin's nullable marker.
+// A non-null response wrapper explicitly decodes the RPC's object-or-null body.
+@Serializable(with = RecoveredDayResponseSerializer::class)
+data class RecoveredDayResponse(val day: RecoveredBusinessDay?)
+
+object RecoveredDayResponseSerializer : KSerializer<RecoveredDayResponse> {
+    private val delegate = RecoveredBusinessDay.serializer().nullable
+    override val descriptor = delegate.descriptor
+    override fun deserialize(decoder: Decoder) = RecoveredDayResponse(decoder.decodeSerializableValue(delegate))
+    override fun serialize(encoder: Encoder, value: RecoveredDayResponse) = encoder.encodeSerializableValue(delegate, value.day)
+}
+
+@Serializable
+data class RecoveredDayRequest(@SerialName("p_device_id") val deviceId: String)
+
+@Serializable
+data class PrepareReplacementRequest(@SerialName("p_device_id") val deviceId: String)
+
+@Serializable
+data class PrepareReplacementResponse(val status: String)

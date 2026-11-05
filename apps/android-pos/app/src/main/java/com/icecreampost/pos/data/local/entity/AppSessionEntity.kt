@@ -11,7 +11,7 @@ data class AppSessionEntity(
     val deviceId: String? = null,
     val displayName: String,
     val role: String,
-    val sessionToken: String? = null,
+    val credentialRef: String? = null,
     val expiresAt: String? = null,
     val isActivated: Boolean = false,
     val transferReady: Boolean = false,

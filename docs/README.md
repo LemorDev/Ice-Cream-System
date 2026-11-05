@@ -135,14 +135,15 @@ It creates the idempotent `push_pos_transaction(jsonb)` RPC used by Android; lat
 
 1. Add a fingerprint in the phone's Android Settings, then sign in to the POS with
    the cashier's stall code, employee ID and password.
-2. Open **Settings → Enable fingerprint login** and authenticate with Android's
-   biometric prompt. The setting applies to the current cashier on this phone.
-3. Leaving the app or pressing **Lock POS** locks the retained session. Use
-   **Sign in with fingerprint** when returning. A valid retained session can be
-   unlocked offline; an expired session requires online password sign-in.
-4. Use **Turn off fingerprint login** to disable locking, or **Sign out** to clear
-   the session and enrollment. Password sign-in resets enrollment, including when
-   switching cashiers; enable fingerprint login again afterward if desired.
+2. After password sign-in on an activated POS, tap **Enable fingerprint unlock**
+   and authenticate with Android's prompt. The offer appears when this phone can
+   use secure biometrics and the cashier has yet to enable them. Tap **Not now**
+   to continue. Setup is also available under **More → Settings → Fingerprint login**.
+3. Leaving the app or tapping **More → Lock POS** locks the retained session. Tap
+   **Unlock with fingerprint** to return. A valid retained session can unlock offline.
+4. Tap **Use password instead** to sign in online. This keeps the fingerprint setup
+   when the same cashier signs back into a locked session with working enrollment.
+   Signing out, switching cashiers, or recovering from an expired session clears setup.
 
 Android verifies a Class 3 biometric (fingerprint, or another supported strong
 biometric). The app stores no fingerprint data or saved password. An account marker

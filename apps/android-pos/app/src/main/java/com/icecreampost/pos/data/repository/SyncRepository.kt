@@ -132,11 +132,13 @@ class SyncRepository @Inject constructor(
         for (entry in inventoryLedgerDao.getUnsynced()) {
             try {
                 val response = if (entry.movementType == "pack_unsealed") {
-                    api.pushPackUnseal(PushPackUnsealRequest(PushPackUnsealPayload(
+                    val request = PushPackUnsealRequest(PushPackUnsealPayload(
                         id = entry.id, stallId = entry.stallId, businessDayId = requireNotNull(entry.businessDayId),
                         productId = entry.productId, packsOpened = -entry.sealedPacksDelta,
                         occurredAt = entry.occurredAt,
-                    )))
+                        costTotal = if (entry.quantityDelta < 0) requireNotNull(entry.costTotalCents) / 100.0 else null,
+                    ))
+                    if (entry.quantityDelta < 0) api.pushPowderOpening(request) else api.pushPackUnseal(request)
                 } else api.pushInventoryEntry(PushInventoryEntryRequest(PushInventoryEntryPayload(
                     id = entry.id, stallId = entry.stallId, businessDayId = entry.businessDayId,
                     productId = entry.productId, quantityDelta = entry.quantityDelta, sealedPacksDelta = entry.sealedPacksDelta,
@@ -160,7 +162,7 @@ class SyncRepository @Inject constructor(
             if (transactionDao.getUnsynced().any { it.id == reversal.transactionId }) continue
             try {
                 val movements = inventoryLedgerDao.getReversalMovements(reversal.transactionId)
-                require(movements.isNotEmpty() && movements.all { it.businessDayId == reversal.originalDayId &&
+                require(movements.all { it.businessDayId == reversal.originalDayId &&
                     it.stallId == reversal.stallId && it.movementType == (if (reversal.restock) "void_restock" else "void_waste") }) {
                     "The reversal's stock movements are incomplete."
                 }
@@ -240,7 +242,7 @@ class SyncRepository @Inject constructor(
                 }
                 val gross = transactionDao.getCompletedTotalBetween(closing.stallId, day.openedAt, closing.closedAt) + day.recoveryKnownSalesCents
                 val cashSales = transactionDao.getCashSalesBetween(closing.stallId, day.openedAt, closing.closedAt) + day.recoveryKnownSalesCents
-                val cogs = transactionDao.getCompletedCogsBetween(closing.stallId, day.openedAt, closing.closedAt) + day.recoveryKnownCogsCents
+                val cogs = inventoryLedgerDao.getPowderOpeningCost(day.id) + transactionDao.getCompletedCogsBetween(closing.stallId, day.openedAt, closing.closedAt) + day.recoveryKnownCogsCents
                 val waste = inventoryLedgerDao.getWasteCostBetween(closing.stallId, day.openedAt, closing.closedAt) +
                     reversalDao.wasteCostForOriginalDay(day.id) + day.recoveryKnownWasteCents
                 val cashDeductions = revenueDeductionDao.totalForDay(day.id) + day.recoveryKnownDeductionsCents
@@ -337,7 +339,6 @@ class SyncRepository @Inject constructor(
         require(items.all { it.productName.isNotBlank() && it.quantity > 0 && it.unitPriceCents >= 0 && it.lineTotalCents >= 0 }) {
             "A transaction item contains invalid values."
         }
-        require(components.isNotEmpty()) { "Sale has no ingredient snapshot. Keep it queued for reconciliation." }
         require(components.all { it.stallId == transaction.stallId && it.businessDayId == transaction.businessDayId &&
             it.quantityDelta < 0 && it.costTotalCents != null && it.costTotalCents >= 0 }) {
             "A sale ingredient snapshot is incomplete."
@@ -359,6 +360,7 @@ class SyncRepository @Inject constructor(
                 cashReceived = transaction.cashReceivedCents?.div(100.0),
                 changeAmount = transaction.changeAmountCents?.div(100.0),
                 occurredAt = transaction.occurredAt,
+                catalogRevisionId = transaction.catalogRevisionId,
                 items = items.map { item ->
                     PushTransactionItemPayload(
                         id = item.id,
@@ -411,7 +413,13 @@ class SyncRepository @Inject constructor(
     private fun describeSyncError(label: String, error: Exception): String {
         val serverMessage = (error as? HttpException)?.response()?.errorBody()?.string()
             ?.let { body -> runCatching { Json.parseToJsonElement(body).jsonObject["message"]?.jsonPrimitive?.content }.getOrNull() }
-        return "$label: ${serverMessage ?: error.message ?: "Unable to synchronize."}"
+        val message = when (serverMessage) {
+            "SALE_CATALOG_REVISION_REQUIRED" -> "Catalog approval is missing or expired. Keep this sale for reconciliation."
+            "SALE_CATALOG_PRICE_MISMATCH", "SALE_CATALOG_COMPONENT_MISMATCH" ->
+                "The sale does not match its approved catalog. Keep it for reconciliation."
+            else -> serverMessage ?: error.message ?: "Unable to synchronize."
+        }
+        return "$label: $message"
     }
 
     private fun authorizationError(error: Exception): PosAuthorizationException? {

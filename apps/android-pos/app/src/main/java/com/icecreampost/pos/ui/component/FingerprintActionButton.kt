@@ -17,6 +17,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import javax.crypto.Cipher
@@ -38,12 +41,19 @@ fun FingerprintActionButton(
         activity?.let {
             BiometricPrompt(it, ContextCompat.getMainExecutor(it), object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    if (!prompting) return
                     prompting = false
-                    message = null
-                    result.cryptoObject?.cipher?.let(onSuccess)
+                    val cipher = result.cryptoObject?.cipher
+                    if (cipher == null) {
+                        message = "Fingerprint verification could not finish. Try again or use your password."
+                    } else {
+                        message = null
+                        onSuccess(cipher)
+                    }
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    if (!prompting) return
                     prompting = false
                     if (errorCode !in listOf(BiometricPrompt.ERROR_CANCELED, BiometricPrompt.ERROR_USER_CANCELED, BiometricPrompt.ERROR_NEGATIVE_BUTTON)) {
                         message = "$errString You can sign in with your password."
@@ -53,7 +63,12 @@ fun FingerprintActionButton(
         }
     }
     DisposableEffect(prompt) {
-        onDispose { prompt?.cancelAuthentication() }
+        onDispose {
+            if (prompting) {
+                prompting = false
+                prompt?.cancelAuthentication()
+            }
+        }
     }
     OutlinedButton(
         onClick = {
@@ -68,8 +83,14 @@ fun FingerprintActionButton(
                     else -> "This phone does not support secure fingerprint login. Use your password."
                 }
             } else {
+                val cipher = try {
+                    prepareCipher()
+                } catch (_: Exception) {
+                    message = "Fingerprint setup is unavailable. Use your password and check POS Settings."
+                    return@OutlinedButton
+                }
                 try {
-                    val cryptoObject = BiometricPrompt.CryptoObject(prepareCipher())
+                    val cryptoObject = BiometricPrompt.CryptoObject(cipher)
                     val info = BiometricPrompt.PromptInfo.Builder()
                         .setTitle(title)
                         .setSubtitle("Verify your identity to use the saved Cashier session")
@@ -80,14 +101,16 @@ fun FingerprintActionButton(
                     prompt.authenticate(info, cryptoObject)
                 } catch (_: Exception) {
                     prompting = false
-                    message = "Fingerprint login needs to be set up again. Sign in with your password, then enable it in POS Settings."
+                    message = "Could not open the fingerprint prompt. Try again or use your password."
                 }
             }
         },
         enabled = enabled && !prompting,
         modifier = Modifier.fillMaxWidth(),
     ) { Text(if (prompting) "Waiting for fingerprint…" else label) }
-    message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    message?.let {
+        Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+    }
 }
 
 private tailrec fun Context.fragmentActivity(): FragmentActivity? = when (this) {

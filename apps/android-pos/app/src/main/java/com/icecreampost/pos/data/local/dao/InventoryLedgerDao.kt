@@ -32,6 +32,9 @@ interface InventoryLedgerDao {
     @Query("SELECT * FROM inventory_ledger WHERE isSynced = 0 AND syncError IS NULL AND movementType NOT IN ('void_restock','void_waste') ORDER BY occurredAt")
     suspend fun getUnsynced(): List<InventoryLedgerEntity>
 
+    @Query("SELECT COALESCE(SUM(costTotalCents), 0) FROM inventory_ledger WHERE businessDayId = :dayId AND movementType = 'pack_unsealed' AND quantityDelta < 0 AND deletedAt IS NULL")
+    suspend fun getPowderOpeningCost(dayId: String): Long
+
     @Query("SELECT COUNT(*) FROM inventory_ledger WHERE isSynced = 0")
     suspend fun countPending(): Int
 

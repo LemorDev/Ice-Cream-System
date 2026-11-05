@@ -10,6 +10,7 @@ export type AppSession = {
   displayName: string
   role: AppRole
   expiresAt: string
+  adminVerifiedAt?: string
 }
 
 type LoginRow = {
@@ -24,6 +25,7 @@ type LoginRow = {
 export async function signIn(identifier: string, password: string): Promise<AppSession> {
   let data
   let error
+  let status
 
   try {
     const response = await createSupabaseClient().rpc('login_with_password', {
@@ -32,6 +34,7 @@ export async function signIn(identifier: string, password: string): Promise<AppS
     })
     data = response.data
     error = response.error
+    status = response.status
   } catch (caughtError) {
     const rawMessage = caughtError instanceof Error ? caughtError.message : String(caughtError)
     const supabaseUrl = getSupabaseUrl() ?? 'your Supabase project URL'
@@ -42,16 +45,21 @@ export async function signIn(identifier: string, password: string): Promise<AppS
     )
   }
 
-  if (error || !data?.[0]) {
-    const message = error?.message ?? 'Unable to sign in.'
+  if (status === 429) {
+    throw new Error('Too many sign-in attempts from this network. Wait a minute and try again.')
+  }
+  if (error && error.code !== '28000') {
     throw new Error(
-      message.toLowerCase().includes('fetch')
+      error.message?.toLowerCase().includes('fetch')
         ? `Cannot reach Supabase at ${getSupabaseUrl() ?? 'your Supabase project URL'}. Check apps/web-ims/.env.local and confirm the project URL is correct.`
-        : message,
+        : 'Unable to sign in right now. Try again shortly.',
     )
   }
 
-  const row = data[0] as LoginRow
+  const row = data?.[0] as LoginRow | undefined
+  if (!row) {
+    throw new Error('Invalid Credentials Please Try Again. If you’ve tried several times, wait 15 minutes before trying again.')
+  }
   const session = {
     token: row.session_token,
     userId: row.user_id,
@@ -60,7 +68,7 @@ export async function signIn(identifier: string, password: string): Promise<AppS
     role: row.role,
     expiresAt: row.expires_at,
   }
-  sessionStorage.setItem(storageKey, JSON.stringify(session))
+  storeSession(session)
   return session
 }
 
@@ -86,6 +94,7 @@ export function getStoredSession(): AppSession | null {
       displayName: session.displayName,
       role: session.role as AppRole,
       expiresAt: session.expiresAt,
+      adminVerifiedAt: session.adminVerifiedAt,
     }
   } catch {
     sessionStorage.removeItem(storageKey)
@@ -93,6 +102,25 @@ export function getStoredSession(): AppSession | null {
   }
 }
 
-export function signOut() {
+export function storeSession(session: AppSession) {
+  sessionStorage.setItem(storageKey, JSON.stringify(session))
+}
+
+export async function signOut(token?: string): Promise<boolean> {
   sessionStorage.removeItem(storageKey)
+  if (!token) return true
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 3_000)
+    try {
+      const { error } = await createSupabaseClient(token).rpc('revoke_app_session').abortSignal(controller.signal)
+      if (!error) return true
+    } catch {
+      // Retry once with the captured bearer held only in this function.
+    } finally {
+      window.clearTimeout(timeout)
+    }
+  }
+  return false
 }

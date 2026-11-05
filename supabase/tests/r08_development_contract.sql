@@ -1,6 +1,5 @@
--- Run only on a disposable database or the explicitly verified development
--- project fhyqrgxwdqlyzxsnpthr. This transaction rolls back every test row.
--- Never run this file on production.
+-- Run against a disposable local database after all migrations.
+-- This transaction rolls back every fixture row.
 begin;
 set local search_path = public, extensions;
 
@@ -18,12 +17,16 @@ declare
   serve_a uuid := gen_random_uuid();
   raw_b uuid := gen_random_uuid();
   sale_a uuid := gen_random_uuid();
+  expired_sale_id uuid := gen_random_uuid();
   token_a text := encode(gen_random_bytes(32),'hex');
   token_b text := encode(gen_random_bytes(32),'hex');
   owner_token text := encode(gen_random_bytes(32),'hex');
   hardware_a text := 'r08-' || device_a::text;
   hardware_b text := 'r08-' || device_b::text;
   sale_payload jsonb;
+  revision_id uuid;
+  foreign_revision_id uuid;
+  rejected record;
   result jsonb;
 begin
   if not has_function_privilege('anon','public.push_pos_transaction_v2(jsonb)','EXECUTE')
@@ -47,11 +50,11 @@ begin
   insert into public.devices(id,stall_id,device_name,activation_code_hash,hardware_id) values
     (device_a,stall_a,'R08 device A','r08-'||device_a::text,hardware_a),
     (device_b,stall_b,'R08 device B','r08-'||device_b::text,hardware_b);
-  insert into public.products(id,stall_id,sku,name,unit,cost_price,pack_size,
+  insert into public.products(id,stall_id,sku,name,unit,sale_price,cost_price,pack_size,
     conversion_rate,is_sellable,product_type,base_unit) values
-    (raw_a,stall_a,'RAW','R08 ingredient A','g',50,100,1,false,'raw','g'),
-    (serve_a,stall_a,'SERVE','R08 serving A','piece',0,1,1,true,'sellable','piece'),
-    (raw_b,stall_b,'RAW','R08 ingredient B','g',50,100,1,false,'raw','g');
+    (raw_a,stall_a,'RAW','R08 ingredient A','g',0,50,100,1,false,'raw','g'),
+    (serve_a,stall_a,'SERVE','R08 serving A','piece',50,0,1,1,true,'sellable','piece'),
+    (raw_b,stall_b,'RAW','R08 ingredient B','g',0,50,100,1,false,'raw','g');
   insert into public.product_recipes(stall_id,parent_product_id,ingredient_product_id,quantity)
     values(stall_a,serve_a,raw_a,10);
   insert into public.business_days(id,stall_id,device_id,cashier_id,business_date,opened_at)
@@ -60,6 +63,9 @@ begin
   insert into public.inventory_ledger(stall_id,product_id,quantity_delta,movement_type)
     values(stall_a,raw_a,100,'opening_balance'),(stall_b,raw_b,100,'opening_balance');
 
+  perform set_config('request.headers',jsonb_build_object(
+    'x-session-token',token_b,'x-device-id',hardware_b)::text,true);
+  foreign_revision_id := (public.get_pos_catalog_revision()->>'revision_id')::uuid;
   perform set_config('request.headers',jsonb_build_object(
     'x-session-token',token_a,'x-device-id',hardware_a)::text,true);
   if (select count(*) from public.get_pos_products_page(null,null,250))<>2
@@ -71,7 +77,11 @@ begin
     raise exception 'Cashier A POS pages leaked or omitted candidate fields';
   end if;
 
+  revision_id := (public.get_pos_catalog_revision()->>'revision_id')::uuid;
+  -- Offline checkout keeps the approved price even after the live catalog changes.
+  update public.products set sale_price=75 where id=serve_a;
   sale_payload := jsonb_build_object('id',sale_a,'stall_id',stall_a,'device_id',device_a,
+    'catalog_revision_id',revision_id,
     'business_day_id',day_a,'receipt_number','R08-'||sale_a::text,
     'status','completed','subtotal',50,'total_amount',50,'cash_received',50,
     'change_amount',0,'occurred_at',now()-interval '1 minute',
@@ -80,8 +90,46 @@ begin
       'unit_price',50,'line_total',50)),
     'components',jsonb_build_array(jsonb_build_object('id',gen_random_uuid(),
       'product_id',raw_a,'quantity',10,'cost_total',5)));
+  for rejected in select * from (values
+    (sale_payload - 'catalog_revision_id', 'SALE_CATALOG_REVISION_REQUIRED'),
+    (sale_payload || jsonb_build_object('catalog_revision_id',gen_random_uuid()), 'SALE_CATALOG_REVISION_REQUIRED'),
+    (sale_payload || jsonb_build_object('catalog_revision_id',foreign_revision_id), 'SALE_CATALOG_REVISION_REQUIRED'),
+    (jsonb_set(sale_payload,'{components,0,cost_total}','0'), 'SALE_CATALOG_COMPONENT_MISMATCH'),
+    (jsonb_set(sale_payload,'{components}','[]'), 'SALE_CATALOG_COMPONENT_MISMATCH'),
+    (jsonb_set(jsonb_set(sale_payload,'{items,0,unit_price}','1'),'{items,0,line_total}','1')
+      || '{"subtotal":1,"total_amount":1,"cash_received":1}'::jsonb, 'SALE_CATALOG_PRICE_MISMATCH')
+  ) as invalid_sale(payload, expected_message) loop
+    begin
+      perform public.push_pos_transaction_v2(rejected.payload);
+      raise exception 'Tampered sale was accepted';
+    exception when invalid_parameter_value then
+      if sqlerrm <> rejected.expected_message then raise; end if;
+    end;
+  end loop;
+  if exists(select 1 from public.transactions where id=sale_a)
+    or exists(select 1 from public.transaction_items where transaction_id=sale_a)
+    or exists(select 1 from private.pos_sale_uploads where transaction_id=sale_a)
+    or public.get_stock_on_hand(stall_a,raw_a)<>100 then
+    raise exception 'Rejected sale left financial or inventory changes';
+  end if;
   result := public.push_pos_transaction_v2(sale_payload);
   if result->>'status'<>'accepted' then raise exception 'POS sale rejected: %',result; end if;
+  update private.pos_catalog_revisions set valid_until=now()-interval '1 second' where id=revision_id;
+  begin
+    perform public.push_pos_transaction_v2(
+      jsonb_set(jsonb_set(sale_payload,'{items,0,id}',to_jsonb(gen_random_uuid())),
+        '{components,0,id}',to_jsonb(gen_random_uuid()))
+      || jsonb_build_object('id',expired_sale_id,'receipt_number','R08-EXPIRED-'||expired_sale_id::text));
+    raise exception 'A new sale used an expired revision';
+  exception when invalid_parameter_value then
+    if sqlerrm <> 'SALE_CATALOG_REVISION_REQUIRED' then raise; end if;
+  end;
+  if exists(select 1 from public.transactions where id=expired_sale_id)
+    or exists(select 1 from public.transaction_items where transaction_id=expired_sale_id)
+    or exists(select 1 from private.pos_sale_uploads where transaction_id=expired_sale_id)
+    or public.get_stock_on_hand(stall_a,raw_a)<>90 then
+    raise exception 'An expired revision left financial or inventory changes';
+  end if;
   result := public.push_pos_transaction_v2(sale_payload);
   if result->>'status'<>'duplicate'
     or (select count(*) from public.transactions where id=sale_a)<>1

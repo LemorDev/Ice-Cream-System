@@ -1,22 +1,26 @@
 package com.icecreampost.pos.ui.screen.home
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,7 +32,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,6 +80,7 @@ internal fun salesAnalytics(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 internal fun HomeAnalytics(transactions: List<TransactionEntity>, stallId: String?, amountsVisible: Boolean) {
     var days by rememberSaveable { mutableIntStateOf(7) }
     var selectedStart by rememberSaveable { mutableStateOf<String?>(null) }
@@ -89,58 +96,89 @@ internal fun HomeAnalytics(transactions: List<TransactionEntity>, stallId: Strin
     Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Sales analytics", style = MaterialTheme.typography.titleLarge)
-            Text("Completed sales stored here · tap a bar to inspect it",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(7, 30).forEach { option ->
-                    FilterChip(selected = days == option, onClick = { days = option; selectedStart = null },
-                        label = { Text("$option days") })
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Column(Modifier.padding(end = 8.dp)) {
+                    Text("Sales analytics", style = MaterialTheme.typography.titleLarge)
+                    Text("Completed sales", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                SingleChoiceSegmentedButtonRow {
+                    listOf(7, 30).forEachIndexed { index, option ->
+                        SegmentedButton(
+                            selected = days == option,
+                            onClick = {
+                                days = option
+                                selectedStart = null
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(index, 2),
+                            icon = {},
+                            colors = SegmentedButtonDefaults.colors(
+                                activeContainerColor = MaterialTheme.colorScheme.primary,
+                                activeContentColor = MaterialTheme.colorScheme.onPrimary,
+                            ),
+                        ) { Text("$option days") }
+                    }
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 AnalyticsLegend(primary, if (amountsVisible) "Sales" else "Sales hidden")
                 AnalyticsLegend(secondary, "Orders")
             }
-            Row(Modifier.fillMaxWidth().height(142.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                periods.forEach { period ->
-                    val active = selected.start == period.start
-                    val name = if (days == 7) period.start.dayOfWeek.name.take(3).lowercase()
-                        .replaceFirstChar { it.uppercase() }
-                    else "${period.start.dayOfMonth}–${period.end.dayOfMonth}"
-                    Column(
-                        Modifier.weight(1f).fillMaxHeight()
-                            .background(if (active) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                                MaterialTheme.shapes.small)
-                            .clickable { selectedStart = period.start.toString() }
-                            .semantics {
-                                contentDescription = "$name, ${formatMoney(period.revenueCents, amountsVisible)} sales, ${period.orders} orders"
-                            },
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Bottom,
-                    ) {
-                        Row(Modifier.height(104.dp), verticalAlignment = Alignment.Bottom,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                            if (amountsVisible) Box(Modifier.width(9.dp).height(barHeight(period.revenueCents.toDouble() / maxRevenue)).background(primary, MaterialTheme.shapes.small))
-                            Box(Modifier.width(9.dp).height(barHeight(period.orders.toDouble() / maxOrders)).background(secondary, MaterialTheme.shapes.small))
+            Box(Modifier.fillMaxWidth().height(128.dp)) {
+                Row(Modifier.matchParentSize()) {
+                    periods.forEach { period ->
+                        val active = selected.start == period.start
+                        val name = if (days == 7) period.start.dayOfWeek.name.take(3).lowercase()
+                            .replaceFirstChar { it.uppercase() }
+                        else "${period.start.dayOfMonth}–${period.end.dayOfMonth}"
+                        Column(
+                            Modifier.weight(1f).fillMaxHeight()
+                                .background(if (active) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                    MaterialTheme.shapes.small)
+                                .clickable { selectedStart = period.start.toString() }
+                                .semantics {
+                                    contentDescription = "$name, ${formatMoney(period.revenueCents, amountsVisible)} sales, ${period.orders} orders"
+                                },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Bottom,
+                        ) {
+                            Text(name, style = MaterialTheme.typography.labelSmall, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis)
                         }
-                        Spacer(Modifier.height(6.dp))
-                        Text(name, style = MaterialTheme.typography.labelSmall, maxLines = 1,
-                            overflow = TextOverflow.Ellipsis)
                     }
+                }
+                Canvas(Modifier.fillMaxWidth().height(96.dp)) {
+                    val inset = 6.dp.toPx()
+                    fun plot(color: Color, dashed: Boolean, fraction: (AnalyticsPeriod) -> Float) {
+                        val points = periods.mapIndexed { index, period ->
+                            Offset(
+                                x = size.width * (index + 0.5f) / periods.size,
+                                y = size.height - inset - (size.height - 2 * inset) * fraction(period).coerceIn(0f, 1f),
+                            )
+                        }
+                        val dash = if (dashed) PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 3.dp.toPx())) else null
+                        points.zipWithNext().forEach { (start, end) ->
+                            drawLine(color, start, end, strokeWidth = 2.dp.toPx(), pathEffect = dash)
+                        }
+                        points.forEach { drawCircle(color, radius = 2.dp.toPx(), center = it) }
+                    }
+                    if (amountsVisible) plot(primary, dashed = false) { it.revenueCents.toFloat() / maxRevenue }
+                    plot(secondary, dashed = true) { it.orders.toFloat() / maxOrders }
                 }
             }
             val dateLabel = if (selected.start == selected.end) selected.start.format(dateFormat)
                 else "${selected.start.format(dateFormat)} – ${selected.end.format(dateFormat)}"
             Text("$dateLabel · ${formatMoney(selected.revenueCents, amountsVisible)} sales · ${selected.orders} orders",
                 style = MaterialTheme.typography.bodyMedium)
-            Text("Each bar color uses its own scale.", style = MaterialTheme.typography.bodySmall,
+            Text(if (amountsVisible) "Solid line: sales. Dashed line: orders. Each uses its own scale." else "Dashed line: orders.", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
-
-private fun barHeight(fraction: Double) = (if (fraction <= 0) 3.0 else 8.0 + 88.0 * fraction).dp
 
 @Composable
 private fun AnalyticsLegend(color: Color, label: String) {

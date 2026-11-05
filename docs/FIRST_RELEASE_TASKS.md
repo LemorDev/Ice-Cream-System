@@ -2,6 +2,8 @@
 
 Updated: 24 October 2026. Source plan: [First-release deployment plan](FIRST_RELEASE_DEPLOYMENT_PLAN.md).
 
+Planning update, 2 November 2026: the source plan now records current free-plan limits, the recovered development-only workspace and explicit production build commands. Both current default web build scripts target development. Historical evidence and task completion states below are unchanged; today's remote migration history remains unverified because CLI authentication is required.
+
 This is the working checklist for the first IMS, Owner dashboard, and Android POS release. Complete one numbered task at a time, record its evidence in this file, and start the next ready task. `Done` means the stated completion check passed; a command merely running is not enough. Keep development test data out of production. Real sales begin only in the supervised production pilot.
 
 ## Status and known starting point
@@ -10,7 +12,11 @@ Status key: `[ ]` To do · `[-]` In progress · `[x]` Done · `[!]` Blocked. For
 
 The 4 October local check found the branch `codex/inventory-recipes-ui` with many modified and untracked files, including both web and Android work and pending SQL migrations. Local `main` exists; local `develop` and a `.github` workflow directory were not found. The prior plan found production release signing unconfigured. These observations are a starting snapshot, not a production readiness assessment. Preserve the current work before switching branches or releasing.
 
-**Current task: verify the combined local/cloud candidate in PR #1.** Local changes were preserved in `f2234f5`, and merged PR #2 was integrated in `f1301ed`. Local web, Android, database, and upgrade checks passed; PR CI is being finalized. See [24 October integration evidence](2026-10-24_INTEGRATION.md). Actual phone testing was deferred by the user, and deployment (including pending schema changes) is deferred to 25 October.
+**Current task, 5 November 2026: deployment stage 1, local candidate preflight.** See [current preflight evidence](DEPLOYMENT_PREFLIGHT_2026-11-05.md). The working tree now includes newer security migrations, Edge Functions and client changes; historical completion checks do not certify it. Publishing, migration application and handset acceptance are subsequent steps. Preserve and review the working tree before freezing a release commit.
+
+Local preflight passed: 54 web tests, 125 Android tests, both web build modes, Android lint and dev/release assembly, isolated database/gateway/Room regressions, and the dependency audit after the scoped fix. CI-pinned pnpm frozen installation also passed. Candidate review/commit and remote required checks remain before publishing; no hosted deployment or migration application has occurred in this session.
+
+Historical 24 October status: local changes were preserved in `f2234f5`, and merged PR #2 was integrated in `f1301ed`. See [24 October integration evidence](2026-10-24_INTEGRATION.md). Its phone-testing deferral and proposed deployment date are historical, not current deployment evidence.
 
 ## 1. Establish the release baseline
 

@@ -2,7 +2,10 @@ package com.icecreampost.pos.data.remote.dto
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class PushTransactionPayload(
     val id: String,
@@ -18,6 +21,8 @@ data class PushTransactionPayload(
     @SerialName("occurred_at") val occurredAt: String,
     val items: List<PushTransactionItemPayload>,
     val components: List<PushSaleComponentPayload>,
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    @SerialName("catalog_revision_id") val catalogRevisionId: String? = null,
 )
 
 @Serializable
@@ -112,6 +117,7 @@ data class PushInventoryEntryPayload(
     @SerialName("product_id") val productId: String,
     @SerialName("packs_opened") val packsOpened: Int,
     @SerialName("occurred_at") val occurredAt: String,
+    @SerialName("cost_total") val costTotal: Double? = null,
 )
 @Serializable data class PushPackUnsealRequest(@SerialName("p_entry") val entry: PushPackUnsealPayload)
 

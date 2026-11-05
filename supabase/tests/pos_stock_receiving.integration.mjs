@@ -1,35 +1,20 @@
 import { readFile, readdir } from 'node:fs/promises';
-// Run from the repository root. Install the isolated runtime first:
-// npm install --prefix apps/android-pos/app/build/sql-test-runtime --no-audit --no-fund --package-lock=false @electric-sql/pglite@0.5.8
+import { PGlite } from '@electric-sql/pglite';
+import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
+// Run from the repository root after `pnpm install --frozen-lockfile`.
 // This test uses in-memory PostgreSQL; it never connects to Supabase.
-// pgcrypto is unavailable in PGlite: fixtures use native SHA-256 for token hashes
-// and UUID bytes for test token generation. The login fixture uses a stand-in
-// password hash to verify lockout state, not bcrypt strength.
-import { createRequire } from 'node:module';
-const requireRuntime = createRequire(new URL('../../apps/android-pos/app/build/sql-test-runtime/package.json', import.meta.url));
-const { PGlite } = requireRuntime('@electric-sql/pglite');
-const db = new PGlite();
+const db = new PGlite({ extensions: { pgcrypto } });
 try {
-  await db.exec(`create role anon; create role authenticated; create schema extensions;
+  await db.exec(`create role anon; create role authenticated; create role service_role; create schema extensions;
     create schema storage;
     create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
     create table storage.objects(id uuid default gen_random_uuid(),bucket_id text,name text);
     create function storage.foldername(name text) returns text[] language sql as $$ select string_to_array(name,'/') $$;
-    create function public.digest(value text, algorithm text) returns bytea language sql as
-    $$ select sha256(convert_to(value, 'UTF8')) $$;
-    create function public.digest(value bytea, algorithm text) returns bytea language sql as
-    $$ select sha256(value) $$;
-    create function public.gen_random_bytes(length integer) returns bytea language sql as
-    $$ select substring(decode(replace(gen_random_uuid()::text,'-','') || replace(gen_random_uuid()::text,'-',''),'hex') from 1 for length) $$;
-    create function public.gen_salt(algorithm text) returns text language sql as $$ select 'test-salt'::text $$;
-    create function public.crypt(password text, salt text) returns text language sql as
-    $$ select encode(sha256(convert_to(password, 'UTF8')), 'hex') $$;
   `);
   const files = (await readdir('supabase/migrations')).filter(f => f.endsWith('.sql')).sort();
   for (const file of files) {
     if (file === '202609300002_fix_pos_inventory_movement_enum.sql') continue;
-    let sql = await readFile('supabase/migrations/' + file, 'utf8');
-    sql = sql.replace('create extension if not exists pgcrypto;', '-- pgcrypto token hashing uses native SHA-256 in this test runtime.');
+    const sql = await readFile('supabase/migrations/' + file, 'utf8');
     try { await db.exec(sql); } catch(e) { throw new Error(`${file}: ${e.message}`, {cause:e}); }
   }
   if (process.argv.includes('--rerun-alignment')) {
@@ -52,7 +37,7 @@ try {
   const regressionFiles = ['stockable_product_classification.sql', 'set_stock_on_hand.sql', 'password_login_limits.sql', 'r06_replay_and_reset.sql', 'r06_catalog_pages.sql', 'r06_sale_snapshots.sql', 'r08_development_contract.sql', 'powder_pack_inventory.sql', 'product_images.sql'];
   if (process.argv.includes('--extended')) regressionFiles.push('recipes_and_closings.sql');
   if (process.argv.includes('--activation')) regressionFiles.push('activation_alignment.sql', 'separate_revenue_deductions.sql', 'system_admin_data_reset.sql', 'admin_close_open_business_day.sql');
-  for (const file of regressionFiles) {
+  for (const file of ['app_authorization.sql', 'admin_passkey_assurance.sql', 'pos_device_proof_and_logout.sql', ...regressionFiles]) {
     await db.exec(await readFile('supabase/tests/' + file, 'utf8'));
     console.log('PASS: database regression ' + file);
   }

@@ -184,9 +184,19 @@ export function getDailyProfitReport(
 
   // Group waste inventory entries by date
   const wasteByDate = new Map<string, InventoryEntry[]>()
+  const powderCostByDate = new Map<string, number>()
   for (const entry of inventory) {
-    if (entry.movement_type !== 'void_waste' && entry.movement_type !== 'adjustment') continue
     if (Number.isFinite(resetTime) && Date.parse(entry.occurred_at) <= resetTime) continue
+    if (entry.movement_type === 'pack_unsealed' && entry.quantity_delta < 0) {
+      const date = entry.business_date ?? getBusinessDateKey(entry.occurred_at)
+      if (date >= from && date <= to) {
+        const cost = Math.round(-entry.quantity_delta * (entry.unit_cost ?? 0) * 100) / 100
+        dateSet.add(date)
+        powderCostByDate.set(date, (powderCostByDate.get(date) ?? 0) + cost)
+      }
+      continue
+    }
+    if (entry.movement_type !== 'void_waste' && entry.movement_type !== 'adjustment') continue
     // Resetting balances is an inventory correction, not physical waste.
     if (entry.movement_type === 'adjustment' && entry.reason === 'System administrator stock reset') continue
     // For adjustments, only count negative (removal) entries as waste
@@ -209,7 +219,7 @@ export function getDailyProfitReport(
     const revenue = completed.reduce((sum, tx) => sum + tx.total_amount, 0)
 
     // COGS: cost of items sold in completed transactions for this date
-    let cogs = completed.reduce((sum, tx) => sum + (tx.cogs ?? 0), 0)
+    let cogs = completed.reduce((sum, tx) => sum + (tx.cogs ?? 0), powderCostByDate.get(date) ?? 0)
     for (const item of transactionItems) {
       if (!completedTxIds.has(item.transaction_id)) continue
       if (snapshottedTxIds.has(item.transaction_id)) continue

@@ -21,12 +21,12 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.*
 import com.icecreampost.pos.ui.PosViewModel
-import com.icecreampost.pos.ui.component.AppEnvironmentBanner
 import com.icecreampost.pos.ui.screen.activation.ActivationScreen
 import com.icecreampost.pos.ui.screen.catalog.ProductCatalogScreen
 import com.icecreampost.pos.ui.screen.history.TransactionHistoryScreen
 import com.icecreampost.pos.ui.screen.home.HomeScreen
 import com.icecreampost.pos.ui.screen.inventory.InventoryScreen
+import com.icecreampost.pos.ui.screen.login.FingerprintSetupOffer
 import com.icecreampost.pos.ui.screen.login.LoginScreen
 import com.icecreampost.pos.ui.screen.loading.LoadingScreen
 import com.icecreampost.pos.ui.screen.more.MoreScreen
@@ -53,6 +53,7 @@ fun AppNavHost(viewModel: PosViewModel) {
     val session by viewModel.session.collectAsStateWithLifecycle()
     val sessionReady by viewModel.sessionReady.collectAsStateWithLifecycle()
     if (!sessionReady) { LoadingScreen(); return }
+    if (session?.isActivated == true && session?.transferReady == false) FingerprintSetupOffer(viewModel)
     // Discard saved tab stacks at a session boundary as well as visible routes.
     key(session?.userId, session?.isActivated) {
         val navController = rememberNavController()
@@ -94,7 +95,6 @@ fun AppNavHost(viewModel: PosViewModel) {
         }
         Scaffold(
             contentWindowInsets = WindowInsets.safeDrawing,
-            topBar = { if (!focusedSale) AppEnvironmentBanner() },
             bottomBar = {
                 if (showNavigation) PosNavigationBar(
                     selectedRoute = if (currentRoute in moreRoutes) Routes.MORE else currentRoute,
@@ -140,7 +140,14 @@ fun AppNavHost(viewModel: PosViewModel) {
                 composable(Routes.MORE) { MoreScreen(viewModel, onNavigate = { navController.navigate(it) }) }
                 composable(Routes.OPERATING_DAY) { OperationsScreen(viewModel, onBack = { navController.popBackStack() }) }
                 composable(Routes.DEDUCTIONS) { OperationsScreen(viewModel, onBack = { navController.popBackStack() }, deductionsOnly = true) }
-                composable(Routes.SETTINGS) { SettingsScreen(viewModel, onBack = { navController.popBackStack() }) }
+                composable(Routes.SETTINGS) {
+                    SettingsScreen(
+                        viewModel,
+                        onBack = { navController.popBackStack() },
+                        onSync = { navController.navigate(Routes.SYNC) },
+                        onDevice = { navController.navigate(Routes.DEVICE) },
+                    )
+                }
                 composable(Routes.SYNC) { SyncScreen(viewModel, onBack = { navController.popBackStack() }) }
                 composable(Routes.DEVICE) { DeviceInformationScreen(viewModel, onBack = { navController.popBackStack() }) }
             }

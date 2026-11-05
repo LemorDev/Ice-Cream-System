@@ -12,6 +12,7 @@ import com.icecreampost.pos.data.local.entity.SyncStateEntity
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.InventoryLedgerDto
 import com.icecreampost.pos.data.remote.dto.ProductDto
+import com.icecreampost.pos.data.remote.dto.PosCatalogRevisionDto
 import com.icecreampost.pos.data.remote.dto.CatalogPageRequest
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -102,7 +103,6 @@ class ProductRepositoryTest {
         }
         stubLedger(listOf(receipt))
         stubProducts(listOf(remoteProduct))
-        coEvery { api.getRecipesPage(any()) } returns emptyList()
         repository = ProductRepository(database, productDao, ledgerDao, stateDao, recipeDao, api)
     }
 
@@ -138,8 +138,8 @@ class ProductRepositoryTest {
     }
 
     @Test
-    fun `older server without paged recipe RPC is rejected before changing stock`() = runTest {
-        coEvery { api.getRecipesPage(any()) } throws httpError(404)
+    fun `older server without revision RPC is rejected before changing stock`() = runTest {
+        coEvery { api.getCatalogRevision() } throws httpError(404)
 
         assertTrue(runCatching { repository.refreshFromCloud() }.isFailure)
 
@@ -168,7 +168,7 @@ class ProductRepositoryTest {
         repository.refreshFromCloud()
 
         assertEquals(10.0, products.getValue("product-1").unitsInStock, 0.001)
-        coVerify { api.getProductsPage(match { it.afterUpdatedAt == "2026-09-08T00:59:59Z" && it.afterId == null }) }
+        coVerify(exactly = 1) { api.getCatalogRevision() }
         coVerify { api.getInventoryLedgerPage(match { it.afterUpdatedAt == "2026-09-08T00:59:59Z" && it.afterId == null }) }
     }
 
@@ -184,7 +184,6 @@ class ProductRepositoryTest {
         repository.refreshFromCloud()
 
         coVerify { api.getInventoryLedgerPage(match { it.afterUpdatedAt == "2026-09-08T00:59:59Z" && it.afterId == null }) }
-        coVerify { api.getProductsPage(match { it.afterUpdatedAt == "2026-09-08T02:59:59Z" && it.afterId == null }) }
         assertEquals(12.0, products.getValue("product-1").unitsInStock, 0.001)
         assertEquals(secondTime, states["catalog-ledger"]?.cursorUpdatedAt)
     }
@@ -239,12 +238,9 @@ class ProductRepositoryTest {
     fun `catalog refresh preserves a checkout completed during the network request`() = runTest {
         repository.refreshFromCloud()
         stubLedger(emptyList())
-        coEvery { api.getProductsPage(any()) } coAnswers {
-            if (firstArg<CatalogPageRequest>().afterId != null) emptyList()
-            else {
-                products["product-1"] = products.getValue("product-1").copy(unitsInStock = 7.0)
-                listOf(remoteProduct.copy(salePrice = 50.0, updatedAt = secondTime))
-            }
+        coEvery { api.getCatalogRevision() } coAnswers {
+            products["product-1"] = products.getValue("product-1").copy(unitsInStock = 7.0)
+            catalog(listOf(remoteProduct.copy(salePrice = 50.0, updatedAt = secondTime)))
         }
 
         repository.refreshFromCloud()
@@ -254,23 +250,17 @@ class ProductRepositoryTest {
     }
 
     @Test
-    fun `equal-time product rows continue past the page boundary`() = runTest {
+    fun `a single revision commits more products than the former page size`() = runTest {
         val cloud = (0..250).map { index ->
             remoteProduct.copy(id = "product-${index.toString().padStart(4, '0')}")
         }
-        coEvery { api.getProductsPage(any()) } coAnswers {
-            when (firstArg<CatalogPageRequest>().afterId) {
-                null -> cloud.take(250)
-                cloud[249].id -> cloud.drop(250)
-                else -> emptyList()
-            }
-        }
+        stubProducts(cloud)
 
         repository.refreshFromCloud()
 
         assertEquals(251, products.size)
-        coVerify { api.getProductsPage(match { it.afterUpdatedAt == firstTime && it.afterId == cloud[249].id }) }
-        assertEquals(firstTime, states["catalog-products"]?.cursorUpdatedAt)
+        coVerify(exactly = 1) { api.getCatalogRevision() }
+        assertEquals("revision-1", states["catalog-revision:device-1"]?.value)
     }
 
     @Test
@@ -306,10 +296,11 @@ class ProductRepositoryTest {
         return HttpException(Response.error<Any>(code, body))
     }
 
+    private fun catalog(rows: List<ProductDto>) =
+        PosCatalogRevisionDto("revision-1", "2099-01-01T00:00:00Z", "device-1", rows, emptyList())
+
     private fun stubProducts(rows: List<ProductDto>) {
-        coEvery { api.getProductsPage(any()) } coAnswers {
-            if (firstArg<CatalogPageRequest>().afterId == null) rows else emptyList()
-        }
+        coEvery { api.getCatalogRevision() } returns catalog(rows)
     }
 
     private fun stubLedger(rows: List<InventoryLedgerDto>) {

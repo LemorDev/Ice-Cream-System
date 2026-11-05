@@ -54,7 +54,7 @@ class SessionHttpContractTest {
         coEvery { sessions.getCurrent() } returns null
         coEvery { states.find("device-stall") } returns null
         coEvery { states.findPersistedStallIds() } returns emptyList()
-        return SessionRepository(sessions, api, tokens, mockk<DeviceIdentity>(), days, states)
+        return SessionRepository(sessions, api, tokens, mockk<DeviceIdentity>(), days, states, mockk(relaxed = true))
     }
 
     @Test fun `registered cashier signs in when resumable day endpoint returns JSON null`() = runTest {
@@ -87,6 +87,14 @@ class SessionHttpContractTest {
         val failure = runCatching { repository(api(loginStatus = 401)).signIn("MAIN-001", "RBB567", "wrong") }.exceptionOrNull()
         assertTrue(failure is IllegalArgumentException)
         assertTrue(failure?.message.orEmpty().contains("employee ID"))
+        coVerify(exactly = 0) { sessions.save(any()) }
+        assertNull(tokens.token)
+    }
+
+    @Test fun `rate limited login tells the cashier to wait without saving a session`() = runTest {
+        val failure = runCatching { repository(api(loginStatus = 429)).signIn("MAIN-001", "RBB567", "test-password") }.exceptionOrNull()
+        assertTrue(failure?.message.orEmpty().contains("Wait a minute"))
+        assertEquals(listOf("login_pos_with_password"), requests)
         coVerify(exactly = 0) { sessions.save(any()) }
         assertNull(tokens.token)
     }

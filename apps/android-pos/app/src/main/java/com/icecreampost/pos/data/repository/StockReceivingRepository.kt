@@ -42,10 +42,11 @@ class StockReceivingRepository @Inject constructor(
             val stock = product.unitsInStock + quantity
             require(stock.isFinite()) { "Stock quantity is too large." }
             val sealedPacks = if (product.tracksPowderPacks) {
-                require(product.baseUnit == "g" && product.packSize == 1000.0 && quantity % 1000.0 == 0.0) {
-                    "Receive tracked powder in whole 1,000g packs."
+                val unitsPerPack = product.packSize * product.conversionRate
+                require(unitsPerPack > 0 && quantity % unitsPerPack == 0.0) {
+                    "Receive tracked powder in whole packs."
                 }
-                (quantity / 1000.0).toInt()
+                (quantity / unitsPerPack).toInt()
             } else 0
             val now = Instant.now().toString()
             ledgerDao.upsertAll(listOf(InventoryLedgerEntity(

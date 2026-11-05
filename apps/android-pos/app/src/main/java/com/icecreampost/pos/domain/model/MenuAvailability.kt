@@ -29,9 +29,12 @@ fun menuAvailability(
     val recipe = recipes.filter { it.parentProductId == product.id }
     if (recipe.isEmpty()) {
         // Older standalone products can still be sold from their own stock.
+        val reservedUnits = cart[product.id] ?: 0
+        val additionalPortions = floor(product.unitsInStock - reservedUnits).toInt().coerceAtLeast(0)
         return MenuAvailability(
-            floor(product.unitsInStock - (cart[product.id] ?: 0)).toInt().coerceAtLeast(0),
+            additionalPortions,
             hasRecipe = false,
+            limitedByCart = additionalPortions == 0 && product.unitsInStock >= 1 && reservedUnits > 0,
         )
     }
 
@@ -47,7 +50,7 @@ fun menuAvailability(
         reserved[ingredient.ingredientProductId] =
             (reserved[ingredient.ingredientProductId] ?: 0.0) + ingredient.quantity * quantity
     }
-    val capacities = recipe.map { ingredient ->
+    val capacities = recipe.filterNot { productsById[it.ingredientProductId]?.tracksPowderPacks == true }.map { ingredient ->
         val stock = productsById[ingredient.ingredientProductId]
         val valid = stock != null && stock.deletedAt == null && stock.stallId == product.stallId &&
             stock.productType != "sellable" && ingredient.quantity > 0.0
@@ -56,7 +59,7 @@ fun menuAvailability(
             ingredient.quantity) + 1e-9).toInt().coerceAtLeast(0)
         Triple(stock?.name ?: "Missing recipe ingredient", beforeCart, afterCart)
     }
-    val available = capacities.minOf { it.third }
+    val available = if (invalidRecipe) 0 else capacities.minOfOrNull { it.third } ?: Int.MAX_VALUE
     return MenuAvailability(
         additionalPortions = available,
         hasRecipe = true,

@@ -8,6 +8,7 @@ import com.icecreampost.pos.data.local.dao.TransactionDao
 import com.icecreampost.pos.data.local.dao.SessionDao
 import com.icecreampost.pos.data.local.dao.BusinessDayDao
 import com.icecreampost.pos.data.local.dao.ProductRecipeDao
+import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.database.CoolerzDatabase
 import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
@@ -44,6 +45,7 @@ class CheckoutRepository @Inject constructor(
     private val sessionDao: SessionDao,
     private val businessDayDao: BusinessDayDao,
     private val productRecipeDao: ProductRecipeDao,
+    private val syncStateDao: SyncStateDao,
     private val syncTrigger: SyncTrigger,
     private val logger: AppLogger,
 ) {
@@ -80,6 +82,10 @@ class CheckoutRepository @Inject constructor(
         require(cashReceivedCents >= subtotalCents) { "Cash received is less than the total." }
 
         database.withTransaction {
+            val revision = syncStateDao.find("catalog-revision:$resolvedDeviceId")
+            check(revision != null && revision.cursorUpdatedAt?.let { Instant.parse(it).isAfter(Instant.now()) } == true) {
+                "Sync the sales catalog before starting another sale."
+            }
             val openDay = requireNotNull(businessDayDao.findOpen(resolvedStallId)) {
                 "Open the operating day before starting a sale."
             }
@@ -89,37 +95,47 @@ class CheckoutRepository @Inject constructor(
             lines.forEach { line ->
                 val current = productDao.findById(line.product.id)
                     ?: error("${line.product.name} is no longer available locally.")
-                require(current.isSellable) { "${current.name} is not available for sale." }
+                require(current.isSellable && current.deletedAt == null && current.stallId == resolvedStallId) {
+                    "${current.name} is not available for sale."
+                }
+                check(current.priceCents == line.product.priceCents) {
+                    "The price of ${current.name} changed. Update the cart before checkout."
+                }
             }
             val recipes = productRecipeDao.findForParents(lines.map { it.product.id })
             val recipesByParent = recipes.groupBy { it.parentProductId }
-            val usage = mutableMapOf<String, Double>()
+            val usage = mutableMapOf<String, BigDecimal>()
             lines.forEach { line ->
                 val recipe = recipesByParent[line.product.id].orEmpty()
-                if (recipe.isEmpty()) usage[line.product.id] = (usage[line.product.id] ?: 0.0) + line.quantity
+                val quantity = BigDecimal.valueOf(line.quantity.toLong())
+                if (recipe.isEmpty()) usage.merge(line.product.id, quantity, BigDecimal::add)
                 else recipe.forEach { ingredient ->
-                    usage[ingredient.ingredientProductId] = (usage[ingredient.ingredientProductId] ?: 0.0) + ingredient.quantity * line.quantity
+                    usage.merge(ingredient.ingredientProductId, BigDecimal.valueOf(ingredient.quantity) * quantity, BigDecimal::add)
                 }
             }
-            val stockProducts = usage.mapValues { (productId, required) ->
-                val current = productDao.findById(productId) ?: error("A recipe ingredient is no longer available locally.")
-                require(current.unitsInStock >= required) {
+            val stockProducts = usage.keys.associateWith { productId ->
+                productDao.findById(productId) ?: error("A recipe ingredient is no longer available locally.")
+            }.filterValues { !it.tracksPowderPacks }
+            usage.keys.retainAll(stockProducts.keys)
+            stockProducts.forEach { (productId, current) ->
+                val required = requireNotNull(usage[productId])
+                require(current.unitsInStock >= required.toDouble()) {
                     "Not enough ${current.name}. Required: $required ${current.baseUnit}; available: ${current.unitsInStock} ${current.baseUnit}."
                 }
-                current
             }
             val componentCosts = usage.mapValues { (productId, quantity) ->
                 val product = requireNotNull(stockProducts[productId])
                 val baseUnitsPerPack = BigDecimal.valueOf(product.packSize)
                     .multiply(BigDecimal.valueOf(product.conversionRate))
                 require(baseUnitsPerPack.signum() > 0) { "Invalid pack conversion for ${product.name}." }
-                BigDecimal.valueOf(quantity)
-                    .multiply(BigDecimal.valueOf(product.costPriceCents))
+                quantity
+                    .multiply(requireNotNull(product.catalogCostPrice) { "Sync the cost for ${product.name}." }.toBigDecimal())
+                    .movePointRight(2)
                     .divide(baseUnitsPerPack, 0, RoundingMode.HALF_UP)
                     .longValueExact()
             }
             stockProducts.forEach { (productId, current) ->
-                productDao.updateStock(productId, current.unitsInStock - requireNotNull(usage[productId]), now)
+                productDao.updateStock(productId, current.unitsInStock - requireNotNull(usage[productId]).toDouble(), now)
             }
 
             transactionDao.upsert(
@@ -140,6 +156,7 @@ class CheckoutRepository @Inject constructor(
                     createdAt = now,
                     updatedAt = now,
                     localCreatedAt = now,
+                    catalogRevisionId = revision.value,
                 ),
             )
 
@@ -162,7 +179,7 @@ class CheckoutRepository @Inject constructor(
                     stallId = resolvedStallId,
                     businessDayId = openDay.id,
                     productId = productId,
-                    quantityDelta = -quantity,
+                    quantityDelta = -quantity.toDouble(),
                     costTotalCents = requireNotNull(componentCosts[productId]),
                     movementType = "sale",
                     reason = "offline checkout",

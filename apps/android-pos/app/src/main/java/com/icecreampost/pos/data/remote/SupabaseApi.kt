@@ -1,6 +1,7 @@
 package com.icecreampost.pos.data.remote
 
 import com.icecreampost.pos.data.remote.dto.ProductDto
+import com.icecreampost.pos.data.remote.dto.PosCatalogRevisionDto
 import com.icecreampost.pos.data.remote.dto.LoginRequest
 import com.icecreampost.pos.data.remote.dto.LoginResponse
 import com.icecreampost.pos.data.remote.dto.ActivateDeviceRequest
@@ -30,12 +31,19 @@ import com.icecreampost.pos.data.remote.dto.PushSaleReversalRequest
 import com.icecreampost.pos.data.remote.dto.PushSaleReversalResponse
 import retrofit2.http.GET
 import retrofit2.http.Body
+import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Query
 
 interface SupabaseApi {
+    @POST("rest/v1/rpc/get_pos_catalog_revision")
+    suspend fun getCatalogRevision(): PosCatalogRevisionDto
+
     @POST("rest/v1/rpc/login_pos_with_password")
     suspend fun login(@Body request: LoginRequest): List<LoginResponse>
+
+    @POST("rest/v1/rpc/revoke_app_session")
+    suspend fun revokeSession(@Header("X-Session-Token") token: String)
 
     @POST("rest/v1/rpc/activate_pos_device")
     suspend fun activateDevice(@Body request: ActivateDeviceRequest): ActivateDeviceResponse
@@ -72,6 +80,9 @@ interface SupabaseApi {
 
     @POST("rest/v1/rpc/push_pos_pack_unseal")
     suspend fun pushPackUnseal(@Body request: com.icecreampost.pos.data.remote.dto.PushPackUnsealRequest): PushInventoryEntryResponse
+
+    @POST("rest/v1/rpc/push_pos_powder_opening")
+    suspend fun pushPowderOpening(@Body request: com.icecreampost.pos.data.remote.dto.PushPackUnsealRequest): PushInventoryEntryResponse
 
     @POST("rest/v1/rpc/push_daily_store_closing_v2")
     suspend fun pushDailyClosing(@Body request: PushDailyClosingRequest): PushDailyClosingResponse

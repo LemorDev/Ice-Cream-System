@@ -25,4 +25,5 @@ data class TransactionEntity(
     val localCreatedAt: String = "",
     val lastSyncAttemptAt: String? = null,
     val deletedAt: String? = null,
+    val catalogRevisionId: String? = null,
 )

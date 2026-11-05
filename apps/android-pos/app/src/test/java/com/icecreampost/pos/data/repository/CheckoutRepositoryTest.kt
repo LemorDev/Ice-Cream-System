@@ -15,6 +15,8 @@ import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.data.local.entity.ProductRecipeEntity
 import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
+import com.icecreampost.pos.data.local.entity.SyncStateEntity
+import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.entity.TransactionItemEntity
 import com.icecreampost.pos.domain.model.CartLine
 import com.icecreampost.pos.sync.SyncTrigger
@@ -39,10 +41,13 @@ class CheckoutRepositoryTest {
     private val sessionDao = mockk<SessionDao>()
     private val businessDayDao = mockk<BusinessDayDao>()
     private val recipeDao = mockk<ProductRecipeDao>()
+    private val stateDao = mockk<SyncStateDao>()
     private val syncTrigger = mockk<SyncTrigger>(relaxed = true)
     private lateinit var repository: CheckoutRepository
     private val cartProduct = ProductEntity(
         id = "product-1",
+        stallId = "stall-1",
+        catalogCostPrice = "0",
         name = "Vanilla",
         category = "Ice cream",
         priceCents = 2_000,
@@ -65,9 +70,12 @@ class CheckoutRepositoryTest {
             businessDate = "2026-09-08", openedAt = "2026-09-08T00:00:00Z", updatedAt = "2026-09-08T00:00:00Z",
         )
         coEvery { recipeDao.findForParents(any()) } returns emptyList()
+        coEvery { stateDao.find("catalog-revision:device-1") } returns SyncStateEntity(
+            key = "catalog-revision:device-1", value = "revision-1", cursorUpdatedAt = "2099-01-01T00:00:00Z",
+        )
         repository = CheckoutRepository(
             database, productDao, transactionDao, ledgerDao, sessionDao, businessDayDao,
-            recipeDao, syncTrigger, mockk<AppLogger>(relaxed = true),
+            recipeDao, stateDao, syncTrigger, mockk<AppLogger>(relaxed = true),
         )
     }
 
@@ -97,7 +105,7 @@ class CheckoutRepositoryTest {
         repository.checkout(listOf(CartLine(cartProduct, 2)), 4_000)
 
         coVerify(exactly = 1) { productDao.updateStock(cartProduct.id, 3.0, any()) }
-        coVerify(exactly = 1) { transactionDao.upsert(any()) }
+        coVerify(exactly = 1) { transactionDao.upsert(match { it.catalogRevisionId == "revision-1" }) }
         coVerify(exactly = 0) { sessionDao.clear() }
         verify(exactly = 1) { syncTrigger.triggerNow() }
     }
@@ -153,9 +161,9 @@ class CheckoutRepositoryTest {
     }
 
     @Test
-    fun `recipe checkout atomically backflushes ingredients instead of the menu item`() = runTest {
-        val powder = cartProduct.copy(id = "powder", name = "Vanilla powder", isSellable = false, productType = "raw", baseUnit = "g", unitsInStock = 1_000.0, costPriceCents = 50_000, packSize = 1_000.0)
-        val cone = cartProduct.copy(id = "cone", name = "Cone", isSellable = false, productType = "packaging", unitsInStock = 30.0, costPriceCents = 10_000, packSize = 50.0)
+    fun `recipe checkout deducts packaging when tracked powder has no sealed stock`() = runTest {
+        val powder = cartProduct.copy(id = "powder", name = "Vanilla powder", isSellable = false, productType = "raw", baseUnit = "g", unitsInStock = 0.0, costPriceCents = 50_000, packSize = 1_000.0, tracksPowderPacks = true)
+        val cone = cartProduct.copy(id = "cone", name = "Cone", isSellable = false, productType = "packaging", unitsInStock = 30.0, costPriceCents = 10_000, catalogCostPrice = "100", packSize = 50.0)
         coEvery { recipeDao.findForParents(listOf(cartProduct.id)) } returns listOf(
             ProductRecipeEntity("r1", "stall-1", cartProduct.id, powder.id, 80.0, "2026-09-08T00:00:00Z"),
             ProductRecipeEntity("r2", "stall-1", cartProduct.id, cone.id, 1.0, "2026-09-08T00:00:00Z"),
@@ -168,13 +176,13 @@ class CheckoutRepositoryTest {
 
         repository.checkout(listOf(CartLine(cartProduct, 2)), 4_000)
 
-        coVerify { productDao.updateStock(powder.id, 840.0, any()) }
+        coVerify(exactly = 0) { productDao.updateStock(powder.id, any(), any()) }
         coVerify { productDao.updateStock(cone.id, 28.0, any()) }
         coVerify(exactly = 0) { productDao.updateStock(cartProduct.id, any(), any()) }
-        assertEquals(setOf(powder.id to -160.0, cone.id to -2.0), movements.captured.map { it.productId to it.quantityDelta }.toSet())
+        assertEquals(setOf(cone.id to -2.0), movements.captured.map { it.productId to it.quantityDelta }.toSet())
         assertEquals("day-1", savedSale.captured.businessDayId)
-        assertEquals(8_400L, savedSale.captured.cogsCents)
-        assertEquals(setOf(powder.id to 8_000L, cone.id to 400L),
+        assertEquals(400L, savedSale.captured.cogsCents)
+        assertEquals(setOf(cone.id to 400L),
             movements.captured.map { it.productId to it.costTotalCents }.toSet())
     }
 }

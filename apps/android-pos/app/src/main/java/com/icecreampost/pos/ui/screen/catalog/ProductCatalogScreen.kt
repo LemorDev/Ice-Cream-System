@@ -60,6 +60,8 @@ import com.icecreampost.pos.data.local.entity.ProductEntity
 import com.icecreampost.pos.domain.model.CartLine
 import com.icecreampost.pos.domain.model.MenuAvailability
 import com.icecreampost.pos.ui.PosViewModel
+import com.icecreampost.pos.ui.component.PosIcon
+import com.icecreampost.pos.ui.component.PosSymbol
 import com.icecreampost.pos.ui.component.QuantityStepper
 import com.icecreampost.pos.ui.component.ScreenHeader
 import com.icecreampost.pos.ui.component.ServingFilter
@@ -116,15 +118,15 @@ fun ProductCatalogScreen(
                         Text("Cart", modifier = Modifier.weight(1f))
                         Text("$cartQuantity ${if (cartQuantity == 1) "item" else "items"}  ·  ${formatMoney(cartTotal)}")
                         Spacer(Modifier.width(8.dp))
-                        Text("↑")
+                        PosIcon(PosSymbol.ChevronUp)
                     }
                 }
             }
         },
     ) { insets ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(insets).padding(top = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxSize().padding(insets).padding(top = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                 ScreenHeader(
@@ -144,6 +146,7 @@ fun ProductCatalogScreen(
                 onValueChange = viewModel::setQuery,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 label = { Text("Search products") },
+                leadingIcon = { PosIcon(PosSymbol.Search) },
                 singleLine = true,
                 shape = MaterialTheme.shapes.medium,
             )
@@ -173,23 +176,28 @@ fun ProductCatalogScreen(
                     TextButton(onClick = onOperatingDay) { Text("Operating day") }
                 }
             }
-            com.icecreampost.pos.ui.component.SyncStatusLine(viewModel, Modifier.padding(horizontal = 16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                com.icecreampost.pos.ui.component.SyncStatusLine(viewModel, Modifier.weight(1f))
+                Text(
+                    "${products.size} ${if (products.size == 1) "product" else "products"}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             error?.let { ErrorMessage(it, Modifier.padding(horizontal = 16.dp)) }
             if (products.isEmpty()) {
                 EmptyCatalog(query = query, modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp))
             } else {
-                Text(
-                    "${products.size} ${if (products.size == 1) "product" else "products"}",
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 128.dp),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     gridItems(products, key = { it.id }) { product ->
                         val quantityInCart = cartLines.firstOrNull { it.product.id == product.id }?.quantity ?: 0
@@ -299,17 +307,20 @@ private fun ProductTile(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         shape = MaterialTheme.shapes.medium,
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             SubcomposeAsyncImage(
                 model = product.imageUrl, contentDescription = product.name, contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxWidth().height(110.dp).clip(MaterialTheme.shapes.small),
+                modifier = Modifier.fillMaxWidth().height(96.dp).clip(MaterialTheme.shapes.small),
                 loading = { ProductImagePlaceholder() }, error = { ProductImagePlaceholder() },
             )
             Text(product.name, style = MaterialTheme.typography.titleSmall, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(formatMoney(product.priceCents), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             Text(menuAvailabilityLabel(availability, product.unitsInStock), style = MaterialTheme.typography.labelSmall,
-                color = if (additionalAvailable == 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                color = when {
+                    availability == null -> MaterialTheme.colorScheme.onSurfaceVariant
+                    additionalAvailable == 0 -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.secondary
+                })
             if (quantityInCart == 0) {
                 Button(onClick = onAdd, modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Add ${product.name}" },
                     enabled = !busy && additionalAvailable > 0) { Text("Add") }
@@ -324,11 +335,11 @@ private fun ProductTile(
 internal fun menuAvailabilityLabel(availability: MenuAvailability?, ownStock: Double): String = when {
     availability == null -> "Checking stock…"
     availability.additionalPortions > 0 -> "In stock"
-    availability.invalidRecipe -> "Sold out"
+    availability.invalidRecipe -> "Unavailable · Ask your manager to check the recipe"
     availability.limitingIngredients.isNotEmpty() -> "Sold out · Need ${availability.limitingIngredients.joinToString()}"
     availability.limitedByCart -> "No more for this order"
-    !availability.hasRecipe && ownStock <= 0 -> "Sold out"
-    else -> "Sold out"
+    !availability.hasRecipe && ownStock < 1 -> "Sold out · No full units left"
+    else -> "Sold out · Check inventory"
 }
 
 @Composable
@@ -379,8 +390,15 @@ private fun OrderAndPaymentSheet(
             }
         }
         androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("Total " + formatMoney(total), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            TextButton(onClick = { onCashInputChange(total.toPesoInput()) }, enabled = !busy) { Text("Exact amount") }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Cash received", style = MaterialTheme.typography.bodySmall)
+                Text("₱" + cashInput.ifBlank { "0.00" }, style = MaterialTheme.typography.titleLarge)
+            }
             Text(
                 when {
                     changeCents != null -> "Change " + formatMoney(changeCents)
@@ -391,13 +409,6 @@ private fun OrderAndPaymentSheet(
                 color = if (cashCents != null && cashCents < total) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                 modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.End,
             )
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Cash received", style = MaterialTheme.typography.bodySmall)
-                Text("₱" + cashInput.ifBlank { "0.00" }, style = MaterialTheme.typography.titleLarge)
-            }
-            TextButton(onClick = { onCashInputChange(total.toPesoInput()) }, enabled = !busy) { Text("Exact amount") }
         }
         NumericCashKeypad(enabled = !busy, onKey = { onCashInputChange(updateCashInput(cashInput, it)) })
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }

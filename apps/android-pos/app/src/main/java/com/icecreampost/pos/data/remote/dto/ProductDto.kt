@@ -4,6 +4,15 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
+data class PosCatalogRevisionDto(
+    @SerialName("revision_id") val revisionId: String,
+    @SerialName("valid_until") val validUntil: String,
+    @SerialName("device_id") val deviceId: String,
+    val products: List<ProductDto>,
+    val recipes: List<ProductRecipeDto>,
+)
+
+@Serializable
 data class ProductDto(
     val id: String,
     @SerialName("stall_id") val stallId: String,

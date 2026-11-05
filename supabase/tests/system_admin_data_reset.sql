@@ -2,6 +2,21 @@
 begin;
 set local search_path = public, extensions;
 
+create function pg_temp.reject_reset_audit()
+returns trigger language plpgsql as $$
+begin
+  if current_setting('test.reject_reset_audit', true) = 'on' then
+    raise exception 'Simulated audit write failure' using errcode = 'P0099';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger reject_reset_audit
+before insert on public.security_audit_log for each row
+when (new.action in ('stall.stock_reset', 'stall.operating_history_reset'))
+execute function pg_temp.reject_reset_audit();
+
 do $$
 declare
   v_stall_id uuid := gen_random_uuid();
@@ -53,6 +68,32 @@ begin
   end;
 
   perform set_config('request.headers', jsonb_build_object('x-session-token', admin_token)::text, true);
+  -- The audit insert follows the stock and sales changes. Inject a failure at
+  -- that point to verify the entire operation rolls back.
+  perform set_config('test.reject_reset_audit', 'on', true);
+  begin
+    perform public.reset_stall_stock(v_stall_id);
+    raise exception 'Stock reset ignored the audit failure';
+  exception when sqlstate 'P0099' then null;
+  end;
+  begin
+    perform public.reset_stall_transactions(v_stall_id);
+    raise exception 'Sales reset ignored the audit failure';
+  exception when sqlstate 'P0099' then null;
+  end;
+  if public.get_stock_on_hand(v_stall_id, product_id) is distinct from 12::numeric
+    or (select count(*) from public.inventory_ledger where stall_id = v_stall_id) <> 1
+    or not exists (select 1 from public.transactions where id = v_transaction_id and deleted_at is null)
+    or not exists (select 1 from public.transaction_items where transaction_id = v_transaction_id and deleted_at is null)
+    or not exists (select 1 from public.business_days where id = v_business_day_id and closed_at is null)
+    or not exists (select 1 from public.daily_store_closings where business_day_id = v_business_day_id)
+    or not exists (select 1 from public.revenue_deductions where business_day_id = v_business_day_id)
+    or (select financial_report_reset_at from public.stalls where id = v_stall_id) is not null
+    or exists (select 1 from public.security_audit_log where stall_id = v_stall_id) then
+    raise exception 'A failed reset left partial changes';
+  end if;
+  perform set_config('test.reject_reset_audit', 'off', true);
+
   result := public.reset_stall_stock(v_stall_id);
   if result ->> 'scope' <> 'stock' or (result ->> 'affected_records')::integer <> 1
     or public.get_stock_on_hand(v_stall_id, product_id) <> 0 then

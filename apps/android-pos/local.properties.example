@@ -1,5 +1,5 @@
 # Keep the Android SDK path in local.properties. Copy only the Supabase entries below.
-supabase.dev.url=https://YOUR_DEVELOPMENT_PROJECT_REF.supabase.co
+supabase.dev.url=https://fhyqrgxwdqlyzxsnpthr.supabase.co
 supabase.dev.anonKey=YOUR_DEVELOPMENT_ANON_KEY
-supabase.production.url=https://YOUR_PRODUCTION_PROJECT_REF.supabase.co
-supabase.production.anonKey=YOUR_PRODUCTION_ANON_KEY
+# Safety comparison only. Production credentials are disconnected.
+supabase.production.url=https://hdtizzdrbscchvqwcpkb.supabase.co

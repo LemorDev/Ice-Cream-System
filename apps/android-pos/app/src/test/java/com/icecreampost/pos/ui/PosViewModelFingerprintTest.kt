@@ -49,7 +49,7 @@ class PosViewModelFingerprintTest {
     private val cipher = mockk<Cipher>()
     private val savedSession = AppSessionEntity(
         userId = "cashier-1", displayName = "Cashier", role = "cashier",
-        sessionToken = "token-1", expiresAt = "2999-01-01T00:00:00Z",
+        credentialRef = "token-1", expiresAt = "2999-01-01T00:00:00Z",
     )
     private val rawSession = MutableStateFlow<AppSessionEntity?>(savedSession)
     private lateinit var viewModel: PosViewModel
@@ -88,6 +88,7 @@ class PosViewModelFingerprintTest {
     fun `startup keeps a stored session behind fingerprint authentication`() = runTest(dispatcher) {
         advanceUntilIdle()
         assertTrue(viewModel.sessionReady.value)
+        assertFalse(viewModel.offerFingerprintSetup.value)
         assertTrue(viewModel.fingerprintUnlockRequired.value)
         assertNull(viewModel.session.value)
         coVerify(exactly = 0) { sessionRepository.restoreStoredSession(false, true) }
@@ -139,7 +140,7 @@ class PosViewModelFingerprintTest {
     @Test
     fun `password fallback never exposes the previous cashier while Room updates`() = runTest(dispatcher) {
         advanceUntilIdle()
-        val newSession = savedSession.copy(userId = "cashier-2", sessionToken = "token-2")
+        val newSession = savedSession.copy(userId = "cashier-2", credentialRef = "token-2")
         coEvery { sessionRepository.signIn(any(), any(), any()) } returns newSession
 
         viewModel.signIn("MAIN-001", "second@example.com", "password")
@@ -151,6 +152,45 @@ class PosViewModelFingerprintTest {
         rawSession.value = newSession
         advanceUntilIdle()
         assertEquals(newSession, viewModel.session.value)
+        assertTrue(viewModel.offerFingerprintSetup.value)
+        viewModel.dismissFingerprintSetup()
+        assertFalse(viewModel.offerFingerprintSetup.value)
+        assertEquals(newSession, viewModel.session.value)
+    }
+
+    @Test
+    fun `password fallback for the same cashier preserves fingerprint setup`() = runTest(dispatcher) {
+        advanceUntilIdle()
+        val renewed = savedSession.copy(credentialRef = "renewed-token")
+        coEvery { sessionRepository.signIn(any(), any(), any()) } coAnswers {
+            rawSession.value = renewed
+            renewed
+        }
+
+        viewModel.signIn("MAIN-001", "CASHIER01", "password")
+        advanceUntilIdle()
+        assertEquals(renewed, viewModel.session.value)
+        assertFalse(viewModel.offerFingerprintSetup.value)
+        assertTrue(viewModel.fingerprintEnabled.value)
+        verify(exactly = 0) { fingerprintStore.disable() }
+
+        viewModel.onAppBackgrounded()
+        advanceUntilIdle()
+        assertNull(viewModel.session.value)
+        assertTrue(viewModel.fingerprintUnlockRequired.value)
+    }
+
+    @Test
+    fun `a changed session cannot use the previous cashier's fingerprint verification`() = runTest(dispatcher) {
+        advanceUntilIdle()
+        coEvery { sessionRepository.restoreStoredSession(false, true) } returns
+            savedSession.copy(userId = "cashier-2", credentialRef = "different-token")
+
+        viewModel.unlockWithFingerprint(cipher)
+        advanceUntilIdle()
+
+        assertNull(viewModel.session.value)
+        assertTrue(viewModel.fingerprintUnlockRequired.value)
     }
 
     @Test
@@ -174,7 +214,7 @@ class PosViewModelFingerprintTest {
         advanceUntilIdle()
         viewModel.unlockWithFingerprint(cipher)
         advanceUntilIdle()
-        coEvery { sessionRepository.signOut() } coAnswers { rawSession.value = null }
+        coEvery { sessionRepository.signOut() } coAnswers { rawSession.value = null; true }
         viewModel.signOut()
         advanceUntilIdle()
         assertNull(viewModel.session.value)

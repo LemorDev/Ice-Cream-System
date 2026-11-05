@@ -1,95 +1,171 @@
-# First release: development, deployment, and acceptance plan
+# First-release deployment plan
 
-Status: proposed plan, 3 October 2026. No hosting, production database migration, or POS distribution is authorized or performed by this document.
+Updated: 2 November 2026. Status: proposed plan. This revision updates hosting choices and source findings; it does not deploy the project or mark release tasks complete. Record execution evidence in [FIRST_RELEASE_TASKS.md](FIRST_RELEASE_TASKS.md).
 
-For incremental execution and recorded completion evidence, use the [first-release task tracker](FIRST_RELEASE_TASKS.md).
+Execution update, 5 November 2026: local preflight is recorded in [DEPLOYMENT_PREFLIGHT_2026-11-05.md](DEPLOYMENT_PREFLIGHT_2026-11-05.md). The current source already includes `build:production` and production-mode CI checks. The findings dated 2 November below are historical. The candidate remains an uncommitted working tree; do not deploy the older `develop` or `main` revisions.
 
-## The simple answer
+The newer security implementation also requires the `admin-passkey` and `pos-gateway` Supabase Edge Functions. Before hosted acceptance, reserve a stable development HTTPS hostname, inspect the actual pending security migrations, and follow the rollout and enrollment procedures in [supabase/README.md](../supabase/README.md). Set `ADMIN_WEBAUTHN_ORIGIN` to that exact hostname's origin, deploy both functions to the verified development project, and verify custom-session authorization and POS device proof before testing management or synchronization. Service credentials stay in server configuration. Database migrations alone do not deploy these functions. Existing queued POS sales need the documented reconciliation and compatible client rollout before the catalog/device policy changes.
 
-`pnpm dev` at the repository root is only an alias for `pnpm --dir apps/web-ims dev`. Both start a local Vite development server; neither deploys the app or determines which database is used. The current Vite configuration requires development mode to point at the development Supabase project. Production is made with `pnpm --dir apps/web-ims build`, which produces static files in `apps/web-ims/dist` for hosting. `pnpm --dir apps/web-ims build:development` produces a test build connected to the development project.
+These are prerequisites for initial client testing: the web requires passkey verification for each fresh System Administrator session even before the global SQL policy is enabled, and Android immediately sends login and normal API calls through `pos-gateway`. Prepare private admin enrollment codes before the first admin sign-in and deploy the gateway before updating the handset. Enroll existing device keys before enabling global proof enforcement; confirm automatic handset date/time because signed requests allow only 90 seconds of clock difference.
 
-Use **Cloudflare Pages** for the web files and **Supabase** for the database and API. Create two separate Pages projects from this repository so their build settings cannot cross over:
+## Recommended platforms and cost
 
-| Environment | Web release | Supabase | Users and data |
+Use **Cloudflare Pages Free** for the React IMS and Owner dashboard, retain **Supabase** for PostgreSQL, RPCs, access policies and product pictures, and retain **GitHub Actions** for checks. Install the Android POS as a signed APK on the stall's managed phone. This fits the existing architecture without an additional application server.
+
+| Component | Platform | Relevant free allowance | Decision |
 | --- | --- | --- | --- |
-| Local development | `pnpm --dir apps/web-ims dev` on the developer's computer | Existing development project | Test accounts and test sales only |
-| Online acceptance | Pages project built from `develop`; `pnpm --dir apps/web-ims build:development` | Existing development project | Owner/cashier UAT with test data; usable on phones |
-| Live operation | Pages project built from protected `main`; `pnpm --dir apps/web-ims build` | Existing production project | Real accounts, stock, and sales |
+| IMS and Owner website | Cloudflare Pages Free | 500 builds/month, one concurrent build, 20,000 files/site, 25 MiB maximum per asset | Separate development/UAT and eventual production sites. [Limits](https://developers.cloudflare.com/pages/platform/limits/) |
+| Website delivery | Cloudflare Pages | Static requests are free and unlimited; Functions have separate Workers quotas | Serve the Vite output as static files. Backend requests continue to Supabase. [Pricing](https://developers.cloudflare.com/pages/functions/pricing/) |
+| Database and pictures | Supabase Free | 500 MB database/project, 1 GB file storage, 5 GB egress plus 5 GB cached egress; two active free projects | Reuse separate development and production projects. Free projects can pause after a week of inactivity and have no automatic backups. [Pricing](https://supabase.com/pricing) |
+| Automated checks | GitHub Actions | Standard hosted runners are free for public repositories; private repositories consume included usage | Reuse the existing Linux workflow; verify visibility, billing limits and artifact retention. [Billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) |
+| Android installation | Signed APK installed directly | No hosted runtime needed | Build locally initially and retain controlled release copies. |
+| Website address | Default HTTPS `*.pages.dev` | Avoids a domain purchase for the pilot | Proposed names: `coolerz-ims-dev` and `coolerz-ims`, subject to availability. |
 
-In both Pages projects, use the repository root as the build root and `apps/web-ims/dist` as the output directory. Set `VITE_APP_ENV`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY` for each project; the development project also needs `VITE_SUPABASE_PRODUCTION_URL` for the isolation check. Verify the final environment label and project URL after each deployment. The Vite variables and anon/publishable key are visible in the browser, so never put a database password or secret/service-role key there. Configure the production Pages project to deploy only `main` and the development project only `develop`; turn off unrelated preview branch deployments. A reviewed merge into `main` is the production release action, so protect that branch first. Cloudflare Pages settings and the exact domain still need to be created and checked; no Pages integration is present in the repository today.
+**Target infrastructure cost: $0/month within these allowances**, using existing hardware and suitable existing private backup storage. Current subscriptions and consumption have not been verified. A custom domain, extra storage, paid CI usage or a paid backend changes that budget. Suitability for one stall is an initial estimate: measure database growth, picture downloads and synchronization traffic during UAT.
 
-The eventual production address can be `https://ims.<your-domain>` and the development address `https://dev-ims.<your-domain>`. These are examples, not existing domains. The default `*.pages.dev` HTTPS address works for the initial acceptance run if a domain has not been purchased. Cloudflare Pages can attach a custom domain later.
+Cloudflare is preferable here to Netlify Free's shared **300-credit monthly allowance** ([Netlify pricing](https://www.netlify.com/pricing/)). Vercel Hobby permits personal, noncommercial use, so it is unsuitable for the business deployment ([Vercel Hobby](https://vercel.com/docs/plans/hobby)). Replacing Supabase would require adapting the existing SQL/RPC and storage contracts.
 
-### How people access it
+## Architecture and access
 
-- **System administrator / IMS:** Open the live HTTPS web address on a computer or mobile browser, sign in with the System admin account, and manage products, inventory, staff, devices, and reports. Test the specific admin tasks needed on the intended phone before promising mobile-only administration.
-- **Owner:** Open that **same** live address on a phone or computer and sign in with an Owner account assigned to the stall. The app presents the read-only Owner dashboard automatically. On iPhone, open the address in Safari and use **Share → Add to Home Screen**. This is a website shortcut/app-like launch; it requires internet for live figures. It is not a second website or a second web deployment.
-- **Cashier / POS:** Install the signed **production Android APK** on the stall's Android phone, sign in with the production Cashier account and stall code, then activate the device with a one-time code from the System administrator. The POS can save sales locally while offline and sync when connected. The development APK has a separate `.dev` package and connects only to the development project.
+```mermaid
+flowchart LR
+  Browser[System admin and Owner browsers] --> Pages[Cloudflare Pages: static IMS]
+  Pages --> API[Supabase: PostgreSQL RPCs and access policies]
+  Browser --> Pictures[Supabase Storage: product pictures]
+  POS[Signed Android POS] --> API
+  POS --> Pictures
+  POS <--> Local[Room database and offline queue]
+  Git[GitHub: reviewed source and CI] --> Pages
+```
 
-Web hosting does not host the POS app. For the first one-stall internal release, distribute a controlled, signed APK directly to the selected device, retaining the exact file and checksum. Consider a Google Play internal track later if remote installation and updates become important. Keep the production package ID and signing certificate stable: an update must install over the existing app to preserve its local Room queue. Do not uninstall a phone with unsynced sales.
+The System administrator and Owner use the same web address; roles select the available screens. Owners can add it to the iPhone home screen. The dashboard needs internet for live data. Android retains queued work locally and synchronizes when connected; it is installed on the phone rather than hosted on Pages.
 
-## New day-to-day software process
+The application uses custom password RPCs and `X-Session-Token`, rather than Supabase Auth providers; see [supabase/README.md](../supabase/README.md). Test the existing session, role and device controls. SMTP and OAuth configuration are outside the current deployment requirements.
 
-1. Start a short-lived feature branch from `develop` (normally `codex/<feature>`). Work locally against the **development** Supabase project and use only test records.
-2. Add schema changes as ordered, reviewed files in `supabase/migrations`. Check the linked project reference and `supabase db push --dry-run` before pushing to **development**. Never use `db reset --linked` on either live project. Put compatibility changes on the server before a client that needs them.
-3. Run focused web, Android, and SQL checks; test the actual phone for sales, offline queue, restart, sync, closing, and in-place update. Open a PR into `develop`. After review and checks, merge and let the development Pages site rebuild; install the matching development APK.
-4. Owner and cashier perform acceptance tests on the development URL and `.dev` POS. Log each issue with steps, expected result, actual result, and whether it blocks the release. Fix issues on feature branches and repeat the affected tests.
-5. Freeze a release candidate. Review the exact code revision, migration list, web build configuration, and Android version. Promote that revision with a PR from `develop` to `main` after the gates below pass. Keep a release tag and the signed APK tied to that commit.
-6. For later fixes, branch from `develop`; for urgent production fixes, branch from `main`, release the fix, then merge it back to `develop`.
+## Current repository findings
 
-The existing [branching guide](RELEASE_AND_BRANCHING_PLAN.md) expands this workflow. It is a proposal: the current checkout is still on `codex/inventory-recipes-ui`, has many uncommitted/untracked changes, `develop` does not yet exist locally, and no CI workflow was found. Review and preserve that work before branch setup or release.
+These are local observations from 2 November, not a production readiness certification:
 
-## Release sequence and gates
+- Current branch: `codex/restore-latest-development`, based on `e72814e`, with uncommitted work. Local `develop` and `main` exist. Preserve and review the work before selecting a release commit; do not publish an old branch simply because its name matches the intended environment.
+- [ENVIRONMENTS.md](ENVIRONMENTS.md) specifies development-only local operation. Production credentials are disconnected. Development reference: `fhyqrgxwdqlyzxsnpthr`. Retained production reference: `hdtizzdrbscchvqwcpkb`; confirm its identity and data independently before production work.
+- **Both `pnpm build` and `pnpm --dir apps/web-ims build` currently build in development mode.** The previous plan's production-build instruction is obsolete. Use the explicit command below for an eventual production release.
+- `.github/workflows/pr-checks.yml` already checks web lint/tests/development build, Android tests/lint/build and disposable database migrations. CI pins Node `24.19.0`, pnpm `11.21.0`, JDK 17 and Android SDK/build tools 36. No new CI run was performed for this planning revision.
+- Android has `dev` and `production` flavors, but only debug signing is configured. Production release signing remains a blocker. Current `versionCode` is `1`.
+- The linked project reference is the intended development project. A fresh `supabase migration list --linked` attempt with telemetry disabled failed with `AccessTokenRequiredError`. **Current remote migration state is unverified.** The 24 October evidence described `202610140001_product_images.sql` and `202610240001_integrate_product_images.sql` as pending; that is historical evidence, not today's pending list.
+- [24 October integration evidence](2026-10-24_INTEGRATION.md) and the [phone checklist](R09_PHONE_TEST_CHECKLIST.md) still require combined-build handset/UAT evidence. A scheduled deployment date does not prove deployment occurred. Live hosting, subscription plans and devices were not inspected in this planning pass.
 
-### A. Prepare the candidate
+## Environment layout and build settings
 
-- Agree on the first-release scope: one stall, one active POS phone, products/recipes and inventory units, prices, opening stock, operating-day cutoff, cash deductions, and refund/void policy. Defer features only when the cashier has a documented way to handle the case and the owner accepts the reporting effect.
-- Re-audit the [project review](PROJECT_REVIEW.md) and [release guide](RELEASE_AND_BRANCHING_PLAN.md) against current code. Several review findings are dated; mark each verified, fixed, or still blocking. Specifically verify login rate limiting/account recovery, cross-stall access, report pagination and date/cost accuracy, sync idempotency, queue recovery, and consistency of deduction/closing totals.
-- Add required PR checks for web lint/tests/build, Android unit tests/build, and isolated database checks. Pin the CI Node/pnpm and Android toolchain versions so the release can be rebuilt from the same commit.
-- Run all migrations and rollback-only SQL fixtures in a disposable database, then test the candidate against the development Supabase project. Migrations named `reset` define controlled functions or reporting behavior; still inspect their bodies before applying. Never run destructive test fixtures against production.
-- Configure the two Pages projects and the development online site. Ensure the development site displays **DEVELOPMENT DATABASE**, and verify the production build displays the production label and uses a different project URL.
-- Configure secure production release signing, store and back up the keystore outside Git, and set an incrementing Android `versionCode`. Rehearse an **in-place** update with a nonempty development queue on a physical phone.
+Start with hosted development for phone testing. Production is a later stage after acceptance, signing and recovery preparation.
 
-**Gate A:** No known issue that can lose, duplicate, expose, or materially misstate sales, stock, cash, or owner reports; reproducible web builds and signed Android release build; tested recovery path.
+| Environment | Web project / reviewed branch | Backend | Data |
+| --- | --- | --- | --- |
+| Local development | Local Vite server | Development Supabase | Test only |
+| Online development/UAT | `coolerz-ims-dev` / `develop` | `fhyqrgxwdqlyzxsnpthr` | Test only |
+| Eventual live operation | `coolerz-ims` / accepted `main` | Independently confirmed production project | Real accounts, stock and sales |
 
-### B. User acceptance on development
+Reuse the two existing backend environments. The two-active-project free limit spans organizations where the account is an Owner or Administrator ([Supabase billing](https://supabase.com/docs/guides/platform/billing-on-supabase)). Use disposable local Supabase for destructive fixtures and restore rehearsals.
 
-Use the online development IMS and development POS together. Record pass/fail and actual amounts for these scenarios:
+For both Git-integrated Pages projects, use the **repository root** as the build root and **`apps/web-ims/dist`** as the output directory. Set `NODE_VERSION=24.19.0` and `PNPM_VERSION=11.21.0` to match CI; confirm these versions and a frozen lockfile installation in the build log. See [build configuration](https://developers.cloudflare.com/pages/configuration/build-configuration/) and [build image settings](https://developers.cloudflare.com/pages/configuration/build-image/).
 
-| Tester | Required walkthrough |
-| --- | --- |
-| System administrator | Create/assign owner and cashier, set products/recipes/prices/opening stock, activate POS, see records arrive, and verify an unassigned user cannot access the stall |
-| Cashier | Open day, sell with cash/change, receive or adjust stock if in scope, record a deduction, close, restart the app, work offline then reconnect, and install an update without losing queued work |
-| Owner | Sign in on the intended mobile phone, check sales and profit against receipts and manual calculations, review closing/deductions, and add the dashboard to the home screen if desired |
-| Developer | Verify each sale uploads once, queue reaches zero, rejected items are visible, dates agree across POS/IMS, and backup restore works in an isolated project |
+| Setting | Development/UAT | Production, after acceptance |
+| --- | --- | --- |
+| Build command | `pnpm install --frozen-lockfile && pnpm --dir apps/web-ims build:development` | `pnpm install --frozen-lockfile && pnpm --dir apps/web-ims build:production` |
+| `VITE_APP_ENV` | `development` | `production` |
+| `VITE_SUPABASE_URL` | Development URL | Confirmed production URL |
+| `VITE_SUPABASE_ANON_KEY` | Development public client key | Production public client key |
+| `VITE_SUPABASE_PRODUCTION_URL` | Production URL for the isolation guard only | Not required |
+| Primary deployment branch | Reviewed `develop` | Accepted `main` |
+| Preview branches | Disabled initially | Disabled |
 
-**Gate B:** Cashier and Owner sign off on the agreed scope and figures. All blocking defects are fixed and retested. Test data stays in development and is never copied into the live ledger.
+PR checks compile the production IMS and POS variants with isolated placeholder endpoints. Before publishing the IMS, match the Cloudflare deployment commit to the revision accepted by CI.
 
-### C. Production preparation and deployment
+Pages calls its primary branch the "production branch" even in the development project. For `coolerz-ims-dev`, put development backend values in that project's primary deployment environment. For `coolerz-ims`, keep automatic primary-branch deployment disabled until the first approved release and disable previews. Verify current branch protections in GitHub before enabling releases. [Pages branch controls](https://developers.cloudflare.com/pages/configuration/branch-build-controls/)
 
-1. Inventory the **existing** production Supabase data, applied migrations, active accounts, installed POS package/signing identity, and any pending phone queue. Do not assume production is empty or re-run first-admin bootstrap blindly.
-2. Choose the backup plan for real sales, take a pre-migration backup, and demonstrate restore into an isolated project. Supabase's automatic daily backups depend on plan; if the project has no automatic backups, arrange a tested off-site export before going live. A cloud backup cannot recover sales still only on a phone.
-3. During a quiet period, sync the current POS queue to zero and reconcile existing sales. Review the pending production migrations with `migration list` and `db push --dry-run` while explicitly linked to the production project. Apply only the reviewed migrations, with a recorded change window and a compatible client rollout order.
-4. Merge the accepted candidate to protected `main`. Deploy the production Pages build and verify HTTPS, environment label, login, role limits, and key reports from both desktop and mobile. Set up the real Owner and Cashier accounts, stall, catalog, and opening stock.
-5. Install the exact signed production APK on the selected Android phone, activate it, open the day, and verify catalog, stock, a controlled first sale, sync acknowledgment, and the same sale in IMS. Keep the previous signed artifact and release record. Avoid an Android downgrade after a Room schema change; prepare a forward fix if needed.
+Vite embeds `VITE_*` values into public files. Use a public client key compatible with the existing custom-session flow. Keep service-role/secret keys, database passwords, CLI tokens and signing passwords out of client configuration. Deployment variables must override local development configuration. Rebuild after changes. Verify the rendered environment label, browser network destination and absence of the development endpoint from production assets.
 
-**Gate C:** Successful end-to-end production smoke test, reconciled starting state, named support contact, cashier paper fallback sheet, and recorded backup/build versions.
+## Execution sequence
 
-### D. Supervised real-sales pilot
+| Stage | Work | Completion check |
+| --- | --- | --- |
+| 1. Select the candidate | Preserve local work, review recovered source, identify one commit, confirm branch rules and run CI including the production build checks. | Reviewed candidate passes all required checks. |
+| 2. Prepare development backend | Authenticate CLI, verify link/history, inspect pending SQL and preview it, then apply reviewed migrations to development. Check picture storage policies and web/POS RPCs. | Remote history and backend behavior match the candidate; no live fixture ran. |
+| 3. Publish development IMS | Configure `coolerz-ims-dev` with the settings above. | HTTPS works on desktop/iPhone, shows DEVELOPMENT DATABASE, reaches only development and supports Owner/admin login. |
+| 4. Complete acceptance | Use the development APK and hosted IMS: activation, pictures, recipes, receiving, open/sell/deduct/close, offline queue, retry, restart, fingerprint, recovery and in-place update. Check role/cross-stall denial and reconcile figures. | Each sale appears once, acknowledged queues reach zero, stock/cash/profit agree and staff sign off. |
+| 5. Prepare production | Inventory retained data, migration history, installed package/certificate and pending queue. Configure/back up release signing, increment version code and prove backup restore. | Starting state, signed APK, compatible rollout and recovery procedure are recorded. |
+| 6. Release in a quiet window | Sync/reconcile the existing phone, take a backup, apply reviewed compatible production migrations, publish accepted web build, then install/activate matching signed APK. | Production identity, role limits and a controlled first real sale pass; IMS/POS agree. |
+| 7. Supervise the pilot | Operate one stall for three consecutive fully reconciled days, with paper fallback ready. | Daily sales, deductions, cash, stock and Owner figures reconcile and staff accept the release. |
 
-Run one stall for at least three consecutive fully reconciled operating days. These are real sales in **production**; do not reset them at the end of UAT. At each close, compare receipt count, gross sales, deductions, expected cash, counted cash, inventory movements, and Owner dashboard figures. The administrator resolves any discrepancy before the next shift. Stop POS use and use the documented paper process for missing/duplicate sales, unexplained cash or stock, unauthorized access, crash loops, or an unrecoverable queue. Preserve the phone and its data for reconciliation.
+Stages 1-4 are the immediate path. Use [DEVELOPMENT_UAT.md](DEVELOPMENT_UAT.md) for expected figures and [FIRST_RELEASE_TASKS.md](FIRST_RELEASE_TASKS.md) for owners/evidence. Old test results do not cover a changed candidate. Server changes must remain compatible with installed clients during rollout.
 
-After the Owner and Cashier accept the pilot, mark the release operational. Keep daily closing reconciliation and release records for each later update.
+## Migration commands: repository-root PowerShell
 
-## Decisions needed before execution
+These are execution instructions, not operations performed by this plan. Authenticate interactively and keep credentials out of Git and chat. Begin with development:
 
-1. Confirm the production domain or use the temporary `pages.dev` address for the pilot.
-2. Confirm the first-release feature scope, especially recipes, refunds/voids, business-day cutoff, and how deductions affect cash and profit.
-3. Choose the real-sales backup/recovery target and who handles a stalled POS or discrepancy during the pilot.
+```powershell
+Set-Location 'C:\Desktop Apps and Files\Ice cream system'
+$env:SUPABASE_TELEMETRY_DISABLED = '1'
+.\node_modules\.bin\supabase.cmd login
+.\node_modules\.bin\supabase.cmd link --project-ref fhyqrgxwdqlyzxsnpthr
+if ((Get-Content -LiteralPath 'supabase/.temp/project-ref' -Raw).Trim() -ne 'fhyqrgxwdqlyzxsnpthr') { throw 'Unexpected linked project' }
+.\node_modules\.bin\supabase.cmd migration list --linked
+Get-ChildItem -LiteralPath 'supabase/migrations' -File | Sort-Object Name | Select-Object Name
+.\node_modules\.bin\supabase.cmd db push --dry-run
+```
 
-## Provider references
+Inspect the actual pending files and SQL against the intended candidate. Investigate differences before continuing. Only after review, apply and verify:
 
-- [Cloudflare Pages build configuration](https://developers.cloudflare.com/pages/configuration/build-configuration/) and [branch deployment controls](https://developers.cloudflare.com/pages/configuration/branch-build-controls/)
-- [Cloudflare Pages custom domains](https://developers.cloudflare.com/pages/configuration/custom-domains/)
-- [Supabase database backups](https://supabase.com/docs/guides/platform/backups)
-- [Android app signing and update identity](https://developer.android.com/studio/publish/app-signing)
+```powershell
+if ((Get-Content -LiteralPath 'supabase/.temp/project-ref' -Raw).Trim() -ne 'fhyqrgxwdqlyzxsnpthr') { throw 'Unexpected linked project' }
+.\node_modules\.bin\supabase.cmd db push
+.\node_modules\.bin\supabase.cmd migration list --linked
+```
+
+For the eventual production window, first confirm the retained reference below in the dashboard and finish the inventory, backup and compatibility review. Run separately from the development block:
+
+```powershell
+$productionProjectRef = 'hdtizzdrbscchvqwcpkb'
+.\node_modules\.bin\supabase.cmd link --project-ref $productionProjectRef
+if ((Get-Content -LiteralPath 'supabase/.temp/project-ref' -Raw).Trim() -ne $productionProjectRef) { throw 'Unexpected linked project' }
+.\node_modules\.bin\supabase.cmd migration list --linked
+.\node_modules\.bin\supabase.cmd db push --dry-run
+```
+
+After reviewing that production pending list and SQL, apply in the planned window, verify and restore the development link:
+
+```powershell
+if ((Get-Content -LiteralPath 'supabase/.temp/project-ref' -Raw).Trim() -ne $productionProjectRef) { throw 'Unexpected linked project' }
+.\node_modules\.bin\supabase.cmd db push
+.\node_modules\.bin\supabase.cmd migration list --linked
+.\node_modules\.bin\supabase.cmd link --project-ref fhyqrgxwdqlyzxsnpthr
+Get-Content -LiteralPath 'supabase/.temp/project-ref'
+```
+
+Stop on any failed command. A dry run does not apply migrations. SQL Editor changes do not appear in CLI history; reconcile discrepancies rather than blindly replaying SQL or repairing history. Never use `db reset --linked` or run fixtures against a live project. Any new migration must have a unique version prefix; this plan creates none.
+
+## Android release
+
+Configure a production signing key outside Git and back it up securely. Confirm the installed app's identity before replacing it; Android updates need the existing signing identity ([Android signing](https://developer.android.com/studio/publish/app-signing)). Restore production URL/public client key only when preparing the approved release. Keep the `.dev` package separate.
+
+After production configuration and release signing exist, build from repository-root PowerShell:
+
+```powershell
+Push-Location 'apps/android-pos'
+if (!(Test-Path 'gradle/verification-metadata.xml' -PathType Leaf)) { throw 'Gradle verification metadata is missing.' }
+.\gradlew.bat :app:assembleProductionRelease --dependency-verification=strict
+Pop-Location
+```
+
+Currently this variant is unsigned: the command alone does not produce an installable release. Verify the signed APK, certificate, application ID, incremented `versionCode` and SHA-256 before private distribution. Record them with the source commit and web deployment ID. Rehearse an in-place update with queued development data on a physical phone. Never uninstall a POS with unsynced records; cloud backups cannot recover its phone-only queue. Keep APK distribution separate from the Pages site.
+
+## Backups, recovery and free-plan operation
+
+- **Backup:** export after each reconciled close and before migrations, encrypt and copy outside the development computer to controlled private storage. Test coverage of application public/private schema objects, data, grants and required configuration. Keep seven daily and four weekly copies initially. Dumps can contain staff password hashes and session tokens. Supabase recommends off-site CLI exports for Free; database backups exclude Storage object bytes, so copy product pictures separately. [Backup documentation](https://supabase.com/docs/guides/platform/backups)
+- **Recovery:** rehearse in disposable local Supabase and verify logins, roles, pictures, ledger totals and RPCs. Proposed targets for Owner acceptance: at most one reconciled day's cloud data loss with daily exports, and recovery within four hours. These are targets to prove. Increase export frequency or choose paid recovery support if that loss is unacceptable.
+- **Operation:** check POS pending/rejected work, reconciliation and backup completion each operating day. Review Supabase usage and pause notices weekly. Verify backend availability before reopening after a long closure. Avoid unnecessary keep-alive traffic.
+- **Capacity:** investigate at 70% of database/storage/transfer allowances and plan action by 85%; these are proposed operational thresholds. Compress pictures before upload: the current app allows 5 MB files without automatic optimization. A suggested target is 100-300 KB per image. Preserve measured headroom for indexes, existing data and sync bursts.
+- **Rollback:** retain the previous compatible web deployment and signed APK. Pages supports reverting a successful primary deployment ([rollbacks](https://developers.cloudflare.com/pages/configuration/rollbacks/)). A web rollback does not reverse SQL. Use a reviewed database forward fix or tested restore; avoid Android downgrades after Room schema changes. Preserve the phone and use numbered paper receipts if reconciliation or sync fails.
+
+When uninterrupted backend availability or managed daily backups becomes necessary, budget for Supabase Pro **from US$25/month**; additional projects in a paid organization start at **US$10/month** ([pricing](https://supabase.com/pricing)). Plans apply to whole organizations: keep development in a separate Free organization if eligible when upgrading production, or budget for both paid projects ([organization billing](https://supabase.com/docs/guides/platform/billing-on-supabase)). Pages can remain Free. Pictures and phone-only records still need their own recovery procedures.
+
+The first implementation work is to identify the candidate, authenticate and verify development migration history, add explicit production build coverage and configure the development Pages project. Production follows completed acceptance and recovery checks.

@@ -13,6 +13,8 @@ import com.icecreampost.pos.data.local.database.CoolerzDatabase
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.CatalogPageRequest
 import java.time.Instant
+import java.math.BigDecimal
+import java.math.RoundingMode
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -31,19 +33,20 @@ class ProductRepository @Inject constructor(
 
     suspend fun refreshFromCloud() {
         val legacyCursor = syncStateDao.find("catalog")?.cursorUpdatedAt
-        val productState = syncStateDao.find("catalog-products")
         val ledgerState = syncStateDao.find("catalog-ledger")
         // Migrate existing installs without replaying previously applied inventory.
-        val productCursor = if (productState == null) legacyCursor else productState.cursorUpdatedAt
         val ledgerCursor = if (ledgerState == null) legacyCursor else ledgerState.cursorUpdatedAt
         // Complete every page before entering the Room transaction. A failed
         // page leaves both stock and cursors untouched for the next retry.
         val remoteLedger = pullAllPages(ledgerCursor, api::getInventoryLedgerPage,
             { it.id }, { it.updatedAt })
-        val productDtos = pullAllPages(productCursor, api::getProductsPage,
-            { it.id }, { it.updatedAt })
-        val recipeDtos = pullAllPages(null, api::getRecipesPage,
-            { it.id }, { it.updatedAt })
+        val catalog = api.getCatalogRevision()
+        check(catalog.revisionId.isNotBlank() && catalog.deviceId.isNotBlank() &&
+            Instant.parse(catalog.validUntil).isAfter(Instant.now())) {
+            "The server did not return a valid catalog revision."
+        }
+        val productDtos = catalog.products
+        val recipeDtos = catalog.recipes
         val ledger = remoteLedger.map { entry ->
             InventoryLedgerEntity(
                 id = entry.id,
@@ -78,8 +81,9 @@ class ProductRepository @Inject constructor(
                     imageUrl = dto.imageUrl,
                     category = dto.categoryName,
                     unit = dto.unit,
-                    priceCents = (dto.salePrice * 100).toLong(),
-                    costPriceCents = (dto.costPrice * 100).toLong(),
+                    priceCents = BigDecimal.valueOf(dto.salePrice).movePointRight(2).longValueExact(),
+                    costPriceCents = BigDecimal.valueOf(dto.costPrice).movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact(),
+                    catalogCostPrice = BigDecimal.valueOf(dto.costPrice).toPlainString(),
                     lowStockThreshold = dto.lowStockThreshold,
                     packSize = dto.packSize,
                     conversionRate = dto.conversionRate,
@@ -136,24 +140,20 @@ class ProductRepository @Inject constructor(
             productRecipeDao.upsertAll(recipeDtos.map { recipe ->
                 ProductRecipeEntity(recipe.id, recipe.stallId, recipe.parentProductId, recipe.ingredientProductId, recipe.quantity, recipe.updatedAt)
             })
-            val nextProductCursor = (listOfNotNull(productCursor) + productDtos.map { it.updatedAt }).maxOrNull()
             val nextLedgerCursor = (listOfNotNull(ledgerCursor) + remoteLedger.map { it.updatedAt }).maxOrNull()
             val now = Instant.now().toString()
-            listOf(
-                "catalog-products" to nextProductCursor,
-                "catalog-ledger" to nextLedgerCursor,
-                "catalog" to listOfNotNull(nextProductCursor, nextLedgerCursor).maxOrNull(),
-            ).forEach { (key, cursor) ->
-                syncStateDao.upsert(
-                    SyncStateEntity(
-                        key = key,
-                        value = "products-and-ledger",
-                        cursorUpdatedAt = cursor,
-                        lastSyncAt = now,
-                        status = "success",
-                    ),
-                )
-            }
+            syncStateDao.upsert(SyncStateEntity(
+                key = "catalog-revision:${catalog.deviceId}", value = catalog.revisionId, cursorUpdatedAt = catalog.validUntil,
+                lastSyncAt = now, status = "success",
+            ))
+            syncStateDao.upsert(SyncStateEntity(
+                key = "catalog-ledger", value = "ledger", cursorUpdatedAt = nextLedgerCursor,
+                lastSyncAt = now, status = "success",
+            ))
+            syncStateDao.upsert(SyncStateEntity(
+                key = "catalog", value = "products-and-ledger", cursorUpdatedAt = nextLedgerCursor,
+                lastSyncAt = now, status = "success",
+            ))
         }
     }
 

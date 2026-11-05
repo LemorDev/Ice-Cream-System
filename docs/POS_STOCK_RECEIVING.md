@@ -43,7 +43,7 @@ Verification for this correction:
 Run from the repository root:
 
 ```powershell
-npm install --prefix apps/android-pos/app/build/sql-test-runtime --no-audit --no-fund --package-lock=false @electric-sql/pglite@0.5.8
+pnpm install --frozen-lockfile
 node supabase/tests/pos_stock_receiving.integration.mjs
 ```
 

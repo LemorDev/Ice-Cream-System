@@ -21,28 +21,30 @@ begin
   values(cashier_id,encode(digest(token,'sha256'),'hex'),now()+interval '1 hour');
   insert into public.devices(id,stall_id,device_name,activation_code_hash,hardware_id)
   values(device_id,stall_id,'R06 POS','unused','r06-device');
-  insert into public.products(id,stall_id,sku,name,unit,is_sellable,product_type,base_unit)
-  values(product_id,stall_id,'R06-PRODUCT','Test product','piece',true,'sellable','piece');
+  insert into public.products(id,stall_id,sku,name,unit,sale_price,is_sellable,product_type,base_unit)
+  values(product_id,stall_id,'R06-PRODUCT','Test product','piece',100,true,'sellable','piece');
   insert into public.inventory_ledger(stall_id,product_id,quantity_delta,movement_type)
   values(stall_id,product_id,10,'opening_balance');
   insert into public.business_days(id,stall_id,device_id,cashier_id,business_date,opened_at)
   values(day_id,stall_id,device_id,cashier_id,(now() at time zone 'Asia/Manila')::date,now()-interval '1 hour');
   perform set_config('request.headers',jsonb_build_object('x-session-token',token,'x-device-id','r06-device')::text,true);
   payload := jsonb_build_object('id',sale_id,'stall_id',stall_id,'device_id',device_id,
+    'catalog_revision_id',public.get_pos_catalog_revision()->>'revision_id','business_day_id',day_id,
     'receipt_number','LOCAL-'||sale_id::text,'status','completed','subtotal',100,'total_amount',100,
     'cash_received',100,'change_amount',0,'occurred_at',now(),
     'items',jsonb_build_array(jsonb_build_object('id',item_id,'product_id',product_id,
-      'product_name','Test product','quantity',1,'unit_price',100,'line_total',100)));
-  reply := public.push_pos_transaction(payload);
+      'product_name','Test product','quantity',1,'unit_price',100,'line_total',100)),
+    'components',jsonb_build_array(jsonb_build_object('id',gen_random_uuid(),'product_id',product_id,'quantity',1,'cost_total',0)));
+  reply := public.push_pos_transaction_v2(payload);
   if reply->>'status' <> 'accepted' then raise exception 'First sale rejected: %',reply; end if;
-  reply := public.push_pos_transaction(payload);
+  reply := public.push_pos_transaction_v2(payload);
   if reply->>'status' <> 'duplicate' then raise exception 'Identical retry rejected'; end if;
   begin
-    perform public.push_pos_transaction(payload || jsonb_build_object('id',gen_random_uuid()));
+    perform public.push_pos_transaction_v2(payload || jsonb_build_object('id',gen_random_uuid()));
     raise exception 'Receipt collision was silently accepted';
   exception when sqlstate '23505' then null; end;
   begin
-    perform public.push_pos_transaction(payload || jsonb_build_object('items',
+    perform public.push_pos_transaction_v2(payload || jsonb_build_object('items',
       jsonb_build_array(jsonb_build_object('id',item_id,'product_id',product_id,
       'product_name','Test product','quantity',1,'unit_price',100,'line_total',100,'comment','changed'))));
     raise exception 'Changed payload was silently accepted';

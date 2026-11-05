@@ -96,7 +96,8 @@ class BusinessDayRepository @Inject constructor(
         val now = Instant.now().toString()
         val cashTotal = transactionDao.getCompletedTotalBetween(stallId, openDay.openedAt, now) + openDay.recoveryKnownSalesCents
         val cashSales = transactionDao.getCashSalesBetween(stallId, openDay.openedAt, now) + openDay.recoveryKnownSalesCents
-        val cogs = transactionDao.getCompletedCogsBetween(stallId, openDay.openedAt, now) + openDay.recoveryKnownCogsCents
+        val cogs = transactionDao.getCompletedCogsBetween(stallId, openDay.openedAt, now) +
+            openDay.recoveryKnownCogsCents + inventoryLedgerDao.getPowderOpeningCost(openDay.id)
         val waste = inventoryLedgerDao.getWasteCostBetween(stallId, openDay.openedAt, now) +
             reversalDao.wasteCostForOriginalDay(openDay.id) + openDay.recoveryKnownWasteCents
         val revenueDeductionCents = revenueDeductionDao.totalForDay(openDay.id) + openDay.recoveryKnownDeductionsCents

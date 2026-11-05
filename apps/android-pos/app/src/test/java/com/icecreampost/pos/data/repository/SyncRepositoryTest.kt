@@ -108,6 +108,7 @@ class SyncRepositoryTest {
         coEvery { transactionDao.getCashSalesBetween(any(),any(),any()) } returns 0
         coEvery { transactionDao.getCompletedCogsBetween(any(),any(),any()) } returns 0
         coEvery { inventoryLedgerDao.getWasteCostBetween(any(),any(),any()) } returns 0
+        coEvery { inventoryLedgerDao.getPowderOpeningCost(any()) } returns 0
         coEvery { transactionDao.markSyncAttempt(any(), any()) } just runs
         coEvery { transactionDao.markSynced(any()) } just runs
         coEvery { transactionDao.markSyncError(any(), any(), any()) } just runs

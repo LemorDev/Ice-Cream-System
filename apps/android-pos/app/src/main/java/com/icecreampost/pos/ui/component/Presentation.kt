@@ -3,6 +3,8 @@ package com.icecreampost.pos.ui.component
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.*
@@ -98,7 +100,12 @@ private fun rememberOnline(): Boolean {
 }
 
 @Composable
-fun SyncStatusLine(viewModel: PosViewModel, modifier: Modifier = Modifier) {
+fun SyncStatusLine(
+    viewModel: PosViewModel,
+    modifier: Modifier = Modifier,
+    showOfflineReadiness: Boolean = false,
+    showStatusIndicator: Boolean = showOfflineReadiness,
+) {
     val state by viewModel.syncState.collectAsStateWithLifecycle()
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
@@ -110,7 +117,18 @@ fun SyncStatusLine(viewModel: PosViewModel, modifier: Modifier = Modifier) {
     }
     val pending = transactions.count { it.stallId == session?.stallId && !it.isSynced }
     Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(syncStatusLabel(state, pending, online, now), modifier = Modifier.weight(1f),
+        val label = syncStatusLabel(state, pending, online, now)
+        val syncIssue = state?.status == "error" || state?.status == "retrying"
+        if (showStatusIndicator) {
+            val statusColor = when {
+                !online || syncIssue -> MaterialTheme.colorScheme.tertiary
+                state?.lastSyncAt != null && pending == 0 && state?.status != "running" -> MaterialTheme.colorScheme.secondary
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            Box(Modifier.padding(end = 8.dp).size(8.dp).background(statusColor, CircleShape))
+        }
+        Text(if (showOfflineReadiness && online && session?.isActivated == true) "$label · Offline sales supported" else label,
+            modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodySmall,
             color = if (online && state?.status == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
         if (online && state?.status in listOf("error", "retrying")) {

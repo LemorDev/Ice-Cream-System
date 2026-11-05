@@ -13,6 +13,7 @@ import com.icecreampost.pos.data.remote.dto.RecoveredDayResponse
 import com.icecreampost.pos.data.remote.dto.RecoveredBusinessDay
 import com.icecreampost.pos.data.remote.interceptor.DeviceIdentity
 import com.icecreampost.pos.data.remote.interceptor.SessionTokenStore
+import com.icecreampost.pos.security.PosCredentialVault
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -28,6 +29,7 @@ class SessionRepositoryTest {
     private val sessionDao = mockk<SessionDao>(relaxed = true)
     private val api = mockk<SupabaseApi>()
     private val tokenStore = SessionTokenStore()
+    private val credentials = mockk<PosCredentialVault>(relaxed = true)
     private val deviceIdentity = mockk<DeviceIdentity>()
     private val syncStateDao = mockk<SyncStateDao>(relaxed = true)
     private val businessDayDao = mockk<BusinessDayDao>(relaxed = true)
@@ -39,8 +41,9 @@ class SessionRepositoryTest {
         coEvery { syncStateDao.find("device-stall") } returns null
         coEvery { syncStateDao.findPersistedStallIds() } returns emptyList()
         coEvery { sessionDao.getCurrent() } returns null
+        every { credentials.readSession(any()) } answers { firstArg() }
         repository = SessionRepository(sessionDao, api, tokenStore, deviceIdentity,
-            businessDayDao, syncStateDao)
+            businessDayDao, syncStateDao, credentials)
     }
 
     @Test
@@ -68,6 +71,8 @@ class SessionRepositoryTest {
         assertEquals("cashier", saved.captured.role)
         assertEquals("stall-1", saved.captured.stallId)
         assertEquals(false, saved.captured.isActivated)
+        org.junit.Assert.assertNotEquals("token-1", saved.captured.credentialRef)
+        io.mockk.verify { credentials.writeSession(requireNotNull(saved.captured.credentialRef), "token-1") }
     }
 
     @Test
@@ -159,10 +164,11 @@ class SessionRepositoryTest {
     fun `activation is verified by the backend and stores the assigned device`() = runTest {
         val current = AppSessionEntity(
             userId = "cashier-1", stallId = "stall-1", displayName = "Cashier",
-            role = "cashier", sessionToken = "token-1",
+            role = "cashier", credentialRef = "token-1",
         )
         coEvery { sessionDao.getCurrent() } returns current
         coEvery { api.activateDevice(any()) } returns ActivateDeviceResponse("device-1", "stall-1")
+        coEvery { api.getResumableDay(any()) } returns RecoveredDayResponse(null)
         val saved = slot<AppSessionEntity>()
         coEvery { sessionDao.save(capture(saved)) } returns Unit
 
@@ -178,10 +184,26 @@ class SessionRepositoryTest {
     @Test
     fun `sign out clears the token and local session`() = runTest {
         tokenStore.token = "token-1"
+        coEvery { api.revokeSession("token-1") } returns Unit
 
-        repository.signOut()
+        assertEquals(true, repository.signOut())
 
         assertEquals(null, tokenStore.token)
+        coVerify(exactly = 1) { sessionDao.clear() }
+        coVerify(exactly = 1) { api.revokeSession("token-1") }
+    }
+
+    @Test
+    fun `offline sign out queues only its own bearer for retry`() = runTest {
+        val expiry = "2999-01-01T00:00:00Z"
+        coEvery { sessionDao.getCurrent() } returns AppSessionEntity(
+            displayName = "Cashier", role = "cashier", credentialRef = "reference", expiresAt = expiry,
+        )
+        every { credentials.readSession("reference") } returns "bearer"
+        coEvery { api.revokeSession("bearer") } throws java.io.IOException("offline")
+        assertEquals(false, repository.signOut())
+        assertEquals(null, tokenStore.token)
+        io.mockk.verify { credentials.queueRevocation("bearer", expiry) }
         coVerify(exactly = 1) { sessionDao.clear() }
     }
 
@@ -190,14 +212,14 @@ class SessionRepositoryTest {
         coEvery { sessionDao.getCurrent() } returns AppSessionEntity(
             displayName = "Cashier",
             role = "cashier",
-            sessionToken = "expired-token",
+            credentialRef = "expired-token",
             expiresAt = "2000-01-01T00:00:00Z",
         )
 
         val restored = repository.restoreStoredSession(allowExpiredForOfflineWork = true)
 
         assertEquals("Cashier", restored?.displayName)
-        assertEquals("expired-token", tokenStore.token)
+        assertEquals(null, tokenStore.token)
         coVerify(exactly = 0) { sessionDao.clear() }
     }
 
@@ -205,7 +227,7 @@ class SessionRepositoryTest {
     fun `biometric-locked session can be checked without exposing its token`() = runTest {
         val current = AppSessionEntity(
             userId = "cashier-1", displayName = "Cashier", role = "cashier",
-            sessionToken = "token-1", expiresAt = "2999-01-01T00:00:00Z",
+            credentialRef = "token-1", expiresAt = "2999-01-01T00:00:00Z",
         )
         coEvery { sessionDao.getCurrent() } returns current
         tokenStore.token = "previous-token"
@@ -223,7 +245,7 @@ class SessionRepositoryTest {
         coEvery { sessionDao.getCurrent() } returns AppSessionEntity(
             displayName = "Cashier",
             role = "cashier",
-            sessionToken = "expired-token",
+            credentialRef = "expired-token",
             expiresAt = "2000-01-01T00:00:00Z",
         )
 

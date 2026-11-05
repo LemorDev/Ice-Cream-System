@@ -49,6 +49,8 @@ begin
 
   insert into public.products(id,stall_id,sku,name,unit,sale_price,is_sellable,product_type,base_unit)
     values(v_menu,v_stall,'POWDER-MENU','Vanilla serving','piece',40,true,'sellable','piece');
+  insert into public.product_recipes(stall_id,parent_product_id,ingredient_product_id,quantity)
+    values(v_stall,v_menu,v_powder,45);
   perform set_config('request.headers',jsonb_build_object('x-session-token',v_cashier_token,'x-device-id','powder-hardware')::text,true);
   if not exists(select 1 from public.get_pos_products_page() p where p.id=v_powder and p.tracks_powder_packs) then
     raise exception 'POS page omitted powder tracking'; end if;
@@ -64,7 +66,11 @@ begin
     'items',jsonb_build_array(jsonb_build_object('id',gen_random_uuid(),'product_id',v_menu,'product_name','Vanilla serving',
       'quantity',1,'unit_price',40,'line_total',40)),
     'components',jsonb_build_array(jsonb_build_object('id',gen_random_uuid(),'product_id',v_powder,'quantity',45,'cost_total',8.33)));
+  -- Recreate a previously accepted sale from the old powder-at-sale contract.
+  alter table private.pos_sale_uploads disable trigger verify_pos_sale_catalog;
   if public.push_pos_transaction_v2(v_sale)->>'status'<>'accepted' then raise exception 'Negative hopper sale was rejected'; end if;
+  alter table private.pos_sale_uploads enable trigger verify_pos_sale_catalog;
+  if public.push_pos_transaction_v2(v_sale)->>'status'<>'duplicate' then raise exception 'Legacy exact retry failed'; end if;
   v_resume:=public.get_resumable_pos_day(v_device);
   if (v_resume->>'known_sales')::numeric<>40 or (v_resume->>'known_orders')::integer<>1
     or (v_resume->>'known_cogs')::numeric<>8.33 then
@@ -103,6 +109,36 @@ begin
   exception when sqlstate 'P0001' then
     if sqlerrm<>'INSUFFICIENT_STOCK' then raise; end if;
   end;
+  v_open:=v_open||jsonb_build_object('id',gen_random_uuid(),'cost_total',185);
+  if public.push_pos_powder_opening(v_open)->>'status'<>'accepted'
+    or public.push_pos_powder_opening(v_open)->>'status'<>'duplicate' then
+    raise exception 'Powder deduction retry failed'; end if;
+  v_sale:=v_sale||jsonb_build_object('id',gen_random_uuid(),'receipt_number','MANUAL-POWDER',
+    'catalog_revision_id',public.get_pos_catalog_revision()->>'revision_id',
+    'items',jsonb_build_array((v_sale->'items'->0)||jsonb_build_object('id',gen_random_uuid())),
+    'components','[]'::jsonb);
+  if public.push_pos_transaction_v2(v_sale)->>'status'<>'accepted' then
+    raise exception 'Serving with no automatic components failed'; end if;
+  select sum(quantity_delta),sum(sealed_packs_delta) into v_total,v_count
+    from public.inventory_ledger where product_id=v_powder;
+  if v_total<>3955 or v_count<>3 or private.powder_opening_cost(v_day)<>185 then
+    raise exception 'Expected exactly one pack and its cost to be deducted'; end if;
+  perform set_config('request.headers',jsonb_build_object('x-session-token',v_admin_token)::text,true);
+  v_saved:=public.save_product_with_recipe((v_product-'id')||jsonb_build_object(
+    'name','Vanilla powder by pack','unit','piece','base_unit','piece',
+    'purchase_quantity',1,'pack_size',1,'low_stock_threshold',1));
+  perform set_config('request.headers',jsonb_build_object('x-session-token',v_cashier_token,'x-device-id','powder-hardware')::text,true);
+  v_receipt:=v_receipt||jsonb_build_object('id',gen_random_uuid(),'product_id',v_saved->>'id','quantity_delta',2);
+  if public.push_pos_inventory_entry_v2(v_receipt)->>'status'<>'accepted' then
+    raise exception 'Piece-based powder receipt failed'; end if;
+  v_open:=v_open||jsonb_build_object('id',gen_random_uuid(),'product_id',v_saved->>'id');
+  if public.push_pos_powder_opening(v_open)->>'status'<>'accepted'
+    or public.push_pos_powder_opening(v_open)->>'status'<>'duplicate' then
+    raise exception 'Piece-based powder opening failed'; end if;
+  select sum(quantity_delta),sum(sealed_packs_delta) into v_total,v_count
+    from public.inventory_ledger where product_id=(v_saved->>'id')::uuid;
+  if v_total<>1 or v_count<>1 or private.powder_opening_cost(v_day)<>370 then
+    raise exception 'Opening must deduct one piece and book one pack cost'; end if;
   perform set_config('request.headers','{}',true);
   begin
     perform public.push_pos_pack_unseal(v_open||jsonb_build_object('id',gen_random_uuid()));

@@ -18,6 +18,7 @@ export type ReconciliationRow = {
   product: Product
   starting: number
   salesUsage: number
+  powderOpened: number
   waste: number
   expected: number
 }
@@ -38,6 +39,8 @@ export function getDailyReconciliation(
     const receipts = movements.filter((entry) => entry.quantity_delta > 0).reduce((sum, entry) => sum + entry.quantity_delta, 0)
     const waste = Math.abs(movements.filter((entry) => entry.movement_type === 'adjustment' && entry.quantity_delta < 0).reduce((sum, entry) => sum + entry.quantity_delta, 0))
     const salesUsage = Math.abs(movements.filter((entry) => entry.movement_type === 'sale').reduce((sum, entry) => sum + entry.quantity_delta, 0))
-    return { product, starting, salesUsage, waste, expected: starting + receipts - salesUsage - waste }
+    const powderOpened = movements.filter((entry) => entry.movement_type === 'pack_unsealed' && entry.quantity_delta < 0)
+      .reduce((sum, entry) => sum - entry.quantity_delta, 0)
+    return { product, starting, salesUsage, powderOpened, waste, expected: starting + receipts - salesUsage - powderOpened - waste }
   })
 }

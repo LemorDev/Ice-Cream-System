@@ -57,7 +57,7 @@ For an existing database, the role migration automatically renames every `manage
 
 ## Custom password sessions
 
-This project does not use Supabase Auth providers. The web uses `login_with_password`; Android uses `login_pos_with_password`, which also verifies the stall code and recognizes an already activated device from `X-Device-Id`. Both return a random, short-lived session token after bcrypt password verification. The web dashboard stores the token in browser session storage. Android stores its session and restored device binding in Room so an activated POS can continue operating offline. Each API request sends the token in `X-Session-Token`; database policies and secured functions resolve the user from that token.
+The web uses `login_with_password`. Android uses `login_pos_with_password` and verifies the stall code, employee ID, and device key. Both return a short-lived custom session bearer after password verification. The web stores it in browser session storage. Android stores it in an AES-GCM credential file under Android Keystore protection, and Room holds session metadata and the offline queue. Both clients revoke the current bearer on sign-out. When the server is unreachable, Android clears local access and retries the revocation from an encrypted queue until the session expires. Web sign-out clears local access, retries once in memory, and reports unconfirmed revocation on the sign-in screen.
 
 ## Role-based access
 
@@ -77,7 +77,78 @@ POS deductions lower expected cash. Only deductions marked **Additional expense 
 
 The current business has one active stall. The schema and Owner dashboard already support assigning several stalls without changing the one-stall workflow.
 
-The password login RPCs share a per-account limit: after five incorrect passwords within fifteen minutes, both web and POS sign-in return no session for fifteen minutes, even with the correct password. Unknown accounts and wrong stall codes return the same no-session result. The counter is stored in the private schema and is cleared after a successful sign-in. Apply `202610050001_limit_password_login_attempts.sql` to each environment before exposing a release; client builds alone cannot enforce this protection. An administrator should help a locked-out user wait for the cooldown and then reset the password using the existing managed-user workflow. A dedicated account recovery process remains a release task.
+Both password login RPCs enforce a per-account limit of five failed attempts within 15 minutes, followed by a 15-minute cooldown. Account cooldowns, unknown accounts, and incorrect credentials return the same no-session result. Successful password sign-in clears the account's failures. An administrator can reset a managed user's password to clear the cooldown and revoke existing sessions.
+
+Apply `202611040001_harden_password_sign_in.sql` before deploying the matching clients. It also limits the two RPCs to 30 total attempts per minute from a single IPv4 address or IPv6 /64, including attempts against unknown accounts. Excess requests receive HTTP 429 with a `Retry-After` header. The network limit uses `CF-Connecting-IP` supplied by the hosted Supabase gateway. Direct SQL and local requests without that header still use the account limit.
+
+New and reset passwords for web and POS accounts require 15–128 Unicode characters. The server rejects common, repetitive, and account-derived choices using local checks. Staff set and reset Cashier passwords in the web dashboard's **Users & access** screen. The System Administrator bootstrap function applies the same policy. Existing passwords continue to verify with their stored bcrypt hashes.
+
+## Deploy the sale catalog and administrator passkey changes
+
+Before applying `202611040003`, pause POS sales, sync the existing queue, and record any pending transactions for reconciliation. Apply the reviewed migrations, then install the matching Android build and sync the catalog before resuming checkout. Each catalog revision is valid for 72 hours after issue or renewal and belongs to the registered POS device. A new upload with a missing, expired, or mismatched revision stays in the POS queue for reconciliation. The server still acknowledges an exact retry of a sale it already accepted. Upload queued sales before replacing a device or letting their revision expire.
+
+After `202611040004`, set `ADMIN_WEBAUTHN_ORIGIN` to the dashboard's exact HTTPS origin and deploy the `admin-passkey` Edge Function before publishing the matching web build. For local WebAuthn testing, the verifier also supports `http://localhost:5173`. Use a stable hostname for each environment because the passkey is tied to that host. The function uses the server-side service-role credential and verifies the custom app session before issuing a challenge.
+
+From the repository root in PowerShell, configure the function in the verified development project:
+
+```powershell
+$devRef = 'fhyqrgxwdqlyzxsnpthr'
+$webOrigin = Read-Host 'Exact development dashboard origin'
+.\node_modules\.bin\supabase.cmd secrets set --project-ref $devRef "ADMIN_WEBAUTHN_ORIGIN=$webOrigin"
+.\node_modules\.bin\supabase.cmd functions deploy admin-passkey --project-ref $devRef --use-api
+```
+
+For each active System Administrator, a trusted database operator should issue a one-use enrollment code in the SQL Editor and deliver it privately. The administrator signs in to IMS, chooses **Use an enrollment code**, and follows the device prompt. Issue another code if they need to register a backup passkey. After each active administrator has verified a passkey on the intended origin, enable server enforcement. Management changes and management-only reads require verification in the last 15 minutes. Dashboard read access remains available after the management window expires.
+
+```sql
+select id, display_name from public.app_users
+where role = 'system_admin' and is_active and deleted_at is null;
+
+select public.issue_admin_passkey_enrollment('ADMIN_UUID'::uuid);
+```
+
+After enrollment and a successful passkey sign-in on the intended origin:
+
+```sql
+select public.enable_admin_passkey_policy();
+```
+
+For lost credentials, verify the administrator's identity through your recovery process, then run `public.revoke_admin_passkeys('ADMIN_UUID'::uuid)` and issue a fresh enrollment code as the database operator. Revocation removes the enrolled keys and invalidates all existing sessions for that administrator. Test recovery with a backup administrator before production rollout.
+
+## Deploy POS device proof and credential storage
+
+Apply reviewed migrations `202611040006` and `202611040007` before releasing the matching clients. Deploy the POS verifier to the same project as the database.
+
+```powershell
+.\node_modules\.bin\supabase.cmd functions deploy pos-gateway --project-ref fhyqrgxwdqlyzxsnpthr --no-verify-jwt --use-api
+```
+
+The Edge Function verifies a P-256 signature over the HTTP method, route and query, request body, session bearer hash, timestamp, and one-use nonce. It uses the service credential only to issue a short-lived database permit, then forwards the app operation with the public API role. The enrolled device keeps the private signing key in Android Keystore.
+
+1. Verify sign-in and sign-out on the development build. Install the matching APK **over** the existing installation with the same application ID and signing identity. Room v17 removes the old session and prompts for password sign-in while preserving the stall, device-linked queue, and operating day.
+2. For an already active handset, issue the enrollment code in the SQL Editor and deliver it privately. Paste it into the POS activation screen after signing in. It expires after 15 minutes. This uses the existing device ID and preserves its operating day. For a new or replacement handset, use the usual activation code from **Users & access**.
+
+```sql
+select id, stall_id, device_name
+from public.devices
+where is_active and deleted_at is null and hardware_id is not null;
+
+select public.issue_pos_device_key_enrollment('ACTIVE_DEVICE_UUID'::uuid);
+```
+
+3. On the test handset, verify catalog sync, process restart, offline sale and reconnect, and online and offline sign-out. Confirm a saved synthetic bearer and copied Android ID alone cannot access the enrolled stall. Verify enrollment or re-enrollment after key loss and reconcile any previously queued sales.
+4. An enrolled stall immediately requires device proof. After upgrading and testing every active handset, require proof across all stalls and revoke any remaining unbound Cashier sessions.
+
+```sql
+begin;
+update private.pos_device_proof_policy set required = true where singleton;
+update public.app_sessions as session_row
+set revoked_at = now()
+from public.app_users as app_user
+where app_user.id = session_row.user_id and app_user.role = 'cashier'
+  and session_row.pos_device_id is null and session_row.revoked_at is null;
+commit;
+```
 
 ## Migration verification
 

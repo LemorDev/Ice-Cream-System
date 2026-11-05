@@ -3,10 +3,16 @@ package com.icecreampost.pos.ui.screen.home
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -37,12 +43,43 @@ fun HomeScreen(viewModel: PosViewModel, onCatalog: () -> Unit, onOperatingDay: (
         item {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 CoolerzLogo(Modifier.size(48.dp))
-                Text("COOLERZ POS", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Column(Modifier.weight(1f)) {
+                    Text("COOLERZ POS", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Text("Hello, ${session?.displayName ?: "Cashier"}", style = MaterialTheme.typography.titleLarge,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                    IconButton(onClick = onInventory, modifier = Modifier.semantics {
+                        contentDescription = if (stockAlerts.isEmpty()) "View inventory" else "View inventory, ${stockAlerts.size} stock alerts"
+                    }) {
+                        Box {
+                            PosIcon(PosSymbol.Bell)
+                            if (stockAlerts.isNotEmpty()) Box(
+                                Modifier.align(Alignment.TopEnd).size(7.dp).background(MaterialTheme.colorScheme.error, CircleShape)
+                            )
+                        }
+                    }
+                }
             }
-            Spacer(Modifier.height(8.dp))
-            Text("Hello, ${session?.displayName ?: "Cashier"}", style = MaterialTheme.typography.headlineMedium,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text("Ready for the day", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
+            StallStatusCard(
+                isOpen = isOpen,
+                date = formatBusinessDate(visibleDay?.businessDate ?: today),
+                detail = if (isOpen) "Opened ${formatReceiptTime(day!!.openedAt).substringAfter(" · ")}"
+                    else if (day?.businessDate == today) "Today's operating day is closed."
+                    else "Open the stall before accepting sales.",
+                onOperatingDay = onOperatingDay,
+            )
+        }
+        item {
+            Button(onClick = onCatalog, enabled = isOpen, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                shape = MaterialTheme.shapes.medium) {
+                PosIcon(PosSymbol.Add)
+                Spacer(Modifier.width(8.dp))
+                Text("New Sale", style = MaterialTheme.typography.titleMedium)
+            }
         }
         if (stockAlerts.isNotEmpty()) item {
             val outOfStockCount = stockAlerts.count { it.unitsInStock <= 0.0 }
@@ -79,43 +116,62 @@ fun HomeScreen(viewModel: PosViewModel, onCatalog: () -> Unit, onOperatingDay: (
             }
         }
         item {
-            Text(if (isOpen) "Stall open" else "Stall closed", style = MaterialTheme.typography.titleLarge,
-                color = if (isOpen) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface)
-            Text(formatBusinessDate(visibleDay?.businessDate ?: today), style = MaterialTheme.typography.bodyMedium)
-            if (isOpen) Text("Opened ${formatReceiptTime(day!!.openedAt).substringAfter(" · ")}",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        item {
-            Button(onClick = onCatalog, enabled = isOpen, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = MaterialTheme.shapes.medium) {
-                Text("New Sale", style = MaterialTheme.typography.titleMedium)
-            }
-            if (!isOpen) {
-                Text(if (day?.businessDate == today) "Today's operating day is closed." else "Open the stall before accepting sales.",
-                    modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = onOperatingDay) { Text("Operating day") }
-            }
-        }
-        item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Today's activity", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 AmountVisibilityButton(amountsVisible, viewModel::toggleAmountsVisible)
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Metric("Sales", formatMoney(activitySalesCents, amountsVisible), Modifier.weight(1f))
-                Metric("Orders", activityOrders.toString(), Modifier.weight(1f))
+                Metric("Sales", formatMoney(activitySalesCents, amountsVisible), PosSymbol.Trend, Modifier.weight(1f))
+                Metric("Orders", activityOrders.toString(), PosSymbol.Orders, Modifier.weight(1f))
             }
         }
         item { HomeAnalytics(transactions, session?.stallId, amountsVisible) }
-        item { SyncStatusLine(viewModel) }
+        item { SyncStatusLine(viewModel, showOfflineReadiness = true) }
     }
 }
 
 @Composable
-private fun Metric(label: String, value: String, modifier: Modifier) {
+private fun StallStatusCard(isOpen: Boolean, date: String, detail: String, onOperatingDay: () -> Unit) {
+    Surface(shape = MaterialTheme.shapes.large, color = Color(0xFF422775), contentColor = Color.White) {
+        Column(
+            Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF511B7E), Color(0xFF343477))))
+                .padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Ready for the day", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                Surface(shape = CircleShape, color = Color.White.copy(alpha = 0.14f), contentColor = Color.White) {
+                    Text(date, Modifier.padding(horizontal = 10.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
+                }
+            }
+            Surface(shape = CircleShape, color = if (isOpen) Color(0xFF20564F) else Color(0xFF57376F),
+                contentColor = if (isOpen) Color(0xFFA8F5D8) else Color.White) {
+                Text(if (isOpen) "Stall open" else "Stall closed",
+                    Modifier.padding(horizontal = 10.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
+            }
+            HorizontalDivider(color = Color.White.copy(alpha = 0.2f))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(detail, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = onOperatingDay, colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) {
+                    Text(if (isOpen) "Update status" else "Operating day")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Metric(label: String, value: String, icon: PosSymbol, modifier: Modifier) {
     Surface(modifier = modifier, shape = MaterialTheme.shapes.medium,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), color = MaterialTheme.colorScheme.surface) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+                    PosIcon(icon, Modifier.padding(6.dp))
+                }
+            }
             Text(value, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }

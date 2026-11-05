@@ -17,7 +17,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -26,7 +26,7 @@ import com.icecreampost.pos.ui.PosViewModel
 
 @Composable
 fun ActivationScreen(viewModel: PosViewModel, onSuccess: () -> Unit) {
-    var code by rememberSaveable { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
 
@@ -35,7 +35,7 @@ fun ActivationScreen(viewModel: PosViewModel, onSuccess: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Activate this device", style = MaterialTheme.typography.headlineMedium)
-        Text("Enter the one-time POS activation code created by the System Administrator. This is different from the stall code used during sign-in.")
+        Text("Enter the one-time activation or security enrollment code provided by the System Administrator.")
         OutlinedTextField(code, { code = it.trim().uppercase() }, label = { Text("Device activation code") },
             singleLine = true, modifier = Modifier.fillMaxWidth())
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }

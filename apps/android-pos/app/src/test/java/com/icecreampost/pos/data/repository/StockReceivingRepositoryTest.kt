@@ -62,8 +62,9 @@ class StockReceivingRepositoryTest {
             val id = firstArg<String>(); entries[id] = entries.getValue(id).copy(isSynced = true)
         }
         coEvery { states.find(any()) } returns null
-        coEvery { api.getProductsPage(any()) } returns emptyList()
-        coEvery { api.getRecipesPage(any()) } returns emptyList()
+        coEvery { api.getCatalogRevision() } returns com.icecreampost.pos.data.remote.dto.PosCatalogRevisionDto(
+            "revision-1", "2099-01-01T00:00:00Z", "device-1", emptyList(), emptyList(),
+        )
         coEvery { api.getInventoryLedgerPage(any()) } returns emptyList()
         receiving = StockReceivingRepository(db, products, sessions, ledger, days, trigger)
         catalog = ProductRepository(db, products, ledger, states, recipes, api)

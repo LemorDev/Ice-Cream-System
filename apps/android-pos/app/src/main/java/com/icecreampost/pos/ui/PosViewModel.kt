@@ -50,14 +50,18 @@ class PosViewModel @Inject constructor(
     private val saleReversalRepository: SaleReversalRepository,
     private val fingerprintLoginStore: FingerprintLoginStore,
 ) : ViewModel() {
-    private val unlockedSessionToken = MutableStateFlow<String?>(null)
+    private val unlockedCredentialRef = MutableStateFlow<String?>(null)
     private val _fingerprintEnabled = MutableStateFlow(fingerprintLoginStore.isEnabled)
     private val _fingerprintUnlockRequired = MutableStateFlow(false)
+    private val _offerFingerprintSetup = MutableStateFlow(false)
     private var appInForeground = true
+    private var backgroundGeneration = 0L
+    private var fingerprintAccountId: String? = null
     val fingerprintEnabled = _fingerprintEnabled.asStateFlow()
     val fingerprintUnlockRequired = _fingerprintUnlockRequired.asStateFlow()
-    val session: StateFlow<AppSessionEntity?> = combine(sessionRepository.observeSession(), unlockedSessionToken) { saved, token ->
-        saved?.takeIf { token != null && it.sessionToken == token }
+    val offerFingerprintSetup = _offerFingerprintSetup.asStateFlow()
+    val session: StateFlow<AppSessionEntity?> = combine(sessionRepository.observeSession(), unlockedCredentialRef) { saved, reference ->
+        saved?.takeIf { reference != null && it.credentialRef == reference }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val products: StateFlow<List<ProductEntity>> = productRepository.observeProducts()
@@ -134,7 +138,8 @@ class PosViewModel @Inject constructor(
             try {
                 restoredSession = sessionRepository.restoreStoredSession(activateToken = !_fingerprintEnabled.value)
                 _fingerprintUnlockRequired.value = restoredSession != null && _fingerprintEnabled.value
-                unlockedSessionToken.value = restoredSession?.sessionToken?.takeUnless { _fingerprintUnlockRequired.value }
+                fingerprintAccountId = restoredSession?.userId?.takeIf { _fingerprintEnabled.value }
+                unlockedCredentialRef.value = restoredSession?.credentialRef?.takeUnless { _fingerprintUnlockRequired.value }
                 if (restoredSession != null) syncRepository.resetStatus()
             } finally {
                 _sessionReady.value = true
@@ -232,11 +237,13 @@ class PosViewModel @Inject constructor(
     fun signIn(stallCode: String, employeeId: String, password: String) {
         runAction {
             val signedIn = sessionRepository.signIn(stallCode, employeeId, password)
-            // Password sign-in starts a fresh enrollment, including when changing Cashiers.
-            fingerprintLoginStore.disable()
-            _fingerprintEnabled.value = false
+            if (_fingerprintEnabled.value && (fingerprintAccountId == null || fingerprintAccountId != signedIn.userId)) {
+                clearFingerprintEnrollment()
+            }
             _fingerprintUnlockRequired.value = false
-            unlockedSessionToken.value = signedIn.sessionToken
+            _offerFingerprintSetup.value = !_fingerprintEnabled.value && !signedIn.userId.isNullOrBlank()
+            unlockedCredentialRef.value = signedIn.credentialRef
+            if (!appInForeground) lockPos()
             cart.value = emptyMap()
             syncRepository.resetStatus()
             if (signedIn.isActivated) {
@@ -267,74 +274,98 @@ class PosViewModel @Inject constructor(
 
     fun signOut() {
         runAction {
-            sessionRepository.signOut()
+            val serverConfirmed = sessionRepository.signOut()
+            dismissFingerprintSetup()
             clearCart()
             searchQuery.value = ""
             selectedCategory.value = null
             selectedServing.value = null
             dismissReceipt()
             dismissHistoricalReceipt()
-            fingerprintLoginStore.disable()
-            _fingerprintEnabled.value = false
+            clearFingerprintEnrollment()
             _fingerprintUnlockRequired.value = false
-            unlockedSessionToken.value = null
+            unlockedCredentialRef.value = null
             cart.value = emptyMap()
+            if (!serverConfirmed) _error.value = "Signed out on this POS. The server could not confirm sign-out."
         }
     }
 
+    fun dismissFingerprintSetup() { _offerFingerprintSetup.value = false }
+
     fun prepareFingerprintEnrollment(): Cipher = fingerprintLoginStore.prepareEnableCipher()
-    fun prepareFingerprintUnlock(): Cipher = fingerprintLoginStore.prepareUnlockCipher()
+    fun prepareFingerprintUnlock(): Cipher = try {
+        fingerprintLoginStore.prepareUnlockCipher()
+    } catch (error: Exception) {
+        // Keep the session locked until password sign-in can reset the setup.
+        fingerprintAccountId = null
+        throw error
+    }
 
     fun enableFingerprintLogin(cipher: Cipher) {
         runAction {
             val userId = requireNotNull(session.value?.userId) { "Sign in before enabling fingerprint login." }
             fingerprintLoginStore.enable(userId, cipher)
+            fingerprintAccountId = userId
             _fingerprintEnabled.value = true
+            dismissFingerprintSetup()
             if (!appInForeground) lockPos()
         }
     }
 
     fun disableFingerprintLogin() {
-        runAction {
-            fingerprintLoginStore.disable()
-            _fingerprintEnabled.value = false
-        }
+        runAction { clearFingerprintEnrollment() }
+    }
+
+    private fun clearFingerprintEnrollment() {
+        fingerprintLoginStore.disable()
+        _fingerprintEnabled.value = false
+        fingerprintAccountId = null
     }
 
     fun unlockWithFingerprint(cipher: Cipher) {
+        if (!_fingerprintUnlockRequired.value || !appInForeground) return
+        val generation = backgroundGeneration
         runAction {
+            if (!appInForeground || generation != backgroundGeneration) return@runAction
             val saved = sessionRepository.restoreStoredSession(activateToken = false)
             if (saved == null) {
                 _fingerprintUnlockRequired.value = false
                 error("Your session has expired. Sign in with your password.")
             }
-            fingerprintLoginStore.verifyAccount(saved.userId, cipher)
-            if (appInForeground) {
-                val restored = sessionRepository.restoreStoredSession()
-                if (restored == null) {
-                    _fingerprintUnlockRequired.value = false
-                    error("Your session has expired. Sign in with your password.")
-                }
-                if (!appInForeground) {
-                    sessionRepository.restoreStoredSession(activateToken = false)
-                    return@runAction
-                }
-                unlockedSessionToken.value = restored.sessionToken
-                _fingerprintUnlockRequired.value = false
-                if (restored.isActivated) syncRepository.sync()
+            try {
+                fingerprintLoginStore.verifyAccount(saved.userId, cipher)
+            } catch (error: Exception) {
+                fingerprintAccountId = null
+                throw error
             }
+            if (!appInForeground || generation != backgroundGeneration) return@runAction
+            val restored = sessionRepository.restoreStoredSession()
+            if (restored == null) {
+                _fingerprintUnlockRequired.value = false
+                error("Your session has expired. Sign in with your password.")
+            }
+            if (!appInForeground || generation != backgroundGeneration ||
+                restored.userId != saved.userId || restored.credentialRef != saved.credentialRef) {
+                sessionRepository.restoreStoredSession(activateToken = false)
+                return@runAction
+            }
+            fingerprintAccountId = restored.userId
+            unlockedCredentialRef.value = restored.credentialRef
+            _fingerprintUnlockRequired.value = false
+            if (restored.isActivated) syncToIms()
         }
     }
 
     fun onAppForegrounded() { appInForeground = true }
     fun onAppBackgrounded() {
         appInForeground = false
+        backgroundGeneration++
         lockPos()
     }
 
     fun lockPos() {
-        if (_fingerprintEnabled.value && unlockedSessionToken.value != null) {
-            unlockedSessionToken.value = null
+        if (_fingerprintEnabled.value && unlockedCredentialRef.value != null) {
+            unlockedCredentialRef.value = null
             _fingerprintUnlockRequired.value = true
             _error.value = null
         }

@@ -16,6 +16,17 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+// Lock the resolved graph that goes into the production APK.
+listOf("productionReleaseCompileClasspath", "productionReleaseRuntimeClasspath").forEach { name ->
+    configurations.matching { it.name == name }.configureEach {
+        resolutionStrategy.activateDependencyLocking()
+    }
+}
+
+dependencyLocking {
+    lockMode.set(LockMode.STRICT)
+}
+
 android {
     namespace = "com.icecreampost.pos"
     compileSdk = 36

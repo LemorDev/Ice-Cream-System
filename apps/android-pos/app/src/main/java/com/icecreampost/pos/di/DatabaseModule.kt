@@ -2,6 +2,8 @@ package com.icecreampost.pos.di
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.RoomDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.icecreampost.pos.data.local.dao.ProductDao
 import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
 import com.icecreampost.pos.data.local.dao.SyncStateDao
@@ -42,8 +44,17 @@ object DatabaseModule {
                 CoolerzDatabase.MIGRATION_12_13,
                 CoolerzDatabase.MIGRATION_13_14,
                 CoolerzDatabase.MIGRATION_14_15,
+                CoolerzDatabase.MIGRATION_15_16,
+                CoolerzDatabase.MIGRATION_16_17,
                 CoolerzDatabase.MIGRATION_4_15,
             )
+            .addCallback(object : RoomDatabase.Callback() {
+                override fun onOpen(db: SupportSQLiteDatabase) {
+                    if (!db.isWriteAheadLoggingEnabled) return
+                    // After the upgrade commits, remove WAL frames containing the old session.
+                    db.query("PRAGMA wal_checkpoint(TRUNCATE)").use { it.moveToFirst() }
+                }
+            })
             .build()
 
     @Provides fun provideProductDao(database: CoolerzDatabase): ProductDao = database.productDao()

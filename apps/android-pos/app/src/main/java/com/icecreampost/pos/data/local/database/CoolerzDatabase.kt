@@ -45,7 +45,7 @@ import com.icecreampost.pos.data.local.dao.SaleReversalDao
         RevenueDeductionEntity::class,
         SaleReversalEntity::class,
     ],
-    version = 15,
+    version = 17,
     exportSchema = true,
 )
 abstract class CoolerzDatabase : RoomDatabase() {
@@ -93,6 +93,22 @@ abstract class CoolerzDatabase : RoomDatabase() {
                     db.execSQL("UPDATE products SET imageUrl=(SELECT imageUrl FROM product_image_upgrade WHERE product_image_upgrade.id=products.id)")
                     db.execSQL("DROP TABLE product_image_upgrade")
                 }
+            }
+        }
+
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.query("PRAGMA secure_delete = ON").use { it.moveToFirst() }
+                db.execSQL("INSERT OR IGNORE INTO sync_state (`key`, value, status) SELECT 'device-stall', stallId, 'idle' FROM app_session WHERE stallId IS NOT NULL AND stallId <> ''")
+                db.execSQL("DROP TABLE app_session")
+                db.execSQL("CREATE TABLE app_session (id TEXT NOT NULL PRIMARY KEY, userId TEXT, stallId TEXT, deviceId TEXT, displayName TEXT NOT NULL, role TEXT NOT NULL, credentialRef TEXT, expiresAt TEXT, isActivated INTEGER NOT NULL, transferReady INTEGER NOT NULL)")
+            }
+        }
+
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE products ADD COLUMN catalogCostPrice TEXT")
+                db.execSQL("ALTER TABLE transactions ADD COLUMN catalogRevisionId TEXT")
             }
         }
 

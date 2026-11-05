@@ -5,10 +5,11 @@ import { canAccessWebView, getDefaultView, getNavigation, getViewLabel, type Web
 import { listAccessibleStalls, loadWorkspace } from './lib/api'
 import { appEnvironment } from './lib/supabase'
 import { startWorkspaceAutoRefresh } from './lib/live-sync'
-import { getStoredSession, signIn, signOut, type AppSession } from './lib/session'
+import { getStoredSession, signIn, signOut, storeSession, type AppSession } from './lib/session'
 import { createSupabaseClient } from './lib/supabase'
 import type { Stall, WorkspaceData } from './lib/types'
 import { Button, ConfirmationDialog, LoadingState, Notice, Select } from './components/ui'
+import { AdminPasskeyForm } from './components/AdminPasskeyForm'
 import {
   AdjustmentsScreen,
   OwnerDashboardScreen,
@@ -45,7 +46,7 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
   )
 }
 
-function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void }) {
+function LoginScreen({ onSignedIn, signOutNotice }: { onSignedIn: (session: AppSession) => void; signOutNotice: string }) {
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -53,6 +54,7 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (isLoading) return
     setError('')
 
     if (!identifier.trim() || password.length < 1) {
@@ -102,7 +104,8 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (session: AppSession) => void
             />
           </label>
 
-          {error && <Notice>{error}</Notice>}
+          {error && <div className="mt-4"><Notice>{error}</Notice></div>}
+          {signOutNotice && <div className="mt-4" role="status"><Notice>{signOutNotice}</Notice></div>}
 
           <Button className="mt-6 w-full py-3" disabled={isLoading}>
             {isLoading ? 'Signing in…' : 'Sign in'}
@@ -282,7 +285,9 @@ function Sidebar({ activeView, onNavigate, onSignOut, session, open, collapsed, 
   )
 }
 
-function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () => void }) {
+function Workspace({ session, onSignOut, onAdminVerified }: {
+  session: AppSession; onSignOut: () => void; onAdminVerified: (verifiedAt: string) => void
+}) {
   const [view, setView] = useState<WebView>(() => getDefaultView(session.role))
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -294,8 +299,9 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
   const [amountsVisible, setAmountsVisible] = useState(true)
   const [showSignOutDialog, setShowSignOutDialog] = useState(false)
+  const [showPasskey, setShowPasskey] = useState(false)
   const refreshInFlight = useRef<Promise<void> | null>(null)
-  const client = useMemo(() => createSupabaseClient(session.token), [session.token])
+  const client = useMemo(() => createSupabaseClient(session.token), [session])
 
   const refreshWorkspace = useCallback((silent = false): Promise<void> => {
     if (refreshInFlight.current) return refreshInFlight.current
@@ -486,6 +492,18 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
               </button>
             </div>
           )}
+          {session.role === 'system_admin' && (
+            <div className="rounded-xl border border-violet-100 bg-white p-3">
+              {showPasskey ? <AdminPasskeyForm token={session.token} onCancel={() => setShowPasskey(false)}
+                onVerified={(verifiedAt) => { onAdminVerified(verifiedAt); setShowPasskey(false) }} />
+                : <div className="flex flex-wrap items-center gap-x-3">
+                  <Button className="min-h-11" type="button" variant="ghost" onClick={() => setShowPasskey(true)}>
+                    Verify passkey
+                  </Button>
+                  <p className="text-sm text-slate-600">Admin changes require verification within the last 15 minutes.</p>
+                </div>}
+            </div>
+          )}
           {loading && data && <p className="text-xs text-slate-400">Refreshing workspace…</p>}
           {screen}
         </div>
@@ -497,6 +515,7 @@ function Workspace({ session, onSignOut }: { session: AppSession; onSignOut: () 
 
 export function App() {
   const [session, setSession] = useState<AppSession | null>(() => getStoredSession())
+  const [signOutNotice, setSignOutNotice] = useState('')
 
   useEffect(() => {
     if (!session) return
@@ -510,7 +529,18 @@ export function App() {
   }, [session])
 
   if (!session) {
-    return <LoginScreen onSignedIn={setSession} />
+    return <LoginScreen signOutNotice={signOutNotice} onSignedIn={(signedIn) => {
+      setSignOutNotice('')
+      setSession(signedIn)
+    }} />
+  }
+
+  const endSession = () => {
+    const revocation = signOut(session.token)
+    setSignOutNotice('Confirming sign-out with the server…')
+    setSession(null)
+    void revocation.then((confirmed) => setSignOutNotice(confirmed ? '' :
+      'Signed out on this browser. The server could not confirm sign-out. The old session expires automatically.'))
   }
 
   if (session.role === 'cashier') {
@@ -520,11 +550,29 @@ export function App() {
           <img alt="Coolerz Ice Cream logo" className="mx-auto h-20 w-20 rounded-2xl object-cover shadow-md" src={brandLogo} />
           <h1 className="text-2xl font-black text-[#220046]">Owner access required</h1>
     <p className="text-slate-600">Cashiers use the activated Android POS. This dashboard is for Owners and System admins.</p>
-          <Button onClick={() => { signOut(); setSession(null) }}>Sign out</Button>
+          <Button onClick={endSession}>Sign out</Button>
         </div>
       </main>
     )
   }
 
-  return <Workspace session={session} onSignOut={() => { signOut(); setSession(null) }} />
+  function onAdminVerified(verifiedAt: string) {
+    if (!session || getStoredSession()?.token !== session.token) return
+    const verified = { ...session, adminVerifiedAt: verifiedAt }
+    storeSession(verified)
+    setSession(verified)
+  }
+
+  if (session.role === 'system_admin' && !session.adminVerifiedAt) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#f7f5f9] p-4 sm:p-6">
+        <section className="w-full max-w-md space-y-5 rounded-2xl border border-violet-100 bg-white p-6 sm:p-8">
+          <BrandMark compact />
+          <h1 className="text-2xl font-black text-[#220046]">Verify administrator sign-in</h1>
+          <AdminPasskeyForm token={session.token} onVerified={onAdminVerified} onCancel={endSession} />
+        </section>
+      </main>
+    )
+  }
+  return <Workspace session={session} onSignOut={endSession} onAdminVerified={onAdminVerified} />
 }

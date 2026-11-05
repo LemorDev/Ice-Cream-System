@@ -14,9 +14,15 @@ import com.icecreampost.pos.data.remote.dto.RecoveredBusinessDay
 import com.icecreampost.pos.data.remote.dto.RecoveredDayRequest
 import com.icecreampost.pos.data.remote.interceptor.DeviceIdentity
 import com.icecreampost.pos.data.remote.interceptor.SessionTokenStore
+import com.icecreampost.pos.security.PosCredentialVault
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import retrofit2.HttpException
 import java.time.Instant
+import java.util.UUID
 import kotlin.math.roundToLong
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -29,54 +35,66 @@ class SessionRepository @Inject constructor(
     private val deviceIdentity: DeviceIdentity,
     private val businessDayDao: BusinessDayDao,
     private val syncStateDao: SyncStateDao,
+    private val credentials: PosCredentialVault,
 ) {
-    fun observeSession(): Flow<AppSessionEntity?> = sessionDao.observeCurrent()
+    private val sessionLock = Mutex()
+    private val revocationLock = Mutex()
 
-    suspend fun restoreStoredSession(allowExpiredForOfflineWork: Boolean = false, activateToken: Boolean = true): AppSessionEntity? {
+    fun observeSession(): Flow<AppSessionEntity?> = sessionDao.observeCurrent()
+    fun hasCloudToken(): Boolean = sessionTokenStore.token != null
+
+    suspend fun restoreStoredSession(allowExpiredForOfflineWork: Boolean = false, activateToken: Boolean = true): AppSessionEntity? = sessionLock.withLock {
         val current = sessionDao.getCurrent()
         if (current?.stallId != null && !isCompatibleStall(current.stallId)) {
             sessionTokenStore.token = null
+            credentials.clearSession()
             sessionDao.clear()
-            return null
+            return@withLock null
         }
-        val storedToken = current?.sessionToken?.takeIf { it.isNotBlank() }
+        val storedToken = current?.credentialRef?.let(credentials::readSession)?.takeIf { it.isNotBlank() }
         val isExpired = current?.expiresAt?.let { expiresAt ->
             runCatching { !Instant.parse(expiresAt).isAfter(Instant.now()) }.getOrDefault(true)
         } ?: false
         if (current != null && (storedToken == null || (isExpired && !allowExpiredForOfflineWork))) {
             sessionTokenStore.token = null
+            credentials.clearSession()
             sessionDao.clear()
-            return null
+            return@withLock null
         }
-        sessionTokenStore.token = if (activateToken) storedToken else null
-        return current
+        sessionTokenStore.token = if (activateToken && !isExpired) storedToken else null
+        current
     }
 
-    suspend fun signIn(stallCode: String, employeeId: String, password: String): AppSessionEntity {
+    suspend fun signIn(stallCode: String, employeeId: String, password: String): AppSessionEntity = sessionLock.withLock {
         require(stallCode.isNotBlank()) { "Stall code is required." }
         require(employeeId.isNotBlank()) { "Employee ID is required." }
-        require(password.isNotBlank()) { "Password is required." }
+        require(password.isNotEmpty()) { "Password is required." }
+        val invalidCredentials = "Check the stall code, employee ID, and password. If you’ve tried several times, wait 15 minutes before trying again."
         val response = try {
             api.login(LoginRequest(stallCode.trim().uppercase(), employeeId.trim().uppercase(), password)).firstOrNull()
-        } catch (error: HttpException) {
-            if (error.code() == 401 || error.code() == 403) {
-                throw IllegalArgumentException("The stall code, employee ID, or password is incorrect, or this Cashier account is inactive.")
+        } catch (httpError: HttpException) {
+            when (httpError.code()) {
+                429 -> error("Too many sign-in attempts from this network. Wait a minute and try again.")
+                401, 403 -> throw IllegalArgumentException(invalidCredentials)
+                else -> throw httpError
             }
-            throw error
-        } ?: error("The stall code, employee ID, or password is incorrect.")
+        } ?: error(invalidCredentials)
         require(response.role == "cashier") { "Use the Owner web dashboard for this account." }
         check(isCompatibleStall(response.stallId) &&
             (sessionDao.getCurrent()?.stallId == null || sessionDao.getCurrent()?.stallId == response.stallId)) {
             "This phone contains data from another stall. Use that stall's account and resolve its queue on this phone; a different stall needs a separate POS device."
         }
         val previousToken = sessionTokenStore.token
+        val previousReference = sessionDao.getCurrent()?.credentialRef
+        val previousCredential = previousReference?.let(credentials::readSession)
+        val credentialRef = UUID.randomUUID().toString()
         sessionTokenStore.token = response.sessionToken
         val session = AppSessionEntity(
                 userId = response.userId,
                 stallId = response.stallId,
                 displayName = response.displayName,
                 role = response.role,
-                sessionToken = response.sessionToken,
+                credentialRef = credentialRef,
                 expiresAt = response.expiresAt,
                 deviceId = response.deviceId.takeIf { response.isActivated },
                 isActivated = response.isActivated && response.deviceId != null,
@@ -89,12 +107,18 @@ class SessionRepository @Inject constructor(
             // Persist the assignment even when there are no sales yet. Sign-out
             // must never make another stall's catalog or queue visible on this phone.
             syncStateDao.upsert(SyncStateEntity(key = "device-stall", value = response.stallId))
+            credentials.writeSession(credentialRef, response.sessionToken)
             sessionDao.save(session)
         } catch (error: Throwable) {
             sessionTokenStore.token = previousToken
+            if (previousReference != null && previousCredential != null) {
+                runCatching { credentials.writeSession(previousReference, previousCredential) }
+            } else {
+                credentials.clearSession()
+            }
             throw error
         }
-        return session
+        session
     }
 
     suspend fun activate(deviceCode: String) {
@@ -105,12 +129,13 @@ class SessionRepository @Inject constructor(
             api.activateDevice(ActivateDeviceRequest(deviceCode.trim(), deviceIdentity.id))
         } catch (error: HttpException) {
             if (error.code() == 401 || error.code() == 403) {
-                throw IllegalArgumentException("That POS activation code is invalid or expired. Use the one-time code generated in Users & access, not the stall code.")
+                throw IllegalArgumentException("That code is invalid or expired. Ask the System Administrator for a new activation or enrollment code.")
             }
             throw error
         }
         require(activation.stallId == current.stallId) { "The activation code belongs to another stall." }
-        importRecoveredDay(activation.stallId, activation.deviceId, activation.resumeDay)
+        val recovered = activation.resumeDay ?: api.getResumableDay(RecoveredDayRequest(activation.deviceId)).day
+        importRecoveredDay(activation.stallId, activation.deviceId, recovered)
         sessionDao.save(
             current.copy(
                 deviceId = activation.deviceId,
@@ -159,9 +184,38 @@ class SessionRepository @Inject constructor(
         sessionDao.save(current.copy(transferReady = true))
     }
 
-    suspend fun signOut() {
-        sessionTokenStore.token = null
-        sessionDao.clear()
+    suspend fun signOut(): Boolean {
+        val token = sessionLock.withLock {
+            val current = sessionDao.getCurrent()
+            val bearer = current?.credentialRef?.let { runCatching { credentials.readSession(it) }.getOrNull() }
+                ?: sessionTokenStore.token
+            sessionTokenStore.token = null
+            if (bearer != null && current?.expiresAt != null) {
+                runCatching { credentials.queueRevocation(bearer, current.expiresAt) }
+            }
+            credentials.clearSession()
+            sessionDao.clear()
+            bearer
+        } ?: return true
+        return revocationLock.withLock { revoke(token) }
+    }
+
+    suspend fun retryPendingRevocations() = revocationLock.withLock {
+        for (entry in runCatching { credentials.pendingRevocations() }.getOrDefault(emptyList())) {
+            if (!revoke(entry.token)) break
+        }
+    }
+
+    private suspend fun revoke(token: String): Boolean = try {
+        withTimeoutOrNull(5_000) {
+            api.revokeSession(token)
+            credentials.removeRevocation(token)
+            true
+        } ?: false
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        false
     }
 
     private suspend fun isCompatibleStall(stallId: String): Boolean {

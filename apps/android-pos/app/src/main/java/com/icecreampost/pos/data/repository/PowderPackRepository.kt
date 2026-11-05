@@ -32,7 +32,7 @@ class PowderPackRepository @Inject constructor(
             }
             val product = productDao.findById(productId) ?: error("Powder is no longer available.")
             require(product.stallId == session.stallId && product.deletedAt == null && product.tracksPowderPacks &&
-                product.productType == "raw" && product.baseUnit == "g" && product.packSize == 1000.0) {
+                product.productType == "raw" && product.baseUnit in setOf("g", "piece")) {
                 "Select a tracked powder product from this stall."
             }
             val day = businessDayDao.findOpen(requireNotNull(session.stallId))
@@ -40,10 +40,16 @@ class PowderPackRepository @Inject constructor(
             require(day.deviceId == session.deviceId) { "Load powder on the POS that opened the day." }
             val sealed = ledgerDao.getSealedPacks(productId)
             require(sealed >= packs) { "Only $sealed sealed packs are available. Receive or count packs first." }
+            val quantity = packs * product.packSize * product.conversionRate
+            require(product.unitsInStock >= quantity) {
+                "Powder stock is lower than the sealed count. Ask IMS to reconcile stock."
+            }
             val now = Instant.now().toString()
+            productDao.updateStock(productId, product.unitsInStock - quantity, now)
             ledgerDao.upsertAll(listOf(InventoryLedgerEntity(
                 id = UUID.randomUUID().toString(), stallId = product.stallId, businessDayId = day.id,
-                productId = product.id, quantityDelta = 0.0, sealedPacksDelta = -packs,
+                productId = product.id, quantityDelta = -quantity, sealedPacksDelta = -packs,
+                costTotalCents = product.costPriceCents * packs,
                 movementType = "pack_unsealed", reason = "Powder pack opened",
                 occurredAt = now, updatedAt = now,
             )))

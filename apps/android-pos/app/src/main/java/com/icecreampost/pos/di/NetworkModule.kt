@@ -5,6 +5,7 @@ import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.interceptor.SupabaseHeadersInterceptor
 import com.icecreampost.pos.data.remote.interceptor.SessionTokenStore
 import com.icecreampost.pos.data.remote.interceptor.DeviceIdentity
+import com.icecreampost.pos.security.PosDeviceKey
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -26,8 +27,9 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideOkHttp(sessionTokenStore: SessionTokenStore, deviceIdentity: DeviceIdentity): OkHttpClient = OkHttpClient.Builder()
-        .addInterceptor(SupabaseHeadersInterceptor(sessionTokenStore, deviceIdentity))
+    fun provideOkHttp(sessionTokenStore: SessionTokenStore, deviceIdentity: DeviceIdentity, deviceKey: PosDeviceKey): OkHttpClient = OkHttpClient.Builder()
+        .followRedirects(false)
+        .addInterceptor(SupabaseHeadersInterceptor(sessionTokenStore, deviceIdentity, deviceKey))
         .addInterceptor(HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC })
         .build()
 

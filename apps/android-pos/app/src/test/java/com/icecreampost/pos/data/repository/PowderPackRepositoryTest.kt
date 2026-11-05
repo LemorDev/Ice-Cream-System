@@ -28,7 +28,7 @@ class PowderPackRepositoryTest {
     private val entries = mutableListOf<InventoryLedgerEntity>()
     private val product = ProductEntity(id = "powder", stallId = "stall", name = "Vanilla powder",
         category = "Ingredients", priceCents = 0, isSellable = false, productType = "raw", baseUnit = "g",
-        packSize = 1000.0, tracksPowderPacks = true, unitsInStock = 2500.0, updatedAt = "2026-10-01")
+        costPriceCents = 18_500, packSize = 1000.0, tracksPowderPacks = true, unitsInStock = 2500.0, updatedAt = "2026-10-01")
     private lateinit var repository: PowderPackRepository
 
     @Before fun setup() {
@@ -37,6 +37,7 @@ class PowderPackRepositoryTest {
         coEvery { sessions.getCurrent() } returns AppSessionEntity(userId = "cashier", stallId = "stall",
             deviceId = "device", displayName = "Cashier", role = "cashier", isActivated = true)
         coEvery { products.findById("powder") } returns product
+        coEvery { products.updateStock(any(), any(), any()) } just Runs
         coEvery { days.findOpen("stall") } returns BusinessDayEntity(id = "day", stallId = "stall",
             deviceId = "device", cashierId = "cashier", businessDate = "2026-10-01",
             openedAt = "2026-10-01T00:00:00Z", updatedAt = "2026-10-01T00:00:00Z")
@@ -47,15 +48,26 @@ class PowderPackRepositoryTest {
 
     @After fun cleanup() { unmockkStatic("androidx.room.RoomDatabaseKt") }
 
-    @Test fun `opening one pack records a zero total gram movement and one fewer sealed pack`() = runTest {
+    @Test fun `opening one pack deducts stock and books its cost`() = runTest {
         repository.open("powder", 1)
         val opening = entries.single()
         assertEquals("pack_unsealed", opening.movementType)
-        assertEquals(0.0, opening.quantityDelta, 0.0)
+        assertEquals(-1000.0, opening.quantityDelta, 0.0)
+        assertEquals(18_500L, opening.costTotalCents)
         assertEquals(-1, opening.sealedPacksDelta)
         assertEquals("day", opening.businessDayId)
-        assertEquals(2500.0, product.unitsInStock, 0.0)
+        coVerify(exactly = 1) { products.updateStock("powder", 1500.0, any()) }
         verify(exactly = 1) { trigger.triggerNow() }
+    }
+
+    @Test fun `opening a piece based pack deducts one piece`() = runTest {
+        coEvery { products.findById("powder") } returns product.copy(
+            baseUnit = "piece", packSize = 1.0, unitsInStock = 2.0,
+        )
+        repository.open("powder", 1)
+        assertEquals(-1.0, entries.single().quantityDelta, 0.0)
+        assertEquals(-1, entries.single().sealedPacksDelta)
+        coVerify(exactly = 1) { products.updateStock("powder", 1.0, any()) }
     }
 
     @Test fun `opening more than the sealed count saves nothing`() = runTest {

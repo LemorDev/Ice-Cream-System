@@ -37,6 +37,7 @@ declare
   sale_payload jsonb;
   reversal_payload jsonb;
   response jsonb;
+  later_revision text;
 begin
   insert into public.stalls(id,name,code) values(fixture_stall,'Snapshot stall','SNAP-'||substr(fixture_stall::text,1,8));
   insert into public.app_users(id,stall_id,email,display_name,role,password_hash)
@@ -45,9 +46,9 @@ begin
   values(fixture_cashier,encode(digest(token,'sha256'),'hex'),now()+interval '1 hour');
   insert into public.devices(id,stall_id,device_name,activation_code_hash,hardware_id)
   values(fixture_device,fixture_stall,'Snapshot POS','unused','r06-snapshot-device');
-  insert into public.products(id,stall_id,sku,name,unit,cost_price,pack_size,conversion_rate,is_sellable,product_type,base_unit)
-  values(powder,fixture_stall,'POWDER','Powder','g',500,1000,1,false,'raw','g'),
-    (serve,fixture_stall,'SERVE','Serve','piece',0,1,1,true,'sellable','piece');
+  insert into public.products(id,stall_id,sku,name,unit,sale_price,cost_price,pack_size,conversion_rate,is_sellable,product_type,base_unit)
+  values(powder,fixture_stall,'POWDER','Powder','g',0,500,1000,1,false,'raw','g'),
+    (serve,fixture_stall,'SERVE','Serve','piece',50,0,1,1,true,'sellable','piece');
   insert into public.product_recipes(stall_id,parent_product_id,ingredient_product_id,quantity)
   values(fixture_stall,serve,powder,80);
   insert into public.inventory_ledger(stall_id,product_id,quantity_delta,movement_type)
@@ -57,6 +58,7 @@ begin
     '2026-08-04T15:55:00Z','2026-08-04T16:20:00Z');
   perform set_config('request.headers',jsonb_build_object('x-session-token',token,'x-device-id','r06-snapshot-device')::text,true);
   payload := jsonb_build_object('id',sale_one,'stall_id',fixture_stall,'device_id',fixture_device,
+    'catalog_revision_id',public.get_pos_catalog_revision()->>'revision_id',
     'business_day_id',fixture_day,'receipt_number','LOCAL-'||sale_one::text,'status','completed',
     'subtotal',50,'total_amount',50,'cash_received',50,'change_amount',0,
     'occurred_at','2026-08-04T15:58:00Z',
@@ -70,8 +72,10 @@ begin
   if response->>'status'<>'duplicate' or public.get_stock_on_hand(fixture_stall,powder)<>120 then
     raise exception 'Snapshot replay changed stock';
   end if;
-  update public.product_recipes set quantity=100 where parent_product_id=serve;
+  update public.product_recipes set quantity=10 where parent_product_id=serve;
+  later_revision := public.get_pos_catalog_revision()->>'revision_id';
   update public.products set cost_price=600 where id=powder;
+  update public.products set sale_price=55 where id=serve;
   payload := payload || jsonb_build_object('id',sale_two,'receipt_number','LOCAL-'||sale_two::text,
     'occurred_at','2026-08-04T16:05:00Z',
     'items',jsonb_build_array(jsonb_build_object('id',gen_random_uuid(),'product_id',serve,
@@ -171,6 +175,7 @@ begin
   values(utc_crossing_day,fixture_stall,fixture_device,fixture_cashier,'2026-08-06',
     '2026-08-05T23:55:00Z','2026-08-06T00:20:00Z');
   payload := sale_payload || jsonb_build_object('id',sale_three,'receipt_number','LOCAL-'||sale_three::text,
+    'catalog_revision_id',later_revision,
     'business_day_id',utc_crossing_day,'occurred_at','2026-08-06T00:03:00Z',
     'items',jsonb_build_array(jsonb_build_object('id',gen_random_uuid(),'product_id',serve,
       'product_name','Serve','quantity',1,'unit_price',50,'line_total',50)),
@@ -200,6 +205,7 @@ begin
     'expected_cash',0,'collected_cash',0));
   if response->>'status'<>'accepted' then raise exception 'Waste void did not reconcile in closing'; end if;
   payload := sale_payload || jsonb_build_object('id',late_sale,'receipt_number','LOCAL-'||late_sale::text,
+    'catalog_revision_id',later_revision,
     'occurred_at','2026-08-04T16:15:00Z',
     'items',jsonb_build_array(jsonb_build_object('id',gen_random_uuid(),'product_id',serve,
       'product_name','Serve','quantity',1,'unit_price',50,'line_total',50)),

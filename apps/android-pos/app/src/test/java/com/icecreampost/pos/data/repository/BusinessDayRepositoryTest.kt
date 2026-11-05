@@ -58,6 +58,7 @@ class BusinessDayRepositoryTest {
         coEvery { transactionDao.getCompletedCogsBetween(any(), any(), any()) } returns 0
         coEvery { transactionDao.getCashSalesBetween(any(), any(), any()) } returns 0
         coEvery { ledgerDao.getWasteCostBetween(any(), any(), any()) } returns 0
+        coEvery { ledgerDao.getPowderOpeningCost(any()) } returns 0
         coEvery { deductionDao.totalForDay(any()) } returns 0
         coEvery { deductionDao.profitAffectingTotalForDay(any()) } returns 0
         repository = BusinessDayRepository(businessDayDao, transactionDao, sessionDao, syncTrigger, database, closingDao, ledgerDao, deductionDao, reversalDao)

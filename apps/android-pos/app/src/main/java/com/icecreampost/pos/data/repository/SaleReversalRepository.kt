@@ -58,7 +58,7 @@ class SaleReversalRepository @Inject constructor(
                 "A full refund must return the exact sale amount; an unpaid void returns no cash."
             }
             val components = ledgerDao.getSaleComponents(transactionId)
-            require(components.isNotEmpty() && components.all { it.costTotalCents != null && it.businessDayId == sale.businessDayId }) {
+            require((components.isNotEmpty() || sale.cogsCents == 0L) && components.all { it.costTotalCents != null && it.businessDayId == sale.businessDayId }) {
                 "The sale's ingredient snapshot is incomplete. Keep the receipt for support."
             }
             val now = Instant.now().toString()

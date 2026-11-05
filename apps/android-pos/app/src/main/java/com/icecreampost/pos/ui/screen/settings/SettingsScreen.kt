@@ -1,10 +1,13 @@
 package com.icecreampost.pos.ui.screen.settings
 
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -15,15 +18,53 @@ import com.icecreampost.pos.ui.PosViewModel
 import com.icecreampost.pos.ui.component.*
 
 @Composable
-fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit) {
+fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit, onSync: () -> Unit, onDevice: () -> Unit) {
+    var showSecurity by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = showSecurity) { showSecurity = false }
     val visible by viewModel.amountsVisible.collectAsStateWithLifecycle()
+    Column(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 12.dp)) {
+            IconButton(
+                onClick = { if (showSecurity) showSecurity = false else onBack() },
+                modifier = Modifier.align(Alignment.CenterStart).semantics { contentDescription = "Go back" },
+            ) { SettingsIcon(SettingsSymbol.Back) }
+            Text(
+                if (showSecurity) "Fingerprint login" else "Settings",
+                modifier = Modifier.align(Alignment.Center).padding(horizontal = 56.dp),
+                style = MaterialTheme.typography.titleLarge,
+            )
+        }
+        if (showSecurity) {
+            FingerprintSettings(viewModel)
+        } else {
+            LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                item {
+                    SettingsGroup("Preferences") {
+                        SettingsRow(SettingsSymbol.Eye, "Show sales amounts", "Dashboard, history and receipts") {
+                            Switch(checked = visible, onCheckedChange = { viewModel.toggleAmountsVisible() },
+                                modifier = Modifier.semantics { contentDescription = "Show sales amounts" })
+                        }
+                        SettingsLink(SettingsSymbol.Lock, "Fingerprint login") { showSecurity = true }
+                    }
+                }
+                item {
+                    SettingsGroup("Support") {
+                        SettingsLink(SettingsSymbol.Sync, "Sync status", onClick = onSync)
+                        SettingsLink(SettingsSymbol.Device, "Device information", onClick = onDevice)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FingerprintSettings(viewModel: PosViewModel) {
     val fingerprintEnabled by viewModel.fingerprintEnabled.collectAsStateWithLifecycle()
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { ScreenHeader("Settings", onBack = onBack) }
         item {
-            Text("Fingerprint login", style = MaterialTheme.typography.titleMedium)
             if (fingerprintEnabled) {
                 Text("The POS locks when you leave the app. Unlock with your fingerprint or sign in with your password.")
                 OutlinedButton(onClick = viewModel::lockPos, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Lock POS") }
@@ -34,16 +75,6 @@ fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit) {
                     viewModel::prepareFingerprintEnrollment, viewModel::enableFingerprintLogin)
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        }
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Show sales amounts", style = MaterialTheme.typography.bodyLarge)
-                    Text("Dashboard, history and receipts", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(checked = visible, onCheckedChange = { viewModel.toggleAmountsVisible() },
-                    modifier = Modifier.semantics { contentDescription = "Show sales amounts" })
-            }
         }
     }
 }

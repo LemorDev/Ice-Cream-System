@@ -1,12 +1,14 @@
 // Node 24 SQLite, in memory only. Run from the repository root.
 // Check actual migration SQL against exported Room schemas with a pending queue.
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, unlink, rmdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 const schemaRoot = 'apps/android-pos/app/schemas/com.icecreampost.pos.data.local.database.CoolerzDatabase';
 const source = await readFile('apps/android-pos/app/src/main/java/com/icecreampost/pos/data/local/database/CoolerzDatabase.kt', 'utf8');
-const target = JSON.parse(await readFile(`${schemaRoot}/15.json`, 'utf8')).database;
+const target = JSON.parse(await readFile(`${schemaRoot}/17.json`, 'utf8')).database;
 const samples = {
   business_days: { id: 'day', stallId: 'stall', deviceId: 'device', cashierId: 'cashier', businessDate: '2026-10-12', openedAt: '2026-10-12T00:00:00Z', closedAt: null },
   products: { id: 'powder', stallId: 'stall', name: 'Powder fixture', category: 'Ingredients', productType: 'raw', baseUnit: 'g', unit: 'g', isSellable: 0, packSize: 1000, conversionRate: 1, unitsInStock: 2500 },
@@ -25,12 +27,12 @@ function migrationBlock(from, to) {
 
 function migrationSql(from, to) {
   const block = migrationBlock(from, to);
-  const calls = [...block.matchAll(/db\.execSQL\("((?:\\.|[^"\\])*)"\)/g)];
+  const calls = [...block.matchAll(/db\.(?:execSQL|query)\("((?:\\.|[^"\\])*)"\)/g)];
   assert.ok(calls.length > 0, `No SQL in migration ${from}→${to}`);
   return calls.map((match) => JSON.parse(`"${match[1]}"`));
 }
 
-for (const scenario of [3, 4, 11, 12, 13, 14, 'cloud4']) {
+for (const scenario of [3, 4, 11, 12, 13, 14, 15, 16, 'cloud4']) {
   const cloud = scenario === 'cloud4';
   const startingVersion = cloud ? 3 : scenario;
   const db = new DatabaseSync(':memory:');
@@ -68,9 +70,9 @@ for (const scenario of [3, 4, 11, 12, 13, 14, 'cloud4']) {
         if (call[1]) db.exec(JSON.parse(`"${call[1]}"`));
         else for (const sql of migrationSql(Number(call[2]), Number(call[3]))) db.exec(sql);
       }
-    } else {
-      for (; version < 15; version++) for (const sql of migrationSql(version, version + 1)) db.exec(sql);
+      version = 15;
     }
+    for (; version < 17; version++) for (const sql of migrationSql(version, version + 1)) db.exec(sql);
     db.exec('COMMIT');
     for (const entity of target.entities) {
       const columns = db.prepare(`PRAGMA table_info("${entity.tableName}")`).all();
@@ -85,12 +87,48 @@ for (const scenario of [3, 4, 11, 12, 13, 14, 'cloud4']) {
     }
     for (const [table, original] of before) {
       const actual = db.prepare(`SELECT * FROM "${table}"`).get();
+      if (table === 'app_session') {
+        assert.equal(actual, undefined, 'Legacy bearer survived upgrade');
+        assert.equal(db.prepare("SELECT value FROM sync_state WHERE key='device-stall'").get().value, original.stallId);
+        continue;
+      }
       for (const [column, value] of Object.entries(original)) assert.equal(actual[column], value, `${table}.${column} lost queued data`);
     }
     assert.equal(db.prepare('SELECT tracksPowderPacks FROM products').get().tracksPowderPacks, 0);
     assert.equal(db.prepare('SELECT sealedPacksDelta FROM inventory_ledger').get().sealedPacksDelta, 0);
     assert.equal(db.prepare('SELECT businessDayId FROM transactions').get().businessDayId, 'day');
     assert.equal(db.prepare('SELECT businessDayId FROM inventory_ledger').get().businessDayId, 'day');
-    console.log(`PASS: Room ${cloud ? 'cloud version 4' : startingVersion}→15 preserves queued sale, stock, operating day, session, and existing photo; schema matches version 15`);
+    assert.equal(db.prepare('SELECT catalogRevisionId FROM transactions').get().catalogRevisionId, null);
+    assert.equal(db.prepare('SELECT catalogCostPrice FROM products').get().catalogCostPrice, null);
+    console.log(`PASS: Room ${cloud ? 'cloud version 4' : startingVersion}→17 preserves queued sale, stock, operating day, stall and photo while removing the legacy session`);
   } finally { db.close(); }
+}
+
+const work = await mkdtemp(join(tmpdir(), 'coolerz-room-fixture-'));
+const dbPath = join(work, 'fixture.db');
+const legacy = JSON.parse(await readFile(`${schemaRoot}/16.json`, 'utf8')).database;
+const sentinel = 'synthetic-legacy-bearer-for-disk-test';
+const disk = new DatabaseSync(dbPath);
+try {
+  disk.exec('PRAGMA journal_mode=WAL');
+  for (const name of ['app_session', 'sync_state']) {
+    const entity = legacy.entities.find((entry) => entry.tableName === name);
+    disk.exec(entity.createSql.replaceAll('${TABLE_NAME}', name));
+  }
+  disk.prepare("INSERT INTO app_session(id,displayName,role,sessionToken,isActivated,transferReady) VALUES ('current','Fixture','cashier',?,0,0)").run(sentinel);
+  disk.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  assert.ok((await readFile(dbPath)).includes(sentinel), 'Fixture token was never written to SQLite');
+  disk.exec('BEGIN');
+  for (const sql of migrationSql(16, 17)) disk.exec(sql);
+  disk.exec('COMMIT');
+  assert.equal(disk.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get().busy, 0);
+  assert.ok(!(await readFile(dbPath)).includes(sentinel));
+  assert.ok(!(await readFile(`${dbPath}-wal`)).includes(sentinel));
+  console.log('PASS: Secure delete and WAL checkpoint remove the synthetic bearer from SQLite and its WAL');
+} finally {
+  disk.close();
+  for (const path of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+    await unlink(path).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+  }
+  await rmdir(work);
 }

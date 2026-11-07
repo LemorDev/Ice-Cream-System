@@ -11,4 +11,10 @@ object Routes {
     const val INVENTORY = "inventory"
     const val HISTORY = "history"
     const val SETTINGS = "settings"
+    const val MORE = "more"
+    const val OPERATING_DAY = "operating-day"
+    const val DEDUCTIONS = "deductions"
+    const val SYNC = "sync-status"
+    const val DEVICE = "device-information"
+    const val HISTORY_RECEIPT = "history-receipt"
 }

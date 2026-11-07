@@ -5,6 +5,7 @@ import androidx.work.ListenableWorker
 import androidx.work.WorkerParameters
 import com.icecreampost.pos.core.logging.AppLogger
 import com.icecreampost.pos.data.local.dao.SessionDao
+import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.entity.AppSessionEntity
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.interceptor.SessionTokenStore
@@ -13,9 +14,11 @@ import com.icecreampost.pos.data.repository.SessionRepository
 import com.icecreampost.pos.data.repository.PosAuthorizationException
 import com.icecreampost.pos.data.repository.SyncReport
 import com.icecreampost.pos.data.repository.SyncRepository
+import com.icecreampost.pos.security.PosCredentialVault
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.every
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -28,10 +31,11 @@ class SyncWorkerTest {
         val tokenStore = SessionTokenStore()
         val syncRepository = mockk<SyncRepository>()
         coEvery { sessionDao.getCurrent() } returns AppSessionEntity(
-            displayName = "Cashier", role = "cashier", sessionToken = "persisted-session-token",
+            displayName = "Cashier", role = "cashier", credentialRef = "persisted-session-token",
             stallId = "stall-1", isActivated = true,
         )
-        val sessionRepository = SessionRepository(sessionDao, mockk<SupabaseApi>(), tokenStore, mockk<DeviceIdentity>())
+        val sessionRepository = SessionRepository(sessionDao, mockk<SupabaseApi>(), tokenStore, mockk<DeviceIdentity>(),
+            mockk(relaxed = true), emptySyncStateDao(), testVault())
         coEvery { syncRepository.sync() } coAnswers {
             assertEquals("persisted-session-token", tokenStore.token)
             SyncReport(pushed = 1, permanentFailures = 0)
@@ -57,6 +61,9 @@ class SyncWorkerTest {
             mockk<SupabaseApi>(),
             SessionTokenStore(),
             mockk<DeviceIdentity>(),
+            mockk(relaxed = true),
+            emptySyncStateDao(),
+            testVault(),
         )
         val worker = SyncWorker(
             mockk<Context>(), mockk<WorkerParameters>(relaxed = true),
@@ -74,7 +81,7 @@ class SyncWorkerTest {
         coEvery { sessionDao.getCurrent() } returns AppSessionEntity(
             displayName = "Cashier",
             role = "cashier",
-            sessionToken = "cloud-token",
+            credentialRef = "cloud-token",
             stallId = "stall-1",
             isActivated = true,
         )
@@ -88,6 +95,9 @@ class SyncWorkerTest {
             mockk<SupabaseApi>(),
             SessionTokenStore(),
             mockk<DeviceIdentity>(),
+            mockk(relaxed = true),
+            emptySyncStateDao(),
+            testVault(),
         )
         val worker = SyncWorker(
             mockk<Context>(), mockk<WorkerParameters>(relaxed = true),
@@ -97,5 +107,15 @@ class SyncWorkerTest {
         assertEquals(ListenableWorker.Result.failure(), worker.doWork())
 
         coVerify(exactly = 0) { sessionDao.clear() }
+    }
+
+    private fun emptySyncStateDao(): SyncStateDao = mockk<SyncStateDao>().also { dao ->
+        coEvery { dao.find("device-stall") } returns null
+        coEvery { dao.findPersistedStallIds() } returns emptyList()
+    }
+
+    private fun testVault(): PosCredentialVault = mockk<PosCredentialVault>().also { vault ->
+        every { vault.readSession(any()) } answers { firstArg() }
+        every { vault.pendingRevocations() } returns emptyList()
     }
 }

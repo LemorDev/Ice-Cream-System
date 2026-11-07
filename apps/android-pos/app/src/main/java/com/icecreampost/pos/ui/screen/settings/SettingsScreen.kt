@@ -1,96 +1,138 @@
 package com.icecreampost.pos.ui.screen.settings
 
 import android.os.Build
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.icecreampost.pos.BuildConfig
 import com.icecreampost.pos.ui.PosViewModel
-import com.icecreampost.pos.ui.component.SyncStatusCard
-import com.icecreampost.pos.ui.component.FingerprintActionButton
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import com.icecreampost.pos.ui.component.*
 
 @Composable
-fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit) {
-    val fingerprintEnabled by viewModel.fingerprintEnabled.collectAsStateWithLifecycle()
-    val session by viewModel.session.collectAsStateWithLifecycle()
-    val syncState by viewModel.syncState.collectAsStateWithLifecycle()
-    val syncMessage by viewModel.syncMessage.collectAsStateWithLifecycle()
-    val error by viewModel.error.collectAsStateWithLifecycle()
-    val busy by viewModel.isBusy.collectAsStateWithLifecycle()
-    var showSignOutConfirmation by rememberSaveable { mutableStateOf(false) }
-
-    if (showSignOutConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showSignOutConfirmation = false },
-            title = { Text("Sign out?") },
-            text = { Text("You will need your cashier credentials to sign in again.") },
-            dismissButton = {
-                OutlinedButton(onClick = { showSignOutConfirmation = false }) { Text("Cancel") }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    showSignOutConfirmation = false
-                    viewModel.signOut()
-                }) { Text("Sign out") }
-            },
-        )
-    }
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        OutlinedButton(onClick = onBack) { Text("Back") }
-        Text("Settings and device info", style = MaterialTheme.typography.headlineMedium)
-        SyncStatusCard(syncState)
-        Text("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
-        Text("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
-        Text("Build: ${BuildConfig.VERSION_NAME}")
-        Text("Signed in as: ${session?.displayName ?: "Not signed in"}")
-        Text("Role: ${session?.role ?: "-"}")
-        Button(
-            onClick = viewModel::syncToIms,
-            enabled = !busy && session?.sessionToken?.isNotBlank() == true,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(if (busy) "Syncing…" else "Sync to IMS")
-        }
-        syncMessage?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Text("Fingerprint login", style = MaterialTheme.typography.titleMedium)
-        if (fingerprintEnabled) {
-            Text("Enabled for this Cashier. The POS locks when you leave the app. Signing out requires password sign-in next time.")
-            OutlinedButton(onClick = viewModel::lockPos, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                Text("Lock POS")
-            }
-            OutlinedButton(onClick = viewModel::disableFingerprintLogin, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                Text("Turn off fingerprint login")
-            }
-        } else {
-            Text("Use this phone's enrolled fingerprint to unlock your saved Cashier session. Expired sessions still require your password.")
-            FingerprintActionButton(
-                label = "Enable fingerprint login",
-                title = "Enable fingerprint login",
-                enabled = !busy,
-                prepareCipher = viewModel::prepareFingerprintEnrollment,
-                onAuthenticated = viewModel::enableFingerprintLogin,
+fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit, onSync: () -> Unit, onDevice: () -> Unit) {
+    var showSecurity by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = showSecurity) { showSecurity = false }
+    val visible by viewModel.amountsVisible.collectAsStateWithLifecycle()
+    Column(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 12.dp)) {
+            IconButton(
+                onClick = { if (showSecurity) showSecurity = false else onBack() },
+                modifier = Modifier.align(Alignment.CenterStart).semantics { contentDescription = "Go back" },
+            ) { SettingsIcon(SettingsSymbol.Back) }
+            Text(
+                if (showSecurity) "Fingerprint login" else "Settings",
+                modifier = Modifier.align(Alignment.Center).padding(horizontal = 56.dp),
+                style = MaterialTheme.typography.titleLarge,
             )
         }
-        OutlinedButton(onClick = { showSignOutConfirmation = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-            Text("Sign out")
+        if (showSecurity) {
+            FingerprintSettings(viewModel)
+        } else {
+            LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                item {
+                    SettingsGroup("Preferences") {
+                        SettingsRow(SettingsSymbol.Eye, "Show sales amounts", "Dashboard, history and receipts") {
+                            Switch(checked = visible, onCheckedChange = { viewModel.toggleAmountsVisible() },
+                                modifier = Modifier.semantics { contentDescription = "Show sales amounts" })
+                        }
+                        SettingsLink(SettingsSymbol.Lock, "Fingerprint login") { showSecurity = true }
+                    }
+                }
+                item {
+                    SettingsGroup("Support") {
+                        SettingsLink(SettingsSymbol.Sync, "Sync status", onClick = onSync)
+                        SettingsLink(SettingsSymbol.Device, "Device information", onClick = onDevice)
+                    }
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun FingerprintSettings(viewModel: PosViewModel) {
+    val fingerprintEnabled by viewModel.fingerprintEnabled.collectAsStateWithLifecycle()
+    val busy by viewModel.isBusy.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item {
+            if (fingerprintEnabled) {
+                Text("The POS locks when you leave the app. Unlock with your fingerprint or sign in with your password.")
+                OutlinedButton(onClick = viewModel::lockPos, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Lock POS") }
+                OutlinedButton(onClick = viewModel::disableFingerprintLogin, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Turn off fingerprint login") }
+            } else {
+                Text("Unlock your saved Cashier session with this phone's fingerprint. Expired sessions require password sign-in.")
+                FingerprintActionButton("Enable fingerprint login", "Enable fingerprint login", !busy,
+                    viewModel::prepareFingerprintEnrollment, viewModel::enableFingerprintLogin)
+            }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+@Composable
+fun SyncScreen(viewModel: PosViewModel, onBack: () -> Unit) {
+    val state by viewModel.syncState.collectAsStateWithLifecycle()
+    val message by viewModel.syncMessage.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
+    val busy by viewModel.isSyncing.collectAsStateWithLifecycle()
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item { ScreenHeader("Sync status", onBack = onBack) }
+        item { SyncStatusLine(viewModel) }
+        item { Text("Sales and stock receipts save on this device first. Sync runs automatically when a connection is available.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item {
+            OutlinedButton(onClick = viewModel::syncToIms, enabled = !busy && state?.status != "running", modifier = Modifier.fillMaxWidth()) {
+                Text(if (busy || state?.status == "running") "Syncing…" else "Sync now")
+            }
+        }
+        state?.errorMessage?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
+        message?.let { item { Text(it, style = MaterialTheme.typography.bodyMedium) } }
+        error?.takeIf { it != state?.errorMessage }?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
+    }
+}
+
+@Composable
+fun DeviceInformationScreen(viewModel: PosViewModel, onBack: () -> Unit) {
+    val session by viewModel.session.collectAsStateWithLifecycle()
+    val busy by viewModel.isBusy.collectAsStateWithLifecycle()
+    val syncing by viewModel.isSyncing.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
+    val syncMessage by viewModel.syncMessage.collectAsStateWithLifecycle()
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item { ScreenHeader("Device information", onBack = onBack) }
+        item { DeviceValue("Device", "${Build.MANUFACTURER} ${Build.MODEL}") }
+        item { DeviceValue("Android", "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})") }
+        item { DeviceValue("App version", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})") }
+        item { DeviceValue("POS registration", if (session?.isActivated == true) "Activated" else "Not activated") }
+        session?.deviceId?.let { item { DeviceValue("Device ID", it) } }
+        if (session?.isActivated == true) item {
+            Text(if (session?.transferReady == true)
+                "This POS is ready for replacement. Sales and stock operations are paused. To keep using it, sign in again; the pending replacement will require a new preparation."
+            else "Replacing this POS? Close the operating day, then sync all sales, stock changes, deductions, and the closing before creating a replacement code.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = viewModel::prepareReplacement, enabled = !busy && !syncing && session?.transferReady != true,
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                Text(if (session?.transferReady == true) "Ready for replacement" else if (busy || syncing) "Checking sync…" else "Prepare for replacement")
+            }
+            syncMessage?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+@Composable
+private fun DeviceValue(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyLarge)
     }
 }

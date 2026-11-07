@@ -7,6 +7,8 @@ import com.icecreampost.pos.data.local.dao.ProductDao
 import com.icecreampost.pos.data.local.dao.TransactionDao
 import com.icecreampost.pos.data.local.dao.SessionDao
 import com.icecreampost.pos.data.local.dao.BusinessDayDao
+import com.icecreampost.pos.data.local.dao.ProductRecipeDao
+import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.database.CoolerzDatabase
 import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
@@ -15,6 +17,8 @@ import com.icecreampost.pos.domain.model.CartLine
 import com.icecreampost.pos.sync.SyncTrigger
 import kotlinx.coroutines.flow.Flow
 import java.time.Instant
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -27,6 +31,11 @@ data class CheckoutReceipt(
     val changeAmountCents: Long,
 )
 
+data class HistoricalReceipt(
+    val transaction: TransactionEntity,
+    val items: List<TransactionItemEntity>,
+)
+
 @Singleton
 class CheckoutRepository @Inject constructor(
     private val database: CoolerzDatabase,
@@ -35,10 +44,17 @@ class CheckoutRepository @Inject constructor(
     private val inventoryLedgerDao: InventoryLedgerDao,
     private val sessionDao: SessionDao,
     private val businessDayDao: BusinessDayDao,
+    private val productRecipeDao: ProductRecipeDao,
+    private val syncStateDao: SyncStateDao,
     private val syncTrigger: SyncTrigger,
     private val logger: AppLogger,
 ) {
     fun observeTransactions(): Flow<List<TransactionEntity>> = transactionDao.observeTransactions()
+
+    suspend fun getHistoricalReceipt(transactionId: String): HistoricalReceipt? {
+        val transaction = transactionDao.findById(transactionId) ?: return null
+        return HistoricalReceipt(transaction, transactionDao.getItems(transactionId))
+    }
 
     suspend fun checkout(
         lines: List<CartLine>,
@@ -52,48 +68,95 @@ class CheckoutRepository @Inject constructor(
         val activeSession = sessionDao.getCurrent()
         val resolvedStallId = stallId.ifBlank { activeSession?.stallId.orEmpty() }
         require(activeSession?.role == "cashier" && activeSession.isActivated) { "An activated Cashier account is required." }
+        check(!activeSession.transferReady) { "This POS is prepared for replacement. Sign in again to resume sales." }
         val resolvedDeviceId = deviceId ?: activeSession.deviceId
         val resolvedCashierId = cashierId ?: activeSession?.userId
         require(resolvedStallId.isNotBlank()) { "This device is not assigned to a stall." }
         require(!resolvedDeviceId.isNullOrBlank()) { "This POS has not been activated." }
         val now = Instant.now().toString()
         val transactionId = UUID.randomUUID().toString()
-        val receiptNumber = "LOCAL-${now.replace("[^0-9]".toRegex(), "").takeLast(12)}"
+        // UUID identity survives offline retries and cannot collide with another
+        // checkout created in the same millisecond.
+        val receiptNumber = "LOCAL-${transactionId.uppercase()}"
         val subtotalCents = lines.sumOf { it.lineTotalCents }
         require(cashReceivedCents >= subtotalCents) { "Cash received is less than the total." }
 
         database.withTransaction {
-            require(businessDayDao.findOpen(resolvedStallId) != null) { "Open the operating day before starting a sale." }
+            val revision = syncStateDao.find("catalog-revision:$resolvedDeviceId")
+            check(revision != null && revision.cursorUpdatedAt?.let { Instant.parse(it).isAfter(Instant.now()) } == true) {
+                "Sync the sales catalog before starting another sale."
+            }
+            val openDay = requireNotNull(businessDayDao.findOpen(resolvedStallId)) {
+                "Open the operating day before starting a sale."
+            }
+            check(openDay.syncError == null) {
+                "The operating day needs sync attention before another sale. Resolve its sync error first."
+            }
             lines.forEach { line ->
                 val current = productDao.findById(line.product.id)
                     ?: error("${line.product.name} is no longer available locally.")
-                require(current.isSellable) { "${current.name} is not available for sale." }
-                require(current.unitsInStock >= line.quantity) {
-                    "Not enough stock for ${current.name}. Available: ${current.unitsInStock}."
+                require(current.isSellable && current.deletedAt == null && current.stallId == resolvedStallId) {
+                    "${current.name} is not available for sale."
                 }
-                productDao.updateStock(
-                    id = current.id,
-                    stock = current.unitsInStock - line.quantity,
-                    updatedAt = now,
-                )
+                check(current.priceCents == line.product.priceCents) {
+                    "The price of ${current.name} changed. Update the cart before checkout."
+                }
+            }
+            val recipes = productRecipeDao.findForParents(lines.map { it.product.id })
+            val recipesByParent = recipes.groupBy { it.parentProductId }
+            val usage = mutableMapOf<String, BigDecimal>()
+            lines.forEach { line ->
+                val recipe = recipesByParent[line.product.id].orEmpty()
+                val quantity = BigDecimal.valueOf(line.quantity.toLong())
+                if (recipe.isEmpty()) usage.merge(line.product.id, quantity, BigDecimal::add)
+                else recipe.forEach { ingredient ->
+                    usage.merge(ingredient.ingredientProductId, BigDecimal.valueOf(ingredient.quantity) * quantity, BigDecimal::add)
+                }
+            }
+            val stockProducts = usage.keys.associateWith { productId ->
+                productDao.findById(productId) ?: error("A recipe ingredient is no longer available locally.")
+            }.filterValues { !it.tracksPowderPacks }
+            usage.keys.retainAll(stockProducts.keys)
+            stockProducts.forEach { (productId, current) ->
+                val required = requireNotNull(usage[productId])
+                require(current.unitsInStock >= required.toDouble()) {
+                    "Not enough ${current.name}. Required: $required ${current.baseUnit}; available: ${current.unitsInStock} ${current.baseUnit}."
+                }
+            }
+            val componentCosts = usage.mapValues { (productId, quantity) ->
+                val product = requireNotNull(stockProducts[productId])
+                val baseUnitsPerPack = BigDecimal.valueOf(product.packSize)
+                    .multiply(BigDecimal.valueOf(product.conversionRate))
+                require(baseUnitsPerPack.signum() > 0) { "Invalid pack conversion for ${product.name}." }
+                quantity
+                    .multiply(requireNotNull(product.catalogCostPrice) { "Sync the cost for ${product.name}." }.toBigDecimal())
+                    .movePointRight(2)
+                    .divide(baseUnitsPerPack, 0, RoundingMode.HALF_UP)
+                    .longValueExact()
+            }
+            stockProducts.forEach { (productId, current) ->
+                productDao.updateStock(productId, current.unitsInStock - requireNotNull(usage[productId]).toDouble(), now)
             }
 
             transactionDao.upsert(
                 TransactionEntity(
                     id = transactionId,
                     stallId = resolvedStallId,
+                    businessDayId = openDay.id,
                     deviceId = resolvedDeviceId,
                     cashierId = resolvedCashierId,
                     receiptNumber = receiptNumber,
                     status = "completed",
                     subtotalCents = subtotalCents,
                     totalCents = subtotalCents,
+                    cogsCents = componentCosts.values.sum(),
                     cashReceivedCents = cashReceivedCents,
                     changeAmountCents = cashReceivedCents - subtotalCents,
                     occurredAt = now,
                     createdAt = now,
                     updatedAt = now,
                     localCreatedAt = now,
+                    catalogRevisionId = revision.value,
                 ),
             )
 
@@ -110,12 +173,14 @@ class CheckoutRepository @Inject constructor(
                 )
             })
 
-            inventoryLedgerDao.upsertAll(lines.map { line ->
+            inventoryLedgerDao.upsertAll(usage.map { (productId, quantity) ->
                 InventoryLedgerEntity(
                     id = UUID.randomUUID().toString(),
                     stallId = resolvedStallId,
-                    productId = line.product.id,
-                    quantityDelta = -line.quantity.toDouble(),
+                    businessDayId = openDay.id,
+                    productId = productId,
+                    quantityDelta = -quantity.toDouble(),
+                    costTotalCents = requireNotNull(componentCosts[productId]),
                     movementType = "sale",
                     reason = "offline checkout",
                     referenceId = transactionId,

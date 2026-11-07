@@ -1,0 +1,16 @@
+{
+  "stall_code": "",
+  "cashier_employee_id": "",
+  "menu_item": "",
+  "sale_tendered": "",
+  "deduction_amount": "",
+  "deduction_reason": "",
+  "deduction_affects_profit": "",
+  "powder_product": "",
+  "receipt_packs": "",
+  "offline_tendered": "",
+  "offline_receipt_1": "",
+  "offline_receipt_2": "",
+  "update_receipt_id": "",
+  "counted_cash": ""
+}

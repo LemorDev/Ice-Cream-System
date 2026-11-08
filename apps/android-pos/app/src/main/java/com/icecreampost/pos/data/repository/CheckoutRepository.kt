@@ -59,6 +59,7 @@ class CheckoutRepository @Inject constructor(
     suspend fun checkout(
         lines: List<CartLine>,
         cashReceivedCents: Long,
+        checkoutId: UUID,
         stallId: String = "",
         deviceId: String? = null,
         cashierId: String? = null,
@@ -70,18 +71,31 @@ class CheckoutRepository @Inject constructor(
         require(activeSession?.role == "cashier" && activeSession.isActivated) { "An activated Cashier account is required." }
         check(!activeSession.transferReady) { "This POS is prepared for replacement. Sign in again to resume sales." }
         val resolvedDeviceId = deviceId ?: activeSession.deviceId
-        val resolvedCashierId = cashierId ?: activeSession?.userId
+        val resolvedCashierId = cashierId ?: activeSession.userId
         require(resolvedStallId.isNotBlank()) { "This device is not assigned to a stall." }
         require(!resolvedDeviceId.isNullOrBlank()) { "This POS has not been activated." }
-        val now = Instant.now().toString()
-        val transactionId = UUID.randomUUID().toString()
-        // UUID identity survives offline retries and cannot collide with another
-        // checkout created in the same millisecond.
+        val transactionId = checkoutId.toString()
         val receiptNumber = "LOCAL-${transactionId.uppercase()}"
         val subtotalCents = lines.sumOf { it.lineTotalCents }
         require(cashReceivedCents >= subtotalCents) { "Cash received is less than the total." }
 
-        database.withTransaction {
+        val receipt = database.withTransaction {
+            val existing = transactionDao.findById(transactionId)
+            if (existing != null) {
+                val savedLines = transactionDao.getItems(transactionId)
+                    .groupingBy { Triple(it.productId, it.quantity, it.unitPriceCents) }.eachCount()
+                val requestedLines = lines
+                    .groupingBy { Triple(it.product.id, it.quantity.toDouble(), it.product.priceCents) }.eachCount()
+                check(existing.stallId == resolvedStallId && existing.deviceId == resolvedDeviceId &&
+                    existing.cashierId == resolvedCashierId && existing.deletedAt == null &&
+                    existing.cashReceivedCents == cashReceivedCents && existing.subtotalCents == subtotalCents &&
+                    savedLines == requestedLines) {
+                    "This checkout was already saved with different details. Review the original receipt."
+                }
+                return@withTransaction existing.toCheckoutReceipt()
+            }
+
+            val now = Instant.now().toString()
             val revision = syncStateDao.find("catalog-revision:$resolvedDeviceId")
             check(revision != null && revision.cursorUpdatedAt?.let { Instant.parse(it).isAfter(Instant.now()) } == true) {
                 "Sync the sales catalog before starting another sale."
@@ -138,27 +152,26 @@ class CheckoutRepository @Inject constructor(
                 productDao.updateStock(productId, current.unitsInStock - requireNotNull(usage[productId]).toDouble(), now)
             }
 
-            transactionDao.upsert(
-                TransactionEntity(
-                    id = transactionId,
-                    stallId = resolvedStallId,
-                    businessDayId = openDay.id,
-                    deviceId = resolvedDeviceId,
-                    cashierId = resolvedCashierId,
-                    receiptNumber = receiptNumber,
-                    status = "completed",
-                    subtotalCents = subtotalCents,
-                    totalCents = subtotalCents,
-                    cogsCents = componentCosts.values.sum(),
-                    cashReceivedCents = cashReceivedCents,
-                    changeAmountCents = cashReceivedCents - subtotalCents,
-                    occurredAt = now,
-                    createdAt = now,
-                    updatedAt = now,
-                    localCreatedAt = now,
-                    catalogRevisionId = revision.value,
-                ),
+            val sale = TransactionEntity(
+                id = transactionId,
+                stallId = resolvedStallId,
+                businessDayId = openDay.id,
+                deviceId = resolvedDeviceId,
+                cashierId = resolvedCashierId,
+                receiptNumber = receiptNumber,
+                status = "completed",
+                subtotalCents = subtotalCents,
+                totalCents = subtotalCents,
+                cogsCents = componentCosts.values.sum(),
+                cashReceivedCents = cashReceivedCents,
+                changeAmountCents = cashReceivedCents - subtotalCents,
+                occurredAt = now,
+                createdAt = now,
+                updatedAt = now,
+                localCreatedAt = now,
+                catalogRevisionId = revision.value,
             )
+            transactionDao.upsert(sale)
 
             transactionDao.upsertItems(lines.map { line ->
                 TransactionItemEntity(
@@ -189,16 +202,19 @@ class CheckoutRepository @Inject constructor(
                 )
             })
 
+            sale.toCheckoutReceipt()
         }
 
-        logger.info("Offline sale saved locally: $receiptNumber")
-        syncTrigger.triggerNow()
-        return CheckoutReceipt(
-            transactionId = transactionId,
-            receiptNumber = receiptNumber,
-            subtotalCents = subtotalCents,
-            cashReceivedCents = cashReceivedCents,
-            changeAmountCents = cashReceivedCents - subtotalCents,
-        )
+        // Scheduling is best effort after Room has committed the sale and queue.
+        runCatching { syncTrigger.triggerNow() }.onFailure { logger.error("Could not schedule sale sync", it) }
+        return receipt
     }
+
+    private fun TransactionEntity.toCheckoutReceipt() = CheckoutReceipt(
+        transactionId = id,
+        receiptNumber = receiptNumber,
+        subtotalCents = subtotalCents,
+        cashReceivedCents = requireNotNull(cashReceivedCents),
+        changeAmountCents = requireNotNull(changeAmountCents),
+    )
 }

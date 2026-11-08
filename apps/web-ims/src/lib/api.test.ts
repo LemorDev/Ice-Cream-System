@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createClient } from '@supabase/supabase-js'
-import { archiveCategory, archiveProduct, getOverheadForStall, getTransactionReceiptItems, resetStockLevels, resetTransactionsAndRevenue, saveProductWithRecipe, setStockOnHand, updateStall, uploadProductImage, validateProductImage } from './api.ts'
+import { addInventoryEntry, archiveCategory, archiveProduct, getOverheadForStall, getTransactionReceiptItems, resetStockLevels, resetTransactionsAndRevenue, saveProductWithRecipe, setPowderSealedPacks, setStockOnHand, updateStall, uploadProductImage, validateProductImage } from './api.ts'
 
 test('product save keeps POS category separate from flavor for catalog sync', async () => {
   let request: { url: string; body: { p_product: { category_id: string; sell_category: string } } } | undefined
@@ -42,6 +42,40 @@ test('product save stops before mutation when the POS category migration is miss
     pack_size: 1, conversion_rate: 1, is_sellable: true, product_type: 'sellable', base_unit: 'piece',
   }, []), /POS categories are not ready/)
   assert.equal(requests, 1)
+})
+
+test('new products, deliveries and sealed counts send their request IDs with the same payload on retry', async () => {
+  const requests: Array<Record<string, unknown>> = []
+  const client = createClient('https://example.invalid', 'test-key', {
+    auth: { persistSession: false },
+    global: { fetch: async (input, init) => {
+      assert.match(String(input), /\/rpc\/submit_ims_change$/)
+      const request = JSON.parse(String(init?.body)) as Record<string, unknown>
+      requests.push(request)
+      return Response.json(request.p_action === 'sealed_pack_count' ? 3 : { id: 'saved-record' })
+    } },
+  })
+  const product = {
+    stall_id: 'stall-1', category_id: null, sell_category: 'Cup', name: 'Vanilla Cup',
+    unit: 'piece', sale_price: 40, cost_price: 10, low_stock_threshold: 0,
+    pack_size: 1, conversion_rate: 1, is_sellable: true, product_type: 'sellable', base_unit: 'piece',
+  } as const
+  const movement = { stall_id: 'stall-1', product_id: 'raw-1', quantity_delta: 20,
+    movement_type: 'receive', reason: 'Delivery' } as const
+  const recipe = [{ ingredient_product_id: 'raw-1', quantity: 2 }]
+  for (let retry = 0; retry < 2; retry += 1) {
+    assert.equal((await saveProductWithRecipe(client, product, recipe, undefined, 'add-1')).id, 'saved-record')
+    assert.equal((await addInventoryEntry(client, movement, 'delivery-1')).id, 'saved-record')
+    assert.equal(await setPowderSealedPacks(client, 'stall-1', 'raw-1', 3, 'sealed-1'), 3)
+  }
+  assert.deepEqual(requests.slice(0, 3), [
+    { p_request_id: 'add-1', p_stall_id: 'stall-1', p_action: 'create_product', p_payload: { product, recipe } },
+    { p_request_id: 'delivery-1', p_stall_id: 'stall-1', p_action: 'stock_movement',
+      p_payload: { product_id: 'raw-1', quantity_delta: 20, movement_type: 'receive', reason: 'Delivery' } },
+    { p_request_id: 'sealed-1', p_stall_id: 'stall-1', p_action: 'sealed_pack_count',
+      p_payload: { product_id: 'raw-1', count: 3, reason: 'Sealed pack count from IMS' } },
+  ])
+  assert.deepEqual(requests.slice(3), requests.slice(0, 3))
 })
 
 test('receipt items are fetched for the selected transaction with numeric amounts', async () => {
@@ -190,12 +224,12 @@ test('physical stock count sends the target base units to the atomic correction 
     } },
   })
 
-  const result = await setStockOnHand(client, 'stall-1', 'powder-1', 10_000, 'Correct test receipt')
+  const result = await setStockOnHand(client, 'stall-1', 'powder-1', 10_000, 'Correct test receipt', 'count-1')
 
-  assert.match(requestUrl, /\/rpc\/set_stock_on_hand$/)
+  assert.match(requestUrl, /\/rpc\/submit_ims_change$/)
   assert.deepEqual(requestBody, {
-    p_stall_id: 'stall-1', p_product_id: 'powder-1', p_target_stock: 10_000,
-    p_reason: 'Correct test receipt',
+    p_request_id: 'count-1', p_stall_id: 'stall-1', p_action: 'stock_count',
+    p_payload: { product_id: 'powder-1', target_stock: 10_000, reason: 'Correct test receipt' },
   })
   assert.equal(result.quantity_delta, 9_990)
 })

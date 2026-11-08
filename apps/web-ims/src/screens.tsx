@@ -717,17 +717,25 @@ export function StaffScreen({ client, data, onError, stalls }: ScreenProps) {
   </div>
 }
 
-function PowderCountDialog({ product, stockOnHand, sealedPacks, onCancel, onSave }: { product: Product; stockOnHand: number; sealedPacks: number; onCancel: () => void; onSave: (count: number) => Promise<void> }) {
+function PowderCountDialog({ product, stockOnHand, sealedPacks, onCancel, onSave }: { product: Product; stockOnHand: number; sealedPacks: number; onCancel: () => void; onSave: (count: number, requestId: string) => Promise<void> }) {
   const [count, setCount] = useState(String(sealedPacks))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const requestId = useRef<string | null>(null)
+  const submitting = useRef(false)
   const maximum = Math.floor(Math.max(0, stockOnHand) / product.pack_size)
   async function submit(event: FormEvent) {
     event.preventDefault()
+    if (submitting.current) return
     const value = Number(count)
     if (!Number.isInteger(value) || value < 0 || value > maximum) { setError(`Enter a whole number from 0 to ${maximum}.`); return }
+    submitting.current = true
     setBusy(true)
-    try { await onSave(value) } catch (cause) { setError(getErrorMessage(cause)); setBusy(false) }
+    try {
+      requestId.current ??= crypto.randomUUID()
+      await onSave(value, requestId.current)
+    } catch (cause) { setError(getErrorMessage(cause)) }
+    finally { submitting.current = false; setBusy(false) }
   }
   return <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#18002f]/55 p-4"><section role="dialog" aria-modal="true" aria-labelledby="powder-count-title" className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><h2 id="powder-count-title" className="text-lg font-bold">Count sealed packs: {product.name}</h2><p className="mt-2 text-sm text-slate-600">Total stock is {stockOnHand.toLocaleString()} {product.base_unit}. Use this count to reconcile sealed packs. Record new openings in POS to deduct stock.</p><form className="mt-4 space-y-4" onSubmit={(event) => void submit(event)}><Input label="Sealed packs" type="number" min="0" max={maximum} step="1" value={count} onChange={(event) => setCount(event.target.value)} required />{error && <Notice>{error}</Notice>}<div className="flex justify-end gap-2"><Button type="button" variant="ghost" disabled={busy} onClick={onCancel}>Cancel</Button><Button disabled={busy}>{busy ? 'Saving…' : 'Save count'}</Button></div></form></section></div>
 }
@@ -760,6 +768,8 @@ export function ProductsScreen({ client, data, onRefresh, onError, amountsVisibl
   const [deletingProductId, setDeletingProductId] = useState<string>()
   const [pendingDelete, setPendingDelete] = useState<{ kind: 'product' | 'flavor'; id: string; name: string }>()
   const [saving, setSaving] = useState(false)
+  const productRequestId = useRef<string | null>(null)
+  const submittingProduct = useRef(false)
   const [countProduct, setCountProduct] = useState<Product | null>(null)
   const [recipeLines, setRecipeLines] = useState<Array<{ ingredient_product_id: string; quantity: string }>>([])
   const sellCategories = [...new Set(['Cup', 'Cone', ...data.products.map((product) => product.sell_category?.trim() ?? '').filter(Boolean)])].sort((a, b) => a.localeCompare(b))
@@ -768,12 +778,12 @@ export function ProductsScreen({ client, data, onRefresh, onError, amountsVisibl
     result[entry.product_id] = (result[entry.product_id] ?? 0) + (entry.sealed_packs_delta ?? 0)
     return result
   }, {})
-  async function savePowderCount(count: number) {
+  async function savePowderCount(count: number, requestId: string) {
     if (!countProduct) return
-    await setPowderSealedPacks(client, countProduct.id, count)
-    await onRefresh()
+    await setPowderSealedPacks(client, countProduct.stall_id, countProduct.id, count, requestId)
     setCountProduct(null)
     setSuccessMessage('Sealed pack count saved.')
+    await onRefresh()
   }
   const filtered = data.products.filter((product) => productMatchesType(product, typeFilter) && `${product.name} ${product.sku}`.toLowerCase().includes(search.toLowerCase()))
   useEffect(() => { setForm((current) => current.amounts_visible === amountsVisible ? current : { ...current, amounts_visible: amountsVisible }) }, [amountsVisible])
@@ -790,9 +800,9 @@ export function ProductsScreen({ client, data, onRefresh, onError, amountsVisibl
   }
   function openAddProduct() { setImageFile(null); setEditingId(undefined); setForm({ ...emptyProduct, amounts_visible: amountsVisible }); setRecipeLines([]); setMessage(''); setProductModalOpen(true) }
   function edit(product: Product) { setImageFile(null); const purchaseQuantity = product.pack_size * product.conversion_rate; setEditingId(product.id); setForm({ image_url: product.image_url ?? '', name: product.name, unit: product.unit, category_id: product.category_id ?? '', sell_category: product.sell_category ?? data.categories.find((category) => category.id === product.category_id)?.name ?? '', sale_price: String(product.sale_price), cost_price: String(product.cost_price), purchase_unit_name: product.purchase_unit_name ?? 'Pack', purchase_quantity: String(purchaseQuantity), pack_size: String(product.base_unit === 'piece' ? 1 : purchaseQuantity), conversion_rate: String(product.base_unit === 'piece' ? purchaseQuantity : 1), low_stock_threshold: String(product.tracks_powder_packs ? product.low_stock_threshold / product.pack_size : product.low_stock_threshold), tracks_powder_packs: Boolean(product.tracks_powder_packs), amounts_visible: amountsVisible, is_sellable: product.is_sellable, product_type: product.product_type, base_unit: product.base_unit }); setRecipeLines(data.recipes.filter((recipe) => recipe.parent_product_id === product.id).map((recipe) => ({ ingredient_product_id: recipe.ingredient_product_id, quantity: String(recipe.quantity) }))); setMessage(''); setProductModalOpen(true) }
-  const closeProductModal = useCallback(() => { if (saving) return; setImageFile(null); setProductModalOpen(false); setEditingId(undefined); setForm(emptyProduct); setMessage('') }, [saving])
+  const closeProductModal = useCallback(() => { if (saving) return; productRequestId.current = null; setImageFile(null); setProductModalOpen(false); setEditingId(undefined); setForm(emptyProduct); setMessage('') }, [saving])
   async function submit(event: FormEvent) {
-    event.preventDefault(); if (saving) return; setMessage('')
+    event.preventDefault(); if (submittingProduct.current) return; setMessage('')
     if (!form.product_type) { setMessage('Choose whether this product is a sellable menu item, raw ingredient, or packaging.'); return }
     const values = { ...form, name: form.name.trim(), unit: form.unit.trim(), sell_category: form.sell_category.trim() }
     const posCategory = sellCategories.find((category) => category.toLocaleLowerCase() === values.sell_category.toLocaleLowerCase()) ?? values.sell_category
@@ -808,18 +818,20 @@ export function ProductsScreen({ client, data, onRefresh, onError, amountsVisibl
     const packSize = stockItem && form.base_unit !== 'piece' ? purchaseQuantity : 1
     const conversionRate = stockItem && form.base_unit === 'piece' ? purchaseQuantity : 1
     const wasEditing = Boolean(editingId)
+    submittingProduct.current = true
     setSaving(true)
     try {
       if (!data.stall) throw new Error('Select a stall before saving a product.')
       const imageUrl = imageFile ? await uploadProductImage(client, data.stall.id, imageFile) : form.image_url || null
       if (imageFile) { setField('image_url', imageUrl ?? ''); setImageFile(null) }
-      await saveProductWithRecipe(client, { image_url: imageUrl, stall_id: data.stall?.id ?? '', category_id: values.category_id || null, sell_category: form.product_type === 'sellable' ? posCategory : null, name: values.name, unit: values.base_unit, sale_price: numbers[0], cost_price: computedCost, purchase_unit_name: stockItem ? form.purchase_unit_name.trim() : null, purchase_quantity: purchaseQuantity, low_stock_threshold: form.tracks_powder_packs ? numbers[2] * purchaseQuantity : numbers[2], pack_size: packSize, conversion_rate: conversionRate, tracks_powder_packs: form.tracks_powder_packs, is_sellable: form.product_type === 'sellable', product_type: form.product_type, base_unit: form.base_unit }, recipe, editingId)
-      await onRefresh()
+      if (!wasEditing) productRequestId.current ??= crypto.randomUUID()
+      await saveProductWithRecipe(client, { image_url: imageUrl, stall_id: data.stall.id, category_id: values.category_id || null, sell_category: form.product_type === 'sellable' ? posCategory : null, name: values.name, unit: values.base_unit, sale_price: numbers[0], cost_price: computedCost, purchase_unit_name: stockItem ? form.purchase_unit_name.trim() : null, purchase_quantity: purchaseQuantity, low_stock_threshold: form.tracks_powder_packs ? numbers[2] * purchaseQuantity : numbers[2], pack_size: packSize, conversion_rate: conversionRate, tracks_powder_packs: form.tracks_powder_packs, is_sellable: form.product_type === 'sellable', product_type: form.product_type, base_unit: form.base_unit }, recipe, editingId, productRequestId.current ?? undefined)
       closeProductModal()
       setSuccessMessage(isStockable({ product_type: form.product_type })
         ? `Product successfully ${wasEditing ? 'updated' : 'created'}. It is available in Receive Stock.`
         : `Menu item successfully ${wasEditing ? 'updated' : 'created'}. Its ${posCategory} category will appear in POS Sell after sync.`)
-    } catch (error) { onError(getErrorMessage(error)) } finally { setSaving(false) }
+      await onRefresh()
+    } catch (error) { onError(getErrorMessage(error)) } finally { submittingProduct.current = false; setSaving(false) }
   }
   async function addNewCategory(event: FormEvent) {
     event.preventDefault()
@@ -891,6 +903,8 @@ function InventoryEntryForm({ mode, client, data, onRefresh, onError }: ScreenPr
   const [message, setMessage] = useState('')
   const [messageTone, setMessageTone] = useState<'error' | 'success'>('error')
   const [saving, setSaving] = useState(false)
+  const requestId = useRef<string | null>(null)
+  const submitting = useRef(false)
   const stock = getStockByProduct(data.inventory)
   const stockableProducts = data.products.filter(isStockable)
   const selectedProduct = stockableProducts.find((item) => item.id === productId)
@@ -906,6 +920,7 @@ function InventoryEntryForm({ mode, client, data, onRefresh, onError }: ScreenPr
 
   async function submit(event: FormEvent) {
     event.preventDefault()
+    if (submitting.current) return
     setMessage('')
     setMessageTone('error')
     const qty = Number(quantity)
@@ -919,46 +934,38 @@ function InventoryEntryForm({ mode, client, data, onRefresh, onError }: ScreenPr
       setMessage('Receive tracked powder in whole packs.')
       return
     }
-    let delta: number
+    let units: number
     try {
-      const units = mode === 'receive' ? receivedBaseUnits(qty, product) : targetBaseUnits(qty, adjustmentUnit, product)
-      if (mode === 'adjust' && direction === 'set') {
-        setSaving(true)
-        try {
-          const result = await setStockOnHand(client, data.stall?.id ?? '', product.id, units, reason.trim())
-          setQuantity('')
-          await onRefresh()
-          setMessageTone('success')
-          setMessage(result.status === 'unchanged'
-            ? `Stock was already ${result.target_stock.toLocaleString()} ${product.base_unit}.`
-            : `Stock corrected from ${result.previous_stock.toLocaleString()} to ${result.target_stock.toLocaleString()} ${product.base_unit} (${result.quantity_delta > 0 ? '+' : ''}${result.quantity_delta.toLocaleString()} ${product.base_unit}).`)
-        } catch (error) { onError(getErrorMessage(error)) }
-        finally { setSaving(false) }
-        return
-      }
-      delta = mode === 'receive' || direction === 'add' ? units : -units
+      units = mode === 'receive' ? receivedBaseUnits(qty, product) : targetBaseUnits(qty, adjustmentUnit, product)
     } catch (error) {
       setMessage(getErrorMessage(error))
       return
     }
-    if (mode === 'adjust' && delta < 0 && (stock[product.id] ?? 0) + delta < 0) {
-      setMessage('This adjustment would make stock negative.')
-      return
-    }
+    submitting.current = true
     setSaving(true)
     try {
-      await addInventoryEntry(client, {
-        stall_id: data.stall?.id ?? '', product_id: product.id, quantity_delta: delta,
-        movement_type: mode === 'receive' ? 'receive' : 'adjustment', reason: reason.trim(),
-      })
+      requestId.current ??= crypto.randomUUID()
+      let confirmation: string
+      if (mode === 'adjust' && direction === 'set') {
+        const result = await setStockOnHand(client, product.stall_id, product.id, units, reason.trim(), requestId.current)
+        confirmation = result.status === 'unchanged'
+          ? `Stock was already ${result.target_stock.toLocaleString()} ${product.base_unit}.`
+          : `Stock corrected from ${result.previous_stock.toLocaleString()} to ${result.target_stock.toLocaleString()} ${product.base_unit} (${result.quantity_delta > 0 ? '+' : ''}${result.quantity_delta.toLocaleString()} ${product.base_unit}).`
+      } else {
+        const delta = mode === 'receive' || direction === 'add' ? units : -units
+        await addInventoryEntry(client, {
+          stall_id: product.stall_id, product_id: product.id, quantity_delta: delta,
+          movement_type: mode === 'receive' ? 'receive' : 'adjustment', reason: reason.trim(),
+        }, requestId.current)
+        confirmation = mode === 'receive' ? `Stock received successfully: ${delta.toLocaleString()} ${product.base_unit} added.` : 'Inventory adjusted successfully.'
+      }
+      requestId.current = null
       setQuantity('')
-      await onRefresh()
       setMessageTone('success')
-      setMessage(mode === 'receive'
-        ? `Stock received successfully: ${delta.toLocaleString()} ${product.base_unit} added.`
-        : 'Inventory adjusted successfully.')
+      setMessage(confirmation)
+      await onRefresh()
     } catch (error) { onError(getErrorMessage(error)) }
-    finally { setSaving(false) }
+    finally { submitting.current = false; setSaving(false) }
   }
 
   return <Panel title={mode === 'receive' ? 'Receive stock' : 'Adjust inventory'} description={mode === 'receive' ? 'Enter the number of purchase units received; IMS converts them into the product’s base stock unit.' : 'Set the counted total or add/remove stock in purchase units or base units.'}>

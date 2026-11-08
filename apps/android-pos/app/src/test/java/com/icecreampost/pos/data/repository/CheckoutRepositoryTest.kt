@@ -20,6 +20,7 @@ import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.entity.TransactionItemEntity
 import com.icecreampost.pos.domain.model.CartLine
 import com.icecreampost.pos.sync.SyncTrigger
+import io.mockk.every
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.verify
@@ -32,6 +33,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
+import java.util.UUID
 
 class CheckoutRepositoryTest {
     private val database = mockk<CoolerzDatabase>()
@@ -44,6 +46,7 @@ class CheckoutRepositoryTest {
     private val stateDao = mockk<SyncStateDao>()
     private val syncTrigger = mockk<SyncTrigger>(relaxed = true)
     private lateinit var repository: CheckoutRepository
+    private val checkoutId = UUID.randomUUID()
     private val cartProduct = ProductEntity(
         id = "product-1",
         stallId = "stall-1",
@@ -59,9 +62,10 @@ class CheckoutRepositoryTest {
     fun setUp() {
         // Exercise repository behavior while replacing only Room's Android transaction runner.
         mockkStatic("androidx.room.RoomDatabaseKt")
-        coEvery { database.withTransaction<Unit>(any()) } coAnswers {
-            secondArg<suspend () -> Unit>().invoke()
+        coEvery { database.withTransaction<CheckoutReceipt>(any()) } coAnswers {
+            secondArg<suspend () -> CheckoutReceipt>().invoke()
         }
+        coEvery { transactionDao.findById(any()) } returns null
         coEvery { sessionDao.getCurrent() } returns AppSessionEntity(
             stallId = "stall-1", deviceId = "device-1", displayName = "Cashier", role = "cashier", isActivated = true,
         )
@@ -102,7 +106,7 @@ class CheckoutRepositoryTest {
     fun `checkout preserves a stock reduction received after the cart snapshot`() = runTest {
         coEvery { productDao.findById(cartProduct.id) } returns cartProduct.copy(unitsInStock = 5.0)
 
-        repository.checkout(listOf(CartLine(cartProduct, 2)), 4_000)
+        repository.checkout(listOf(CartLine(cartProduct, 2)), 4_000, checkoutId)
 
         coVerify(exactly = 1) { productDao.updateStock(cartProduct.id, 3.0, any()) }
         coVerify(exactly = 1) { transactionDao.upsert(match { it.catalogRevisionId == "revision-1" }) }
@@ -114,7 +118,7 @@ class CheckoutRepositoryTest {
     fun `checkout preserves stock received after the cart snapshot`() = runTest {
         coEvery { productDao.findById(cartProduct.id) } returns cartProduct.copy(unitsInStock = 15.0)
 
-        repository.checkout(listOf(CartLine(cartProduct, 2)), 4_000)
+        repository.checkout(listOf(CartLine(cartProduct, 2)), 4_000, checkoutId)
 
         coVerify(exactly = 1) { productDao.updateStock(cartProduct.id, 13.0, any()) }
     }
@@ -124,7 +128,7 @@ class CheckoutRepositoryTest {
         coEvery { productDao.findById(cartProduct.id) } returns cartProduct.copy(unitsInStock = 1.0)
 
         assertThrows(IllegalArgumentException::class.java) {
-            runTest { repository.checkout(listOf(CartLine(cartProduct, 2)), 4_000) }
+            runTest { repository.checkout(listOf(CartLine(cartProduct, 2)), 4_000, checkoutId) }
         }
 
         coVerify(exactly = 0) { productDao.updateStock(any(), any(), any()) }
@@ -136,7 +140,7 @@ class CheckoutRepositoryTest {
         coEvery { businessDayDao.findOpen("stall-1") } returns null
 
         assertThrows(IllegalArgumentException::class.java) {
-            runTest { repository.checkout(listOf(CartLine(cartProduct, 1)), 2_000) }
+            runTest { repository.checkout(listOf(CartLine(cartProduct, 1)), 2_000, checkoutId) }
         }
 
         coVerify(exactly = 0) { transactionDao.upsert(any()) }
@@ -152,7 +156,7 @@ class CheckoutRepositoryTest {
         )
 
         assertThrows(IllegalStateException::class.java) {
-            runTest { repository.checkout(listOf(CartLine(cartProduct, 1)), 2_000) }
+            runTest { repository.checkout(listOf(CartLine(cartProduct, 1)), 2_000, checkoutId) }
         }
 
         coVerify(exactly = 0) { transactionDao.upsert(any()) }
@@ -174,7 +178,7 @@ class CheckoutRepositoryTest {
         coEvery { ledgerDao.upsertAll(capture(movements)) } returns Unit
         coEvery { transactionDao.upsert(capture(savedSale)) } returns Unit
 
-        repository.checkout(listOf(CartLine(cartProduct, 2)), 4_000)
+        repository.checkout(listOf(CartLine(cartProduct, 2)), 4_000, checkoutId)
 
         coVerify(exactly = 0) { productDao.updateStock(powder.id, any(), any()) }
         coVerify { productDao.updateStock(cone.id, 28.0, any()) }
@@ -184,5 +188,30 @@ class CheckoutRepositoryTest {
         assertEquals(400L, savedSale.captured.cogsCents)
         assertEquals(setOf(cone.id to 400L),
             movements.captured.map { it.productId to it.costTotalCents }.toSet())
+    }
+
+    @Test
+    fun `retry returns the committed receipt without changing stock even if sync scheduling failed`() = runTest {
+        val savedSale = io.mockk.slot<TransactionEntity>()
+        val savedItems = io.mockk.slot<List<TransactionItemEntity>>()
+        coEvery { transactionDao.upsert(capture(savedSale)) } returns Unit
+        coEvery { transactionDao.upsertItems(capture(savedItems)) } returns Unit
+        coEvery { productDao.findById(cartProduct.id) } returns cartProduct
+        every { syncTrigger.triggerNow() } throws IllegalStateException("Scheduler unavailable")
+        val lines = listOf(CartLine(cartProduct, 2))
+
+        val first = repository.checkout(lines, 5_000, checkoutId)
+        coEvery { transactionDao.findById(checkoutId.toString()) } returns savedSale.captured
+        coEvery { transactionDao.getItems(checkoutId.toString()) } returns savedItems.captured
+        coEvery { businessDayDao.findOpen("stall-1") } returns null
+        coEvery { stateDao.find("catalog-revision:device-1") } returns null
+
+        assertEquals(first, repository.checkout(lines, 5_000, checkoutId))
+        val conflict = runCatching { repository.checkout(lines, 6_000, checkoutId) }.exceptionOrNull()
+        assertEquals("This checkout was already saved with different details. Review the original receipt.", conflict?.message)
+        coVerify(exactly = 1) { transactionDao.upsert(any()) }
+        coVerify(exactly = 1) { transactionDao.upsertItems(any()) }
+        coVerify(exactly = 1) { productDao.updateStock(cartProduct.id, 8.0, any()) }
+        coVerify(exactly = 1) { ledgerDao.upsertAll(any()) }
     }
 }

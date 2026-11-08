@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 @HiltViewModel
 class PosViewModel @Inject constructor(
@@ -110,6 +111,7 @@ class PosViewModel @Inject constructor(
     private val selectedServing = MutableStateFlow<ServingFilter?>(null)
     val serving = selectedServing.asStateFlow()
     private val cart = MutableStateFlow<Map<String, Int>>(emptyMap())
+    private var checkoutId: UUID? = null
     private val _busy = MutableStateFlow(false)
     private val _syncBusy = MutableStateFlow(false)
     private val _error = MutableStateFlow<String?>(null)
@@ -169,11 +171,13 @@ class PosViewModel @Inject constructor(
         .combine(MutableStateFlow(Unit)) { values, _ -> values.filter { it.isSellable && it.productType == "sellable" && it.deletedAt == null }.map { it.category }.distinct().sorted() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val cartLines: StateFlow<List<CartLine>> = combine(products, cart) { allProducts, quantities ->
+    private fun cartLinesFor(allProducts: List<ProductEntity>, quantities: Map<String, Int>) =
         quantities.mapNotNull { (productId, quantity) ->
             allProducts.firstOrNull { it.id == productId }?.let { CartLine(it, quantity) }
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val cartLines: StateFlow<List<CartLine>> = combine(products, cart, ::cartLinesFor)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val availability: StateFlow<Map<String, MenuAvailability>> = combine(products, recipes, cart) { allProducts, allRecipes, quantities ->
         allProducts.filter { it.isSellable && it.productType == "sellable" && it.deletedAt == null }
@@ -210,9 +214,13 @@ class PosViewModel @Inject constructor(
         val currentQuantity = cart.value[productId] ?: return
         cart.value = if (currentQuantity <= 1) cart.value - productId
         else cart.value + (productId to currentQuantity - 1)
+        if (cart.value.isEmpty()) checkoutId = null
     }
 
-    fun clearCart() { cart.value = emptyMap() }
+    fun clearCart() {
+        cart.value = emptyMap()
+        checkoutId = null
+    }
 
     fun openDay(notes: String = "") { runAction { businessDayRepository.openDay(notes) } }
     fun closeDay(
@@ -244,7 +252,7 @@ class PosViewModel @Inject constructor(
             _offerFingerprintSetup.value = !_fingerprintEnabled.value && !signedIn.userId.isNullOrBlank()
             unlockedCredentialRef.value = signedIn.credentialRef
             if (!appInForeground) lockPos()
-            cart.value = emptyMap()
+            clearCart()
             syncRepository.resetStatus()
             if (signedIn.isActivated) {
                 syncRepository.sync()
@@ -285,7 +293,6 @@ class PosViewModel @Inject constructor(
             clearFingerprintEnrollment()
             _fingerprintUnlockRequired.value = false
             unlockedCredentialRef.value = null
-            cart.value = emptyMap()
             if (!serverConfirmed) _error.value = "Signed out on this POS. The server could not confirm sign-out."
         }
     }
@@ -372,9 +379,14 @@ class PosViewModel @Inject constructor(
     }
 
     fun checkout(cashReceivedCents: Long, onSuccess: () -> Unit) {
+        val quantities = cart.value
+        if (quantities.isEmpty()) return
         runAction(onSuccess) {
-            _receipt.value = checkoutRepository.checkout(cartLines.value, cashReceivedCents)
-            cart.value = emptyMap()
+            val lines = cartLinesFor(products.value, quantities)
+            check(lines.size == quantities.size) { "A cart product is no longer available. Update the cart before checkout." }
+            val id = checkoutId ?: UUID.randomUUID().also { checkoutId = it }
+            _receipt.value = checkoutRepository.checkout(lines, cashReceivedCents, id)
+            clearCart()
             // This presentation read must not turn an already committed sale into a failed checkout.
             _completedReceiptDetails.value = runCatching {
                 checkoutRepository.getHistoricalReceipt(requireNotNull(_receipt.value).transactionId)

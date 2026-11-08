@@ -19,6 +19,7 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.*
+import java.util.UUID
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class PosViewModelPresentationTest {
@@ -54,6 +55,16 @@ class PosViewModelPresentationTest {
 
     @After fun cleanup() { store.clear(); Dispatchers.resetMain() }
 
+    private fun TestScope.addProductToCart(): ProductEntity {
+        val product = ProductEntity(id = "vanilla", name = "Vanilla", category = "Ice cream",
+            priceCents = 4000, unitsInStock = 10.0, updatedAt = "2026-10-01")
+        catalog.value = listOf(product)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { model.products.collect() }
+        runCurrent()
+        model.addToCart(product)
+        return product
+    }
+
     @Test fun `serving filters use recipes keep search and reset when selecting a category`() = runTest {
         fun product(id: String, name: String, category: String, type: String = "sellable") = ProductEntity(
             id = id, name = name, category = category, priceCents = 4000, unitsInStock = 10.0,
@@ -85,10 +96,11 @@ class PosViewModelPresentationTest {
     }
 
     @Test fun `sync in progress allows a local checkout and does not surface network error as a sale error`() = runTest {
+        addProductToCart()
         val release = CompletableDeferred<Unit>()
         coEvery { sync.sync() } coAnswers { release.await(); throw java.io.IOException("Offline") }
         val saved = CheckoutReceipt("sale", "LOCAL-1", 4000, 5000, 1000)
-        coEvery { checkout.checkout(any(), 5000) } returns saved
+        coEvery { checkout.checkout(any(), 5000, any()) } returns saved
         coEvery { checkout.getHistoricalReceipt("sale") } returns null
         runCurrent()
         model.syncToIms()
@@ -105,12 +117,13 @@ class PosViewModelPresentationTest {
         assertFalse(model.isSyncing.value)
         assertNull(model.error.value)
         assertEquals("Offline", model.syncMessage.value)
-        coVerify(exactly = 1) { checkout.checkout(any(), 5000) }
+        coVerify(exactly = 1) { checkout.checkout(any(), 5000, any()) }
     }
 
     @Test fun `receipt detail read failure cannot cause a committed checkout to fail`() = runTest {
+        addProductToCart()
         val saved = CheckoutReceipt("sale", "LOCAL-1", 4000, 5000, 1000)
-        coEvery { checkout.checkout(any(), 5000) } returns saved
+        coEvery { checkout.checkout(any(), 5000, any()) } returns saved
         coEvery { checkout.getHistoricalReceipt("sale") } throws IllegalStateException("Read unavailable")
         runCurrent()
         var complete = false
@@ -120,5 +133,28 @@ class PosViewModelPresentationTest {
         assertNull(model.error.value)
         assertEquals(saved, model.receipt.value)
         assertNull(model.completedReceiptDetails.value)
+    }
+
+    @Test fun `retry keeps the cart checkout ID and a new cart gets its own ID`() = runTest {
+        val product = addProductToCart()
+        val ids = mutableListOf<UUID>()
+        val saved = CheckoutReceipt("sale", "LOCAL-1", 4000, 5000, 1000)
+        coEvery { checkout.checkout(any(), 5000, capture(ids)) } throws IllegalStateException("Try again") andThen saved
+
+        model.checkout(5000) {}
+        model.checkout(5000) { fail("Overlapping checkout should be ignored") }
+        runCurrent()
+        assertEquals("Try again", model.error.value)
+        model.checkout(5000) {}
+        runCurrent()
+        model.checkout(5000) { fail("Completed cart should be empty") }
+        runCurrent()
+
+        model.addToCart(product)
+        model.checkout(5000) {}
+        runCurrent()
+        assertEquals(3, ids.size)
+        assertEquals(ids[0], ids[1])
+        assertNotEquals(ids[1], ids[2])
     }
 }

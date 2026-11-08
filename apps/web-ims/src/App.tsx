@@ -411,7 +411,8 @@ function Workspace({ session, onSignOut, onAdminVerified }: {
     ) : view === 'dataReset' && session.role === 'system_admin' ? (
       <DataResetScreen {...screenProps} />
     ) : view === 'products' ? (
-      <ProductsScreen {...screenProps} />
+      <ProductsScreen {...screenProps}
+        passkey={session.role === 'system_admin' ? { token: session.token, onVerified: onAdminVerified } : undefined} />
     ) : view === 'receiving' ? (
       <ReceivingScreen {...screenProps} />
     ) : view === 'adjustments' ? (

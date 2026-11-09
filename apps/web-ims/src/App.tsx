@@ -110,10 +110,6 @@ function LoginScreen({ onSignedIn, signOutNotice }: { onSignedIn: (session: AppS
           <Button className="mt-6 w-full py-3" disabled={isLoading}>
             {isLoading ? 'Signing in…' : 'Sign in'}
           </Button>
-
-          <p className="mt-4 text-xs leading-5 text-slate-500">
-            This dashboard uses the shop's custom password login and a short-lived Supabase session token.
-          </p>
         </form>
     </main>
   )

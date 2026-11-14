@@ -1,5 +1,6 @@
 package com.icecreampost.pos.ui.screen.operations
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,14 +28,17 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.setValue
 import com.icecreampost.pos.ui.PosViewModel
+import com.icecreampost.pos.ui.screen.login.LoginPurpose
+import com.icecreampost.pos.ui.screen.login.LoginScreen
 import com.icecreampost.pos.ui.component.*
+import com.icecreampost.pos.domain.model.requiresClosingCount
 import com.icecreampost.pos.ui.screen.home.validateRevenueDeduction
 import java.time.LocalDate
 import java.time.ZoneId
 import com.icecreampost.pos.ui.screen.checkout.toCentsOrNull
 
 @Composable
-fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly: Boolean = false) {
+fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly: Boolean = false, startClosing: Boolean = false) {
     val session by viewModel.session.collectAsStateWithLifecycle()
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
     val deductions by viewModel.revenueDeductions.collectAsStateWithLifecycle()
@@ -43,6 +47,8 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
     val businessDay = storedDay?.takeIf { it.stallId == session?.stallId }
     val error by viewModel.error.collectAsStateWithLifecycle()
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
+    val syncing by viewModel.isSyncing.collectAsStateWithLifecycle()
+    val syncMessage by viewModel.syncMessage.collectAsStateWithLifecycle()
     val amountsVisible by viewModel.amountsVisible.collectAsStateWithLifecycle()
     val isOpen = businessDay?.closedAt == null && businessDay != null
     val today = LocalDate.now(ZoneId.of("Asia/Manila")).toString()
@@ -62,26 +68,34 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
     val dayDeductions = deductions.filter { it.businessDayId == visibleDay?.id }
     val deductionTotal = dayDeductions.sumOf { it.amountCents } + (visibleDay?.recoveryKnownDeductionsCents ?: 0)
     val expectedCash = cashSales - deductionTotal - refundPayout
-    var showCloseDialog by rememberSaveable { mutableStateOf(false) }
-    var showOpenDialog by rememberSaveable { mutableStateOf(false) }
-    var showFinalCloseConfirmation by rememberSaveable { mutableStateOf(false) }
+    var showOpeningSignIn by rememberSaveable { mutableStateOf(false) }
     var showDeductionDialog by rememberSaveable { mutableStateOf(false) }
-    var closingNotes by rememberSaveable { mutableStateOf("") }
-    var collectedCash by rememberSaveable { mutableStateOf("") }
     var revenueDeduction by rememberSaveable { mutableStateOf("") }
     var deductionReason by rememberSaveable { mutableStateOf("") }
     var affectsProfit by rememberSaveable { mutableStateOf(true) }
     val deductionError = validateRevenueDeduction(revenueDeduction, deductionReason, cashSales - deductionTotal)
-    val cashError = collectedCash.isNotBlank() && collectedCash.toCentsOrNull() == null
+    val products by viewModel.products.collectAsStateWithLifecycle()
+    val sealedPacks by viewModel.sealedPacks.collectAsStateWithLifecycle()
+    val countCatalog by viewModel.closingStockCatalog.collectAsStateWithLifecycle()
+    val stockItems = products.filter { it.stallId == session?.stallId && it.requiresClosingCount }
+    var closeDayId by rememberSaveable { mutableStateOf<String?>(null) }
+    var openClosingOnEntry by rememberSaveable { mutableStateOf(startClosing) }
+    val canClose = isOpen && businessDay?.deviceId == session?.deviceId && session?.transferReady == false
+    androidx.compose.runtime.LaunchedEffect(canClose, businessDay?.id) {
+        if (openClosingOnEntry && canClose) {
+            closeDayId = businessDay?.id
+            openClosingOnEntry = false
+        }
+    }
 
-    if (showOpenDialog && !isOpen && !alreadyOperatedToday) {
-        AlertDialog(
-            onDismissRequest = { showOpenDialog = false },
-            title = { Text("Open today's stall?") },
-            text = { Text("Start the operating day and allow sales on this POS?") },
-            confirmButton = { Button(onClick = { viewModel.openDay(); showOpenDialog = false }, enabled = !busy) { Text("Open stall") } },
-            dismissButton = { OutlinedButton(onClick = { showOpenDialog = false }) { Text("Cancel") } },
-        )
+    if (showOpeningSignIn && !isOpen && !alreadyOperatedToday) {
+        val cancelOpening = {
+            showOpeningSignIn = false
+            viewModel.dismissError()
+        }
+        BackHandler { if (!busy) cancelOpening() }
+        LoginScreen(viewModel, LoginPurpose.OpenDay, onDone = cancelOpening)
+        return
     }
     if (showDeductionDialog) {
         AlertDialog(
@@ -126,41 +140,17 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
         )
     }
 
-    if (showCloseDialog) {
-        AlertDialog(
-            onDismissRequest = { showCloseDialog = false },
-            title = { Text("Close operating day?") },
-            text = { Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Cash sales recorded on this device: ${formatMoney(salesTotal, amountsVisible)}")
-                Text("Recorded deductions: ${formatMoney(deductionTotal, amountsVisible)}")
-                Text("Cash refunds paid: ${formatMoney(refundPayout, amountsVisible)}")
-                Text("Expected cash: ${formatMoney(expectedCash, amountsVisible)}")
-                OutlinedTextField(collectedCash, { collectedCash = it.filter { char -> char.isDigit() || char == '.' } }, label = { Text("Closing cash counted") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), placeholder = { Text(formatMoney(expectedCash.coerceAtLeast(0), amountsVisible)) }, isError = cashError, supportingText = if (cashError) {{ Text("Enter a valid cash amount.") }} else null)
-                OutlinedTextField(closingNotes, { closingNotes = it }, label = { Text("Closing notes (optional)") })
-            } },
-            confirmButton = { Button(onClick = {
-                showCloseDialog = false
-                showFinalCloseConfirmation = true
-            }, enabled = !busy && !cashError) { Text("Review close") } },
-            dismissButton = { OutlinedButton(onClick = { showCloseDialog = false }) { Text("Cancel") } },
-        )
-    }
-    if (showFinalCloseConfirmation) {
-        AlertDialog(
-            onDismissRequest = { if (!busy) { showFinalCloseConfirmation = false; showCloseDialog = true } },
-            title = { Text("Confirm closing the operating day") },
-            text = { Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Expected cash: ${formatMoney(expectedCash, amountsVisible)}. Closing cash: ${formatMoney(collectedCash.toCentsOrNull() ?: expectedCash.coerceAtLeast(0), amountsVisible)}. You cannot start another sale today after closing.")
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            } },
-            confirmButton = { Button(colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), onClick = {
-                viewModel.closeDay(closingNotes, collectedCash.toCentsOrNull() ?: expectedCash.coerceAtLeast(0)) {
-                    showFinalCloseConfirmation = false
-                    closingNotes = ""
-                    collectedCash = ""
-                }
-            }, enabled = !busy) { Text("Confirm close") } },
-            dismissButton = { OutlinedButton(onClick = { showFinalCloseConfirmation = false; showCloseDialog = true }, enabled = !busy) { Text("Go back") } },
+    val closingId = closeDayId
+    if (closingId != null && canClose && businessDay?.id == closingId) {
+        ClosingDayDialog(
+            businessDayId = closingId, stockItems = stockItems, sealedPacks = sealedPacks,
+            catalogReady = countCatalog != null, expectedCash = expectedCash,
+            amountsVisible = amountsVisible, busy = busy, syncing = syncing, error = error,
+            onSync = viewModel::syncToIms,
+            onDismiss = { closeDayId = null },
+            onConfirm = { notes, cash, counts ->
+                viewModel.closeDay(closingId, notes, cash, counts) { closeDayId = null }
+            },
         )
     }
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -213,13 +203,23 @@ fun OperationsScreen(viewModel: PosViewModel, onBack: () -> Unit, deductionsOnly
             } }
         } else if (isOpen) {
             item {
-                OutlinedButton(onClick = { showCloseDialog = true }, enabled = !busy, modifier = Modifier.fillMaxWidth(),
+                OutlinedButton(onClick = { viewModel.dismissError(); closeDayId = businessDay?.id }, enabled = !busy && canClose, modifier = Modifier.fillMaxWidth(),
                     colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("Close operating day") }
             }
         } else if (alreadyOperatedToday) {
-            item { Text("Today's operating day is closed. The next day can be opened after midnight.") }
+            item {
+                Text("Today's operating day is closed. If an administrator reset it in IMS, sync to open it again.")
+                OutlinedButton(onClick = viewModel::syncToIms, enabled = !busy && !syncing,
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text(if (syncing) "Syncing…" else "Sync operating day")
+                }
+                syncMessage?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
         } else {
-            item { Button(onClick = { showOpenDialog = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Open today's stall") } }
+            item {
+                Button(onClick = { viewModel.dismissError(); showOpeningSignIn = true },
+                    enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Open today's stall") }
+            }
         }
     }
 }

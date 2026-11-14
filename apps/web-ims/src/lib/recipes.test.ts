@@ -44,3 +44,28 @@ test('overnight reconciliation keeps ingredient use on the opening day', () => {
   assert.equal(row.salesUsage, 80)
   assert.equal(row.expected, 120)
 })
+
+test('IMS shows the saved closing count and the variance before applying it', () => {
+  const day = {
+    id: 'day-1', business_date: '2026-11-14', opened_at: '2026-11-14T01:00:00+00:00',
+    closed_at: '2026-11-14T09:00:00+00:00',
+  } as BusinessDay
+  const movements = [
+    { product_id: 'cone', quantity_delta: 10, movement_type: 'receive', occurred_at: '2026-11-14T00:00:00Z' },
+    { product_id: 'cone', business_day_id: day.id, quantity_delta: -2, movement_type: 'sale', occurred_at: '2026-11-14T01:00:00Z' },
+    { product_id: 'cone', business_day_id: day.id, quantity_delta: -8, movement_type: 'closing_count', counted_quantity: 0, counted_unit: 'piece', occurred_at: '2026-11-14T09:00:00Z' },
+    { product_id: 'powder', quantity_delta: 3000, movement_type: 'receive', occurred_at: '2026-11-14T00:00:00Z' },
+    { product_id: 'powder', business_day_id: day.id, quantity_delta: -1000, movement_type: 'closing_count', counted_quantity: 2, counted_unit: 'pack', sealed_packs_delta: -1, occurred_at: '2026-11-14T09:00:00Z' },
+  ] as InventoryEntry[]
+
+  const [packaging, powderRow] = getDailyReconciliation(day.business_date, [cone, powder], [], movements, [], [], day)
+
+  assert.equal(packaging.expected, 8)
+  assert.equal(packaging.physicalCount, 0)
+  assert.equal(packaging.variance, -8)
+  assert.equal(packaging.waste, 0)
+  assert.equal(powderRow.expected, 3000)
+  assert.equal(powderRow.physicalCount, 2)
+  assert.equal(powderRow.countUnit, 'pack')
+  assert.equal(powderRow.variance, -1)
+})

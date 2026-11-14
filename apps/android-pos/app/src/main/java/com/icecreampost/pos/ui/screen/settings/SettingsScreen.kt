@@ -14,8 +14,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.icecreampost.pos.BuildConfig
+import com.icecreampost.pos.data.repository.SYNC_SIGN_IN_REQUIRED
 import com.icecreampost.pos.ui.PosViewModel
 import com.icecreampost.pos.ui.component.*
+import com.icecreampost.pos.ui.screen.login.LoginPurpose
+import com.icecreampost.pos.ui.screen.login.LoginScreen
 
 @Composable
 fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit, onSync: () -> Unit, onDevice: () -> Unit) {
@@ -44,7 +47,7 @@ fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit, onSync: () -> Un
                             Switch(checked = visible, onCheckedChange = { viewModel.toggleAmountsVisible() },
                                 modifier = Modifier.semantics { contentDescription = "Show sales amounts" })
                         }
-                        SettingsLink(SettingsSymbol.Lock, "Fingerprint login") { showSecurity = true }
+                        SettingsLink(SettingsSymbol.Lock, "Fingerprint login", "Set up fingerprint sign-in or lock this POS") { showSecurity = true }
                     }
                 }
                 item {
@@ -61,17 +64,20 @@ fun SettingsScreen(viewModel: PosViewModel, onBack: () -> Unit, onSync: () -> Un
 @Composable
 private fun FingerprintSettings(viewModel: PosViewModel) {
     val fingerprintEnabled by viewModel.fingerprintEnabled.collectAsStateWithLifecycle()
+    val fingerprintSignInAvailable by viewModel.fingerprintSignInAvailable.collectAsStateWithLifecycle()
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
+            OutlinedButton(onClick = viewModel::lockPos, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Lock POS") }
             if (fingerprintEnabled) {
-                Text("The POS locks when you leave the app. Unlock with your fingerprint or sign in with your password.")
-                OutlinedButton(onClick = viewModel::lockPos, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Lock POS") }
+                Text(if (fingerprintSignInAvailable) "Use your fingerprint to open the operating day or unlock this POS."
+                    else "Fingerprint unlock is enabled. Enable fingerprint sign-in to use it after signing out.")
                 OutlinedButton(onClick = viewModel::disableFingerprintLogin, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Turn off fingerprint login") }
-            } else {
-                Text("Unlock your saved Cashier session with this phone's fingerprint. Expired sessions require password sign-in.")
-                FingerprintActionButton("Enable fingerprint login", "Enable fingerprint login", !busy,
+            }
+            if (!fingerprintSignInAvailable) {
+                if (!fingerprintEnabled) Text("Use this phone's fingerprint to unlock the POS and sign in to your cashier account.")
+                FingerprintActionButton("Enable fingerprint sign-in", "Enable fingerprint sign-in", !busy,
                     viewModel::prepareFingerprintEnrollment, viewModel::enableFingerprintLogin)
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -84,18 +90,40 @@ fun SyncScreen(viewModel: PosViewModel, onBack: () -> Unit) {
     val state by viewModel.syncState.collectAsStateWithLifecycle()
     val message by viewModel.syncMessage.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
-    val busy by viewModel.isSyncing.collectAsStateWithLifecycle()
+    val syncing by viewModel.isSyncing.collectAsStateWithLifecycle()
+    val busy by viewModel.isBusy.collectAsStateWithLifecycle()
+    var reconnecting by rememberSaveable { mutableStateOf(false) }
+    val closeSignIn = {
+        viewModel.dismissError()
+        reconnecting = false
+    }
+    BackHandler(enabled = reconnecting) { if (!busy) closeSignIn() }
+    if (reconnecting) {
+        LoginScreen(viewModel, LoginPurpose.ReconnectSync, onDone = closeSignIn)
+        return
+    }
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ScreenHeader("Sync status", onBack = onBack) }
         item { SyncStatusLine(viewModel) }
         item { Text("Sales and stock receipts save on this device first. Sync runs automatically when a connection is available.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         item {
-            OutlinedButton(onClick = viewModel::syncToIms, enabled = !busy && state?.status != "running", modifier = Modifier.fillMaxWidth()) {
-                Text(if (busy || state?.status == "running") "Syncing…" else "Sync now")
+            val running = syncing || state?.status == "running"
+            val needsSignIn = state?.status == SYNC_SIGN_IN_REQUIRED
+            OutlinedButton(
+                onClick = {
+                    if (needsSignIn) {
+                        viewModel.dismissError()
+                        reconnecting = true
+                    } else viewModel.syncToIms()
+                },
+                enabled = !busy && !running,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (running) "Syncing…" else if (needsSignIn) "Reconnect sync" else "Sync now")
             }
         }
         state?.errorMessage?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
-        message?.let { item { Text(it, style = MaterialTheme.typography.bodyMedium) } }
+        message?.takeIf { it != state?.errorMessage }?.let { item { Text(it, style = MaterialTheme.typography.bodyMedium) } }
         error?.takeIf { it != state?.errorMessage }?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
     }
 }

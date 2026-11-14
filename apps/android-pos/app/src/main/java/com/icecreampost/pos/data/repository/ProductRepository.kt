@@ -1,6 +1,7 @@
 package com.icecreampost.pos.data.repository
 
 import androidx.room.withTransaction
+import com.icecreampost.pos.core.time.parsePosTimestamp
 import com.icecreampost.pos.data.local.dao.ProductDao
 import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
 import com.icecreampost.pos.data.local.dao.SyncStateDao
@@ -12,6 +13,9 @@ import com.icecreampost.pos.data.local.entity.ProductRecipeEntity
 import com.icecreampost.pos.data.local.database.CoolerzDatabase
 import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.dto.CatalogPageRequest
+import com.icecreampost.pos.domain.model.ADD_ON_CATALOG_STATUS
+import com.icecreampost.pos.domain.model.ADD_ON_PRICE_CENTS
+import com.icecreampost.pos.domain.model.CLOSING_COUNTS_CATALOG
 import java.time.Instant
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -36,13 +40,14 @@ class ProductRepository @Inject constructor(
         val ledgerState = syncStateDao.find("catalog-ledger")
         // Migrate existing installs without replaying previously applied inventory.
         val ledgerCursor = if (ledgerState == null) legacyCursor else ledgerState.cursorUpdatedAt
+        val committedLedgerAt = ledgerCursor?.let { runCatching { parsePosTimestamp(it) }.getOrNull() }
         // Complete every page before entering the Room transaction. A failed
         // page leaves both stock and cursors untouched for the next retry.
-        val remoteLedger = pullAllPages(ledgerCursor, api::getInventoryLedgerPage,
+        val remoteLedger = pullAllPages(committedLedgerAt, api::getInventoryLedgerPage,
             { it.id }, { it.updatedAt })
         val catalog = api.getCatalogRevision()
         check(catalog.revisionId.isNotBlank() && catalog.deviceId.isNotBlank() &&
-            Instant.parse(catalog.validUntil).isAfter(Instant.now())) {
+            parsePosTimestamp(catalog.validUntil).isAfter(Instant.now())) {
             "The server did not return a valid catalog revision."
         }
         val productDtos = catalog.products
@@ -65,6 +70,8 @@ class ProductRepository @Inject constructor(
                 updatedAt = entry.updatedAt,
                 deletedAt = entry.deletedAt,
                 isSynced = true,
+                countedQuantity = entry.countedQuantity,
+                countedUnit = entry.countedUnit,
             )
         }
         // Stock, ledger rows and cursors must commit together so a retry cannot
@@ -95,6 +102,11 @@ class ProductRepository @Inject constructor(
                     updatedAt = dto.updatedAt,
                     deletedAt = dto.deletedAt,
                     localUpdatedAt = current?.localUpdatedAt ?: dto.updatedAt,
+                    countAtClosing = dto.countAtClosing,
+                    menuGroup = dto.menuGroup,
+                    servingType = dto.servingType,
+                    servingSize = dto.servingSize,
+                    flavorName = dto.flavorName,
                 )
             }
             productDao.upsertAll(products)
@@ -140,11 +152,18 @@ class ProductRepository @Inject constructor(
             productRecipeDao.upsertAll(recipeDtos.map { recipe ->
                 ProductRecipeEntity(recipe.id, recipe.stallId, recipe.parentProductId, recipe.ingredientProductId, recipe.quantity, recipe.updatedAt)
             })
-            val nextLedgerCursor = (listOfNotNull(ledgerCursor) + remoteLedger.map { it.updatedAt }).maxOrNull()
+            syncStateDao.upsert(SyncStateEntity(
+                key = CLOSING_COUNTS_CATALOG,
+                value = if (catalog.closingStockCountsSupported) catalog.revisionId else "",
+                status = "success",
+            ))
+            val nextLedgerCursor = (listOfNotNull(ledgerCursor?.takeIf { committedLedgerAt != null }) +
+                remoteLedger.map { it.updatedAt }).maxByOrNull(::parsePosTimestamp)
             val now = Instant.now().toString()
             syncStateDao.upsert(SyncStateEntity(
                 key = "catalog-revision:${catalog.deviceId}", value = catalog.revisionId, cursorUpdatedAt = catalog.validUntil,
-                lastSyncAt = now, status = "success",
+                lastSyncAt = now,
+                status = if (catalog.addOnPriceCents == ADD_ON_PRICE_CENTS) ADD_ON_CATALOG_STATUS else "success",
             ))
             syncStateDao.upsert(SyncStateEntity(
                 key = "catalog-ledger", value = "ledger", cursorUpdatedAt = nextLedgerCursor,
@@ -158,16 +177,14 @@ class ProductRepository @Inject constructor(
     }
 
     private suspend fun <T> pullAllPages(
-        lastCommittedAt: String?,
+        lastCommittedAt: Instant?,
         load: suspend (CatalogPageRequest) -> List<T>,
         id: (T) -> String,
         updatedAt: (T) -> String,
     ): List<T> {
         // Overlap the committed timestamp so equal-time rows missed by an
         // older build are replayed. Room upserts and ledger delta logic dedupe.
-        var afterAt = lastCommittedAt?.let { saved ->
-            runCatching { Instant.parse(saved).minusSeconds(1).toString() }.getOrNull()
-        }
+        var afterAt = lastCommittedAt?.minusSeconds(1)?.toString()
         var afterId: String? = null
         val rows = linkedMapOf<String, T>()
         var pages = 0
@@ -183,8 +200,10 @@ class ProductRepository @Inject constructor(
             val last = batch.last()
             val nextAt = updatedAt(last)
             val nextId = id(last)
-            check(afterAt == null || Instant.parse(nextAt).isAfter(Instant.parse(afterAt)) ||
-                (Instant.parse(nextAt) == Instant.parse(afterAt) && (afterId == null || nextId > afterId))) {
+            val nextInstant = parsePosTimestamp(nextAt)
+            val afterInstant = afterAt?.let(::parsePosTimestamp)
+            check(afterInstant == null || nextInstant.isAfter(afterInstant) ||
+                (nextInstant == afterInstant && (afterId == null || nextId > afterId))) {
                 "Catalog page did not advance its cursor."
             }
             afterAt = nextAt

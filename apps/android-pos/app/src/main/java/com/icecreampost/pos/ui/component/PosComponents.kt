@@ -109,6 +109,7 @@ fun QuantityStepper(
     modifier: Modifier = Modifier,
     canIncrease: Boolean = true,
     canDecrease: Boolean = true,
+    quantityLabel: String = "quantity",
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Surface(
@@ -119,7 +120,7 @@ fun QuantityStepper(
             color = MaterialTheme.colorScheme.surfaceVariant,
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Text("−", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { contentDescription = "Decrease quantity" })
+                Text("−", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { contentDescription = "Decrease $quantityLabel" })
             }
         }
         Text(
@@ -140,7 +141,7 @@ fun QuantityStepper(
                     "+",
                     style = MaterialTheme.typography.titleMedium,
                     color = if (canIncrease) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                    modifier = Modifier.semantics { contentDescription = "Increase quantity" },
+                    modifier = Modifier.semantics { contentDescription = "Increase $quantityLabel" },
                 )
             }
         }

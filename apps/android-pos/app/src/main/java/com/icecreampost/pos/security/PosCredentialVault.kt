@@ -4,7 +4,9 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
+import com.icecreampost.pos.core.time.parsePosTimestamp
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.serialization.json.Json
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -23,6 +25,10 @@ import javax.inject.Singleton
 class PosCredentialVault @Inject constructor(@ApplicationContext context: Context) {
     private val active = AtomicFile(File(context.noBackupFilesDir, "pos-session.enc"))
     private val revocations = AtomicFile(File(context.noBackupFilesDir, "pos-revocations.enc"))
+    private val offlineCashier = AtomicFile(File(context.noBackupFilesDir, "pos-offline-cashier.enc"))
+    private val offlineAttempts = AtomicFile(File(context.noBackupFilesDir, "pos-offline-attempts.enc"))
+    private val lockMarker = File(context.noBackupFilesDir, "pos-locked")
+    private val activationPassword = AtomicFile(File(context.noBackupFilesDir, "pos-activation-password.enc"))
     private val keyAlias = "coolerz-pos-session-v1"
 
     @Synchronized
@@ -32,7 +38,65 @@ class PosCredentialVault @Inject constructor(@ApplicationContext context: Contex
     fun writeSession(reference: String, token: String) = write(active, reference, token)
 
     @Synchronized
-    fun clearSession() = active.delete()
+    fun clearSession() {
+        active.delete()
+        activationPassword.delete()
+    }
+
+    @Synchronized
+    internal fun readActivationPassword(reference: String): OfflinePasswordProof? =
+        read(activationPassword, reference)?.let { Json.decodeFromString<OfflinePasswordProof>(it) }
+
+    @Synchronized
+    internal fun writeActivationPassword(reference: String, proof: OfflinePasswordProof) =
+        write(activationPassword, reference, Json.encodeToString(OfflinePasswordProof.serializer(), proof))
+
+    @Synchronized
+    internal fun clearActivationPassword() = activationPassword.delete()
+
+    @Synchronized
+    internal fun setLocked(locked: Boolean) {
+        if (locked) lockMarker.createNewFile()
+        else lockMarker.delete()
+        check(lockMarker.exists() == locked) { "Could not save the POS lock state." }
+    }
+
+    @Synchronized
+    internal fun isLocked(): Boolean = lockMarker.exists()
+
+    @Synchronized
+    internal fun readOfflineCashier(): OfflineCashier? =
+        read(offlineCashier, "offline-cashier")?.let { Json.decodeFromString<OfflineCashier>(it) }
+
+    @Synchronized
+    internal fun writeOfflineCashier(cashier: OfflineCashier) =
+        write(offlineCashier, "offline-cashier", Json.encodeToString(OfflineCashier.serializer(), cashier))
+
+    @Synchronized
+    internal fun clearOfflineCashier() {
+        offlineCashier.delete()
+        offlineAttempts.delete()
+    }
+
+    @Synchronized
+    internal fun checkOfflinePasswordAttempts(now: Instant = Instant.now()) {
+        val attempts = read(offlineAttempts, "offline-attempts")?.let(::JSONObject) ?: return
+        check(attempts.getInt("count") < 5 || now.epochSecond >= attempts.getLong("until")) {
+            "Too many offline sign-in attempts. Try again in 15 minutes."
+        }
+    }
+
+    @Synchronized
+    internal fun recordOfflinePasswordFailure(now: Instant = Instant.now()) {
+        val attempts = read(offlineAttempts, "offline-attempts")?.let(::JSONObject)
+        val until = attempts?.getLong("until")?.takeIf { it > now.epochSecond }
+        val count = if (until == null) 1 else requireNotNull(attempts).getInt("count") + 1
+        write(offlineAttempts, "offline-attempts",
+            JSONObject().put("count", count).put("until", until ?: now.plusSeconds(900).epochSecond).toString())
+    }
+
+    @Synchronized
+    internal fun clearOfflinePasswordAttempts() = offlineAttempts.delete()
 
     @Synchronized
     fun queueRevocation(token: String, expiresAt: String) {
@@ -50,7 +114,7 @@ class PosCredentialVault @Inject constructor(@ApplicationContext context: Contex
         val pending = (0 until array.length()).map { index ->
             val entry = array.getJSONObject(index)
             PendingRevocation(entry.getString("token"), entry.getString("expiresAt"))
-        }.filter { runCatching { Instant.parse(it.expiresAt).isAfter(now) }.getOrDefault(false) }
+        }.filter { runCatching { parsePosTimestamp(it.expiresAt).isAfter(now) }.getOrDefault(false) }
         if (pending.size != array.length()) saveRevocations(pending)
         return pending
     }

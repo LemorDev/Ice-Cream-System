@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.*
 import com.icecreampost.pos.ui.PosViewModel
+import com.icecreampost.pos.ui.PosUpdateViewModel
 import com.icecreampost.pos.ui.screen.activation.ActivationScreen
 import com.icecreampost.pos.ui.screen.catalog.ProductCatalogScreen
 import com.icecreampost.pos.ui.screen.history.TransactionHistoryScreen
@@ -36,7 +37,7 @@ import com.icecreampost.pos.ui.screen.receipt.HistoricalReceiptScreen
 import com.icecreampost.pos.ui.screen.settings.*
 
 @Composable
-fun AppNavHost(viewModel: PosViewModel) {
+fun AppNavHost(viewModel: PosViewModel, appUpdates: PosUpdateViewModel) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val activity = LocalContext.current.findActivity()
     DisposableEffect(lifecycleOwner, viewModel, activity) {
@@ -52,6 +53,11 @@ fun AppNavHost(viewModel: PosViewModel) {
     }
     val session by viewModel.session.collectAsStateWithLifecycle()
     val sessionReady by viewModel.sessionReady.collectAsStateWithLifecycle()
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsState()
+    val canCheckForUpdates = session?.isActivated == true && lifecycleState.isAtLeast(Lifecycle.State.STARTED)
+    LaunchedEffect(canCheckForUpdates) {
+        if (canCheckForUpdates) appUpdates.check(automatic = true)
+    }
     if (!sessionReady) { LoadingScreen(); return }
     if (session?.isActivated == true && session?.transferReady == false) FingerprintSetupOffer(viewModel)
     // Discard saved tab stacks at a session boundary as well as visible routes.
@@ -83,7 +89,7 @@ fun AppNavHost(viewModel: PosViewModel) {
             session?.isActivated != true -> Routes.ACTIVATION
             else -> Routes.HOME
         }
-        val moreRoutes = listOf(Routes.MORE, Routes.OPERATING_DAY, Routes.DEDUCTIONS, Routes.SYNC, Routes.SETTINGS, Routes.DEVICE)
+        val moreRoutes = listOf(Routes.MORE, Routes.OPERATING_DAY, Routes.DEDUCTIONS, Routes.SYNC, Routes.SETTINGS, Routes.DEVICE, Routes.UPDATES)
         val showNavigation = !focusedSale && session?.isActivated == true &&
             (primaryDestinations.any { it.route == currentRoute } || currentRoute in moreRoutes)
         fun openTab(route: String) {
@@ -136,9 +142,17 @@ fun AppNavHost(viewModel: PosViewModel) {
                         viewModel.dismissHistoricalReceipt(); navController.popBackStack()
                     })
                 }
-                composable(Routes.INVENTORY) { InventoryScreen(viewModel) }
-                composable(Routes.MORE) { MoreScreen(viewModel, onNavigate = { navController.navigate(it) }) }
+                composable(Routes.INVENTORY) {
+                    InventoryScreen(viewModel, onCloseDay = { navController.navigate(Routes.CLOSE_OPERATING_DAY) })
+                }
+                composable(Routes.MORE) {
+                    val update by appUpdates.state.collectAsStateWithLifecycle()
+                    MoreScreen(viewModel, update.release?.versionName, onNavigate = { navController.navigate(it) })
+                }
                 composable(Routes.OPERATING_DAY) { OperationsScreen(viewModel, onBack = { navController.popBackStack() }) }
+                composable(Routes.CLOSE_OPERATING_DAY) {
+                    OperationsScreen(viewModel, onBack = { navController.popBackStack() }, startClosing = true)
+                }
                 composable(Routes.DEDUCTIONS) { OperationsScreen(viewModel, onBack = { navController.popBackStack() }, deductionsOnly = true) }
                 composable(Routes.SETTINGS) {
                     SettingsScreen(
@@ -150,6 +164,7 @@ fun AppNavHost(viewModel: PosViewModel) {
                 }
                 composable(Routes.SYNC) { SyncScreen(viewModel, onBack = { navController.popBackStack() }) }
                 composable(Routes.DEVICE) { DeviceInformationScreen(viewModel, onBack = { navController.popBackStack() }) }
+                composable(Routes.UPDATES) { PosUpdatesScreen(appUpdates, onBack = { navController.popBackStack() }) }
             }
         }
     }

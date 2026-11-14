@@ -56,8 +56,8 @@ android {
         applicationId = "com.icecreampost.pos"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 6
+        versionName = "0.1.5"
     }
 
     flavorDimensions += "environment"
@@ -69,12 +69,14 @@ android {
             buildConfigField("String", "APP_ENV", "\"development\"")
             buildConfigField("String", "SUPABASE_URL", "\"${localValue("supabase.dev.url")}\"")
             buildConfigField("String", "SUPABASE_ANON_KEY", "\"${localValue("supabase.dev.anonKey")}\"")
+            buildConfigField("String", "UPDATE_MANIFEST_URL", "\"${localValue("pos.dev.updateManifestUrl")}\"")
         }
         create("production") {
             dimension = "environment"
             buildConfigField("String", "APP_ENV", "\"production\"")
             buildConfigField("String", "SUPABASE_URL", "\"${localValue("supabase.production.url")}\"")
             buildConfigField("String", "SUPABASE_ANON_KEY", "\"${localValue("supabase.production.anonKey")}\"")
+            buildConfigField("String", "UPDATE_MANIFEST_URL", "\"${localValue("pos.production.updateManifestUrl")}\"")
         }
     }
 

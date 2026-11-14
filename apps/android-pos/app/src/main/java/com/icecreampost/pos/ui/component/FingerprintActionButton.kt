@@ -5,6 +5,7 @@ import android.content.ContextWrapper
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -20,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import javax.crypto.Cipher
@@ -93,7 +95,7 @@ fun FingerprintActionButton(
                     val cryptoObject = BiometricPrompt.CryptoObject(cipher)
                     val info = BiometricPrompt.PromptInfo.Builder()
                         .setTitle(title)
-                        .setSubtitle("Verify your identity to use the saved Cashier session")
+                        .setSubtitle("Verify your identity on this POS")
                         .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
                         .setNegativeButtonText("Cancel")
                         .build()
@@ -106,7 +108,7 @@ fun FingerprintActionButton(
             }
         },
         enabled = enabled && !prompting,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
     ) { Text(if (prompting) "Waiting for fingerprint…" else label) }
     message?.let {
         Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })

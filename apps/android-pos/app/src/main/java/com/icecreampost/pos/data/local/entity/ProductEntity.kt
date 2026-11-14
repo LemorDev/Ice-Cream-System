@@ -1,5 +1,6 @@
 package com.icecreampost.pos.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -27,4 +28,9 @@ data class ProductEntity(
     val localUpdatedAt: String = updatedAt,
     val imageUrl: String? = null,
     val catalogCostPrice: String? = null,
+    @ColumnInfo(defaultValue = "0") val countAtClosing: Boolean = false,
+    val menuGroup: String? = null,
+    val servingType: String? = null,
+    val servingSize: String? = null,
+    val flavorName: String? = null,
 )

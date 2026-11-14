@@ -16,6 +16,11 @@ internal fun menuServings(
     productsById: Map<String, ProductEntity>,
     recipes: List<ProductRecipeEntity>,
 ): Set<ServingFilter> {
+    when (product.servingType) {
+        "cup" -> return setOf(ServingFilter.CUP)
+        "cone" -> return setOf(ServingFilter.CONE)
+        "other" -> return emptySet()
+    }
     val packagingNames = recipes.asSequence()
         .filter { it.parentProductId == product.id && it.quantity > 0 }
         .mapNotNull { productsById[it.ingredientProductId] }

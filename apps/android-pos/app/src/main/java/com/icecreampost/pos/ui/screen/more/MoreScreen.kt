@@ -15,10 +15,10 @@ import com.icecreampost.pos.ui.navigation.Routes
 import com.icecreampost.pos.ui.component.*
 
 @Composable
-fun MoreScreen(viewModel: PosViewModel, onNavigate: (String) -> Unit) {
+fun MoreScreen(viewModel: PosViewModel, availableUpdate: String?, onNavigate: (String) -> Unit) {
     val session by viewModel.session.collectAsStateWithLifecycle()
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
-    val fingerprintEnabled by viewModel.fingerprintEnabled.collectAsStateWithLifecycle()
+    val fingerprintSignInAvailable by viewModel.fingerprintSignInAvailable.collectAsStateWithLifecycle()
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
     val lines by viewModel.cartLines.collectAsStateWithLifecycle()
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
@@ -28,8 +28,8 @@ fun MoreScreen(viewModel: PosViewModel, onNavigate: (String) -> Unit) {
             title = { Text("Sign out?") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("You will need your cashier credentials to sign in again.")
-                    if (fingerprintEnabled) Text("To step away and return with your fingerprint, use Lock POS.")
+                    Text(if (fingerprintSignInAvailable) "Sign in again with your fingerprint or password."
+                        else "Sign in again with your cashier password.")
                     if (lines.isNotEmpty()) Text("Your current order will be cleared.")
                     if (transactions.any { it.stallId == session?.stallId && !it.isSynced })
                         Text("Pending transactions stay on this device. Sign in again to sync them.")
@@ -65,6 +65,9 @@ fun MoreScreen(viewModel: PosViewModel, onNavigate: (String) -> Unit) {
                 SettingsGroup("System") {
                     SettingsLink(SettingsSymbol.Sync, "Sync status") { onNavigate(Routes.SYNC) }
                     SettingsLink(SettingsSymbol.Preferences, "Settings") { onNavigate(Routes.SETTINGS) }
+                    SettingsLink(SettingsSymbol.Sync, "App updates", availableUpdate?.let { "Version $it available" }) {
+                        onNavigate(Routes.UPDATES)
+                    }
                     SettingsLink(SettingsSymbol.Device, "Device information") { onNavigate(Routes.DEVICE) }
                 }
             }
@@ -75,10 +78,8 @@ fun MoreScreen(viewModel: PosViewModel, onNavigate: (String) -> Unit) {
                         session?.displayName ?: "Cashier",
                         session?.role?.replaceFirstChar { it.uppercase() } ?: "Cashier",
                     )
-                    if (fingerprintEnabled) {
-                        Surface(onClick = viewModel::lockPos, enabled = !busy, color = Color.Transparent) {
-                            SettingsRow(SettingsSymbol.Lock, "Lock POS")
-                        }
+                    Surface(onClick = viewModel::lockPos, enabled = !busy, color = Color.Transparent) {
+                        SettingsRow(SettingsSymbol.Lock, "Lock POS")
                     }
                     Surface(
                         onClick = { confirmSignOut = true },

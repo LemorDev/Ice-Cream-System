@@ -8,6 +8,7 @@ import com.icecreampost.pos.core.logging.AppLogger
 import com.icecreampost.pos.data.repository.RetryableSyncException
 import com.icecreampost.pos.data.repository.SessionRepository
 import com.icecreampost.pos.data.repository.SyncRepository
+import kotlinx.coroutines.CancellationException
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 
@@ -24,7 +25,7 @@ class SyncWorker @AssistedInject constructor(
             logger.info("Sync started")
             sessionRepository.retryPendingRevocations()
             val session = sessionRepository.restoreStoredSession(allowExpiredForOfflineWork = true)
-            if (session == null || !session.isActivated || !sessionRepository.hasCloudToken()) {
+            if (session == null || !session.isActivated || session.transferReady) {
                 logger.info("Sync skipped: no activated cashier session")
                 Result.success()
             } else {
@@ -32,6 +33,8 @@ class SyncWorker @AssistedInject constructor(
                 logger.info("Sync completed: pushed=${report.pushed}, permanentFailures=${report.permanentFailures}")
                 Result.success()
             }
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: RetryableSyncException) {
             logger.error("Retryable sync failure", error)
             if (runAttemptCount < 5) Result.retry() else Result.failure()

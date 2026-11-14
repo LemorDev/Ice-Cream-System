@@ -6,6 +6,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,10 +26,13 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +51,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -54,11 +60,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.icecreampost.pos.data.local.entity.ProductEntity
 import com.icecreampost.pos.domain.model.CartLine
+import com.icecreampost.pos.domain.model.ADD_ON_PRICE_CENTS
 import com.icecreampost.pos.domain.model.MenuAvailability
+import com.icecreampost.pos.domain.model.receiptName
+import com.icecreampost.pos.domain.model.servingLabel
 import com.icecreampost.pos.ui.PosViewModel
 import com.icecreampost.pos.ui.component.PosIcon
 import com.icecreampost.pos.ui.component.PosSymbol
@@ -84,12 +94,16 @@ fun ProductCatalogScreen(
     val selectedCategory by viewModel.category.collectAsStateWithLifecycle()
     val selectedServing by viewModel.serving.collectAsStateWithLifecycle()
     val cartLines by viewModel.cartLines.collectAsStateWithLifecycle()
+    val addOnsEnabled by viewModel.addOnsEnabled.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val busy by viewModel.isBusy.collectAsStateWithLifecycle()
     val businessDay by viewModel.businessDay.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
     val isOpen = businessDay != null && businessDay?.closedAt == null && businessDay?.stallId == session?.stallId
     val availability by viewModel.availability.collectAsStateWithLifecycle()
+    val visibleGroups = products.groupBy(::sellCardKey)
+    var optionGroupKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val optionGroup = visibleGroups[optionGroupKey].orEmpty()
     val cartQuantity = cartLines.sumOf { it.quantity }
     val cartTotal = cartLines.sumOf { it.lineTotalCents }
     var showOrderSheet by rememberSaveable { mutableStateOf(false) }
@@ -100,7 +114,7 @@ fun ProductCatalogScreen(
     val changeCents = cashCents?.minus(cartTotal)?.takeIf { it >= 0 }
 
     LaunchedEffect(Unit) { viewModel.syncToIms() }
-    BackHandler(enabled = focusMode && !showOrderSheet && !showCheckoutConfirmation && !showClearConfirmation) {
+    BackHandler(enabled = focusMode && optionGroup.isEmpty() && !showOrderSheet && !showCheckoutConfirmation && !showClearConfirmation) {
         onToggleFocusMode()
     }
 
@@ -183,7 +197,7 @@ fun ProductCatalogScreen(
             ) {
                 com.icecreampost.pos.ui.component.SyncStatusLine(viewModel, Modifier.weight(1f))
                 Text(
-                    "${products.size} ${if (products.size == 1) "product" else "products"}",
+                    "${visibleGroups.size} ${if (visibleGroups.size == 1) "product" else "products"}",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -199,19 +213,40 @@ fun ProductCatalogScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    gridItems(products, key = { it.id }) { product ->
-                        val quantityInCart = cartLines.firstOrNull { it.product.id == product.id }?.quantity ?: 0
+                    gridItems(visibleGroups.entries.toList(), key = { it.key }) { (groupKey, options) ->
+                        val product = options.first()
+                        val optionIds = options.map { it.id }.toSet()
+                        val quantityInCart = cartLines.filter { it.product.id in optionIds }.sumOf { it.quantity }
+                        val configure = product.menuGroup != null || addOnsEnabled
                         ProductTile(
                             product = product,
+                            options = options,
+                            configure = configure,
                             quantityInCart = quantityInCart,
-                            onAdd = { viewModel.addToCart(product) },
+                            onAdd = { if (configure) optionGroupKey = groupKey else viewModel.addToCart(product) },
                             onRemove = { viewModel.removeFromCart(product.id) },
-                            availability = availability[product.id],
+                            availability = availability,
                             busy = busy || !isOpen,
                         )
                     }
                 }
             }
+        }
+    }
+
+    if (optionGroup.isNotEmpty()) {
+        key(optionGroupKey) {
+            SellOptionsDialog(
+                options = optionGroup,
+                availability = availability,
+                addOnsEnabled = addOnsEnabled,
+                enabled = isOpen && !busy,
+                error = error,
+                onDismiss = { optionGroupKey = null },
+                onAdd = { product, addOn ->
+                    if (viewModel.addToCart(product, addOn)) optionGroupKey = null
+                },
+            )
         }
     }
 
@@ -237,6 +272,8 @@ fun ProductCatalogScreen(
                 error = error,
                 onDecrease = viewModel::removeFromCart,
                 onIncrease = viewModel::addToCart,
+                addOnsEnabled = addOnsEnabled,
+                onSetAddOnQuantity = viewModel::setAddOnQuantity,
                 canIncrease = { product, _ -> isOpen && !busy && (availability[product.id]?.additionalPortions ?: 0) > 0 },
                 onClear = { showClearConfirmation = true },
                 onComplete = { if (isOpen) showCheckoutConfirmation = true },
@@ -294,13 +331,19 @@ fun ProductCatalogScreen(
 @Composable
 private fun ProductTile(
     product: ProductEntity,
+    options: List<ProductEntity>,
+    configure: Boolean,
     quantityInCart: Int,
     onAdd: () -> Unit,
     onRemove: () -> Unit,
-    availability: MenuAvailability?,
+    availability: Map<String, MenuAvailability>,
     busy: Boolean,
 ) {
-    val additionalAvailable = availability?.additionalPortions ?: 0
+    val title = product.menuGroup ?: product.name
+    val status = availability[product.id]
+    val canAdd = options.any { (availability[it.id]?.additionalPortions ?: 0) > 0 }
+    val minPrice = options.minOf { it.priceCents }
+    val maxPrice = options.maxOf { it.priceCents }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -309,27 +352,129 @@ private fun ProductTile(
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             SubcomposeAsyncImage(
-                model = product.imageUrl, contentDescription = product.name, contentScale = ContentScale.Crop,
+                model = options.firstNotNullOfOrNull { it.imageUrl }, contentDescription = null, contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxWidth().height(96.dp).clip(MaterialTheme.shapes.small),
                 loading = { ProductImagePlaceholder() }, error = { ProductImagePlaceholder() },
             )
-            Text(product.name, style = MaterialTheme.typography.titleSmall, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(formatMoney(product.priceCents), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-            Text(menuAvailabilityLabel(availability, product.unitsInStock), style = MaterialTheme.typography.labelSmall,
+            Text(title, style = MaterialTheme.typography.titleSmall, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(if (minPrice == maxPrice) formatMoney(minPrice) else "From ${formatMoney(minPrice)}",
+                style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Text(
+                if (options.size == 1) menuAvailabilityLabel(status, product.unitsInStock)
+                else if (canAdd) "${options.size} options" else if (status == null) "Checking stock…" else "Options unavailable",
+                style = MaterialTheme.typography.labelSmall,
                 color = when {
-                    availability == null -> MaterialTheme.colorScheme.onSurfaceVariant
-                    additionalAvailable == 0 -> MaterialTheme.colorScheme.error
+                    status == null -> MaterialTheme.colorScheme.onSurfaceVariant
+                    !canAdd -> MaterialTheme.colorScheme.error
                     else -> MaterialTheme.colorScheme.secondary
                 })
-            if (quantityInCart == 0) {
-                Button(onClick = onAdd, modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Add ${product.name}" },
-                    enabled = !busy && additionalAvailable > 0) { Text("Add") }
+            if (configure || quantityInCart == 0) {
+                Button(
+                    onClick = onAdd,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics {
+                        contentDescription = if (configure) "Choose options for $title" else "Add $title"
+                    },
+                    enabled = !busy && if (configure) status != null else canAdd,
+                ) { Text(if (configure) "Choose" else "Add") }
             } else {
                 QuantityStepper(quantityInCart, onRemove, onAdd, modifier = Modifier.align(Alignment.CenterHorizontally),
-                    canIncrease = !busy && additionalAvailable > 0, canDecrease = !busy)
+                    canIncrease = !busy && canAdd, canDecrease = !busy)
             }
         }
     }
+}
+
+private fun sellCardKey(product: ProductEntity): String =
+    product.menuGroup?.let { "menu:${it.trim().lowercase(Locale.ROOT)}" } ?: "product:${product.id}"
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SellOptionsDialog(
+    options: List<ProductEntity>,
+    availability: Map<String, MenuAvailability>,
+    addOnsEnabled: Boolean,
+    enabled: Boolean,
+    error: String?,
+    onDismiss: () -> Unit,
+    onAdd: (ProductEntity, Boolean) -> Unit,
+) {
+    fun serving(product: ProductEntity) = product.servingLabel ?: "Standard"
+    fun flavor(product: ProductEntity) = product.flavorName ?: "Original"
+
+    val sizes = options.map(::serving).distinct().sortedWith(
+        compareBy<String> { it.substringBefore(' ').toIntOrNull() ?: Int.MAX_VALUE }.thenBy { it }
+    )
+    var selectedSize by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedOptionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var wantsAddOn by rememberSaveable { mutableStateOf(false) }
+    val size = sizes.singleOrNull() ?: selectedSize?.takeIf { it in sizes }
+    val flavors = options.filter { serving(it) == size }.sortedBy(::flavor)
+    val selected = flavors.singleOrNull() ?: flavors.firstOrNull { it.id == selectedOptionId }
+    val stock = selected?.let { availability[it.id] }
+    val withAddOn = addOnsEnabled && wantsAddOn
+    val price = selected?.let { it.priceCents + if (withAddOn) ADD_ON_PRICE_CENTS else 0 }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(options.first().menuGroup ?: options.first().name) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (options.any { it.servingLabel != null }) {
+                    Text("Size", style = MaterialTheme.typography.titleSmall)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        sizes.forEach { label ->
+                            FilterChip(
+                                selected = label == size,
+                                onClick = { selectedSize = label; selectedOptionId = null },
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+                }
+                if (flavors.isNotEmpty() && (flavors.size > 1 || flavors.any { it.flavorName != null })) {
+                    Text("Flavor", style = MaterialTheme.typography.titleSmall)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        flavors.forEach { option ->
+                            FilterChip(
+                                selected = option.id == selected?.id,
+                                onClick = { selectedOptionId = option.id },
+                                label = { Text("${flavor(option)} · ${formatMoney(option.priceCents)}") },
+                            )
+                        }
+                    }
+                }
+                if (addOnsEnabled && selected != null) {
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(
+                            value = wantsAddOn, role = Role.Checkbox, onValueChange = { wantsAddOn = it },
+                        ),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Checkbox(checked = wantsAddOn, onCheckedChange = null)
+                        Text("Add-on · +${formatMoney(ADD_ON_PRICE_CENTS)}")
+                    }
+                }
+                selected?.let {
+                    Text(
+                        menuAvailabilityLabel(stock, it.unitsInStock),
+                        color = if (stock?.additionalPortions == 0) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                error?.let { ErrorMessage(it) }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { selected?.let { onAdd(it, withAddOn) } },
+                enabled = enabled && (stock?.additionalPortions ?: 0) > 0,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) { Text(price?.let { "Add · ${formatMoney(it)}" } ?: "Add to cart") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 internal fun menuAvailabilityLabel(availability: MenuAvailability?, ownStock: Double): String = when {
@@ -354,6 +499,8 @@ private fun OrderAndPaymentSheet(
     error: String?,
     onDecrease: (String) -> Unit,
     onIncrease: (ProductEntity) -> Unit,
+    addOnsEnabled: Boolean,
+    onSetAddOnQuantity: (String, Int) -> Unit,
     canIncrease: (ProductEntity, Int) -> Boolean,
     onClear: () -> Unit,
     onComplete: () -> Unit,
@@ -378,12 +525,34 @@ private fun OrderAndPaymentSheet(
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Column(Modifier.weight(1f)) {
-                            Text(line.product.name, style = MaterialTheme.typography.titleSmall)
+                            Text(line.product.receiptName, style = MaterialTheme.typography.titleSmall)
                             Text(formatMoney(line.lineTotalCents) + " · " + formatMoney(line.product.priceCents) + " each",
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         QuantityStepper(line.quantity, { onDecrease(line.product.id) }, { onIncrease(line.product) },
                             canIncrease = canIncrease(line.product, line.quantity), canDecrease = !busy)
+                    }
+                    if (addOnsEnabled || line.addOnQuantity > 0) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                "Add-on · ${formatMoney(ADD_ON_PRICE_CENTS)} each",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            QuantityStepper(
+                                quantity = line.addOnQuantity,
+                                onDecrease = { onSetAddOnQuantity(line.product.id, line.addOnQuantity - 1) },
+                                onIncrease = { onSetAddOnQuantity(line.product.id, line.addOnQuantity + 1) },
+                                canDecrease = !busy && line.addOnQuantity > 0,
+                                canIncrease = !busy && addOnsEnabled && line.addOnQuantity < line.quantity,
+                                quantityLabel = "add-ons for ${line.product.name}",
+                            )
+                        }
                     }
                     androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }

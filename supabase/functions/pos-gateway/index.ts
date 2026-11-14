@@ -5,12 +5,12 @@ if (!supabaseUrl || !anonKey || !serviceKey) throw new Error('POS verifier confi
 
 const rpcNames = new Set([
   'activate_pos_device', 'get_pos_catalog_revision', 'get_pos_day_closing_counts',
-  'get_pos_inventory_ledger_page_v2', 'get_pos_products', 'get_pos_products_page',
+  'get_pos_inventory_ledger_page_v2', 'get_pos_operating_day_reset', 'get_pos_products', 'get_pos_products_page',
   'get_pos_recipes', 'get_pos_recipes_page', 'get_resumable_pos_day',
-  'login_pos_with_password', 'prepare_pos_replacement', 'push_business_day',
+  'login_pos_with_fingerprint', 'login_pos_with_password', 'prepare_pos_replacement', 'push_business_day',
   'push_daily_store_closing_v2', 'push_pos_inventory_entry_v2', 'push_pos_pack_unseal',
   'push_pos_powder_opening', 'push_pos_sale_reversal', 'push_pos_transaction_v2',
-  'push_revenue_deduction_v2',
+  'push_revenue_deduction_v2', 'renew_pos_session', 'set_pos_fingerprint_credential',
 ])
 const encoder = new TextEncoder()
 const maxBodyBytes = 1024 * 1024
@@ -83,7 +83,7 @@ Deno.serve(async (request) => {
   const signature = headers.get('x-pos-signature') ?? ''
   const timestamp = headers.get('x-pos-timestamp') ?? ''
   const nonce = headers.get('x-pos-nonce') ?? ''
-  const login = path === '/rpc/login_pos_with_password'
+  const login = path === '/rpc/login_pos_with_password' || path === '/rpc/login_pos_with_fingerprint'
   if (!/^[0-9a-f]{1,16}$/.test(hardware) || (login ? token !== '' : !/^[0-9a-f]{64}$/.test(token)) ||
     !/^[A-Za-z0-9+/]{100,148}={0,2}$/.test(publicKey) || !/^[A-Za-z0-9+/]{80,100}={0,2}$/.test(signature) ||
     !/^\d{10}$/.test(timestamp) || Math.abs(Date.now() / 1000 - Number(timestamp)) > 90 ||

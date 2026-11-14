@@ -5,6 +5,8 @@ import com.icecreampost.pos.data.local.dao.SessionDao
 import com.icecreampost.pos.data.local.dao.TransactionDao
 import com.icecreampost.pos.data.local.dao.DailyStoreClosingDao
 import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
+import com.icecreampost.pos.data.local.dao.ProductDao
+import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.dao.RevenueDeductionDao
 import com.icecreampost.pos.data.local.dao.SaleReversalDao
 import com.icecreampost.pos.data.local.database.CoolerzDatabase
@@ -12,9 +14,15 @@ import androidx.room.withTransaction
 import com.icecreampost.pos.data.local.entity.AppSessionEntity
 import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.data.local.entity.DailyStoreClosingEntity
+import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
+import com.icecreampost.pos.data.local.entity.ProductEntity
+import com.icecreampost.pos.data.local.entity.SyncStateEntity
+import com.icecreampost.pos.domain.model.CLOSING_COUNTS_CATALOG
+import com.icecreampost.pos.domain.model.ClosingStockCount
 import com.icecreampost.pos.sync.SyncTrigger
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.mockkStatic
@@ -37,6 +45,8 @@ class BusinessDayRepositoryTest {
     private val database = mockk<CoolerzDatabase>()
     private val closingDao = mockk<DailyStoreClosingDao>(relaxed = true)
     private val ledgerDao = mockk<InventoryLedgerDao>()
+    private val productDao = mockk<ProductDao>(relaxed = true)
+    private val syncStateDao = mockk<SyncStateDao>()
     private val deductionDao = mockk<RevenueDeductionDao>(relaxed = true)
     private val reversalDao = mockk<SaleReversalDao>(relaxed = true)
     private lateinit var repository: BusinessDayRepository
@@ -53,6 +63,10 @@ class BusinessDayRepositoryTest {
     @Before
     fun setUp() {
         coEvery { sessionDao.getCurrent() } returns session
+        every { database.productDao() } returns productDao
+        every { database.syncStateDao() } returns syncStateDao
+        coEvery { productDao.findClosingStockItems("stall-1") } returns emptyList()
+        coEvery { syncStateDao.find(CLOSING_COUNTS_CATALOG) } returns SyncStateEntity(CLOSING_COUNTS_CATALOG, "")
         mockkStatic("androidx.room.RoomDatabaseKt")
         coEvery { database.withTransaction<Unit>(any()) } coAnswers { secondArg<suspend () -> Unit>().invoke() }
         coEvery { transactionDao.getCompletedCogsBetween(any(), any(), any()) } returns 0
@@ -62,6 +76,69 @@ class BusinessDayRepositoryTest {
         coEvery { deductionDao.totalForDay(any()) } returns 0
         coEvery { deductionDao.profitAffectingTotalForDay(any()) } returns 0
         repository = BusinessDayRepository(businessDayDao, transactionDao, sessionDao, syncTrigger, database, closingDao, ledgerDao, deductionDao, reversalDao)
+    }
+
+    @Test
+    fun `closing saves the physical targets and queues matching and zero counts`() = runTest {
+        val day = BusinessDayEntity("day-1", "stall-1", "device-1", "cashier-1",
+            "2026-11-14", "2026-11-14T01:00:00Z", updatedAt = "2026-11-14T01:00:00Z")
+        val cups = ProductEntity("cups", "stall-1", name = "Cups", category = "Packaging",
+            priceCents = 0, isSellable = false, productType = "packaging", unitsInStock = 24.0,
+            updatedAt = day.openedAt, countAtClosing = true)
+        val powder = cups.copy(id = "powder", name = "Vanilla powder", productType = "raw",
+            baseUnit = "g", unitsInStock = 2500.0, tracksPowderPacks = true, packSize = 1000.0)
+        val sprite = cups.copy(id = "sprite", name = "Sprite", productType = "raw", unitsInStock = 10.0)
+        val saved = slot<List<InventoryLedgerEntity>>()
+        val closed = slot<DailyStoreClosingEntity>()
+        coEvery { businessDayDao.findOpen(day.stallId) } returns day
+        coEvery { businessDayDao.upsert(any()) } returns Unit
+        coEvery { productDao.findClosingStockItems(day.stallId) } returns listOf(cups, powder, sprite)
+        coEvery { ledgerDao.getSealedPacks(powder.id) } returns 2
+        coEvery { syncStateDao.find(CLOSING_COUNTS_CATALOG) } returns SyncStateEntity(CLOSING_COUNTS_CATALOG, "revision-1")
+        coEvery { transactionDao.getCompletedTotalBetween(any(), any(), any()) } returns 0
+        coEvery { ledgerDao.upsertAll(capture(saved)) } returns Unit
+        coEvery { closingDao.upsert(capture(closed)) } returns Unit
+
+        repository.closeDay(businessDayId = day.id, stockCounts = mapOf(
+            cups.id to ClosingStockCount(24.0, "piece"),
+            powder.id to ClosingStockCount(1.0, "pack"),
+            sprite.id to ClosingStockCount(0.0, "piece"),
+        ))
+
+        assertEquals("revision-1", closed.captured.stockCountRevisionId)
+        val byProduct = saved.captured.associateBy { it.productId }
+        assertEquals(0.0, byProduct.getValue(cups.id).quantityDelta, 0.0)
+        assertEquals(-1500.0, byProduct.getValue(powder.id).quantityDelta, 0.0)
+        assertEquals(-1, byProduct.getValue(powder.id).sealedPacksDelta)
+        assertEquals(0.0, byProduct.getValue(sprite.id).countedQuantity!!, 0.0)
+        assertEquals(listOf(closed.captured.closedAt), saved.captured.map { it.occurredAt }.distinct())
+        assertEquals(0L, closed.captured.wasteCostCents)
+        coVerify {
+            productDao.updateStock(cups.id, 24.0, closed.captured.closedAt)
+            productDao.updateStock(powder.id, 1000.0, closed.captured.closedAt)
+            productDao.updateStock(sprite.id, 0.0, closed.captured.closedAt)
+        }
+    }
+
+    @Test
+    fun `closing leaves the day open when a required count is missing`() = runTest {
+        val day = BusinessDayEntity("day-1", "stall-1", "device-1", "cashier-1",
+            "2026-11-14", "2026-11-14T01:00:00Z", updatedAt = "2026-11-14T01:00:00Z")
+        val cups = ProductEntity("cups", "stall-1", name = "Cups", category = "Packaging",
+            priceCents = 0, isSellable = false, productType = "packaging", unitsInStock = 24.0,
+            updatedAt = day.openedAt, countAtClosing = true)
+        coEvery { businessDayDao.findOpen(day.stallId) } returns day
+        coEvery { productDao.findClosingStockItems(day.stallId) } returns listOf(cups)
+        coEvery { syncStateDao.find(CLOSING_COUNTS_CATALOG) } returns SyncStateEntity(CLOSING_COUNTS_CATALOG, "revision-1")
+
+        val failure = runCatching { repository.closeDay(businessDayId = day.id) }.exceptionOrNull()
+
+        assertEquals("The closing stock list changed. Review the counts and try again.", failure?.message)
+        coVerify(exactly = 0) {
+            productDao.updateStock(any(), any(), any())
+            businessDayDao.upsert(any())
+            closingDao.upsert(any())
+        }
     }
 
     @Test

@@ -75,7 +75,7 @@ class CheckoutRepositoryTest {
         )
         coEvery { recipeDao.findForParents(any()) } returns emptyList()
         coEvery { stateDao.find("catalog-revision:device-1") } returns SyncStateEntity(
-            key = "catalog-revision:device-1", value = "revision-1", cursorUpdatedAt = "2099-01-01T00:00:00Z",
+            key = "catalog-revision:device-1", value = "revision-1", cursorUpdatedAt = "2099-01-01T00:00:00.478915+00:00",
         )
         repository = CheckoutRepository(
             database, productDao, transactionDao, ledgerDao, sessionDao, businessDayDao,
@@ -100,6 +100,39 @@ class CheckoutRepositoryTest {
         assertEquals("LOCAL-1", receipt?.transaction?.receiptNumber)
         assertEquals(listOf(item), receipt?.items)
         coVerify(exactly = 1) { transactionDao.getItems("sale-1") }
+    }
+
+    @Test
+    fun `add-on charges only the selected servings and deducts normal stock`() = runTest {
+        coEvery { productDao.findById(cartProduct.id) } returns cartProduct
+        coEvery { stateDao.find("catalog-revision:device-1") } returns SyncStateEntity(
+            key = "catalog-revision:device-1", value = "revision-1",
+            cursorUpdatedAt = "2099-01-01T00:00:00Z", status = "success_with_add_ons",
+        )
+
+        val receipt = repository.checkout(listOf(CartLine(cartProduct, 3, addOnQuantity = 1)), 7_000, checkoutId)
+
+        assertEquals(6_500L, receipt.subtotalCents)
+        assertEquals(500L, receipt.changeAmountCents)
+        coVerify(exactly = 1) { productDao.updateStock(cartProduct.id, 7.0, any()) }
+        coVerify(exactly = 1) {
+            transactionDao.upsertItems(match { items ->
+                items.size == 2 &&
+                    items.all { it.productId == cartProduct.id } &&
+                    items.any { it.productName == "Vanilla" && it.quantity == 2.0 && it.lineTotalCents == 4_000L } &&
+                    items.any { it.productName == "Vanilla + Add-on" && it.quantity == 1.0 && it.lineTotalCents == 2_500L }
+            })
+        }
+    }
+
+    @Test
+    fun `add-on checkout is blocked before the catalog confirms support`() {
+        val failure = assertThrows(IllegalStateException::class.java) {
+            runTest { repository.checkout(listOf(CartLine(cartProduct, 1, addOnQuantity = 1)), 2_500, checkoutId) }
+        }
+        assertEquals("Sync the sales catalog to sell add-ons.", failure.message)
+        coVerify(exactly = 0) { transactionDao.upsert(any()) }
+        coVerify(exactly = 0) { productDao.updateStock(any(), any(), any()) }
     }
 
     @Test

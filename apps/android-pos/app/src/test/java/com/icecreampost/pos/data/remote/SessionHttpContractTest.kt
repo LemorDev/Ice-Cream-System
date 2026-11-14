@@ -15,6 +15,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
 import org.junit.Assert.*
 import org.junit.Test
 import retrofit2.Retrofit
@@ -35,6 +36,12 @@ class SessionHttpContractTest {
                     "device_id":${if (activated) "\"device\"" else "null"},"is_activated":$activated
                 }]""" else """{"code":"28000","message":"INVALID_CREDENTIALS"}"""
                 "get_resumable_pos_day" -> recoveryBody
+                "renew_pos_session" -> {
+                    assertEquals("test-token", request.header("X-Session-Token"))
+                    val body = Buffer().apply { requireNotNull(request.body).writeTo(this) }.readUtf8()
+                    assertEquals("{}", body)
+                    "\"2099-01-01T12:00:00Z\""
+                }
                 else -> error("Unexpected test endpoint: $endpoint")
             }
             Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
@@ -54,7 +61,11 @@ class SessionHttpContractTest {
         coEvery { sessions.getCurrent() } returns null
         coEvery { states.find("device-stall") } returns null
         coEvery { states.findPersistedStallIds() } returns emptyList()
-        return SessionRepository(sessions, api, tokens, mockk<DeviceIdentity>(), days, states, mockk(relaxed = true))
+        val identity = mockk<DeviceIdentity> { every { id } returns "test-hardware" }
+        val credentials = mockk<com.icecreampost.pos.security.PosCredentialVault>(relaxed = true) {
+            every { readOfflineCashier() } returns null
+        }
+        return SessionRepository(sessions, api, tokens, identity, days, states, credentials)
     }
 
     @Test fun `registered cashier signs in when resumable day endpoint returns JSON null`() = runTest {
@@ -75,6 +86,11 @@ class SessionHttpContractTest {
         assertEquals("day", recovery?.id)
         assertEquals(2, recovery?.knownOrders)
         assertEquals(90.0, recovery?.knownSales)
+    }
+
+    @Test fun `renewal sends a JSON RPC body and decodes the updated expiry`() = runTest {
+        assertEquals("2099-01-01T12:00:00Z", api().renewPosSession("test-token"))
+        assertEquals(listOf("renew_pos_session"), requests)
     }
 
     @Test fun `a cashier without activation does not request recovery`() = runTest {

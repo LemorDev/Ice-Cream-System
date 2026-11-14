@@ -73,6 +73,7 @@ export async function loadWorkspace(client: DbClient, stallId: string): Promise<
     daily_store_closings: DailyStoreClosing[]; revenue_deductions: RevenueDeduction[];
     sale_reversals: SaleReversal[];
     closed_day_corrections: ClosedDayCorrection[];
+    archived_business_dates?: Record<string, string>;
   }
   const stallResult = { data: snapshot.stall, error: null }
   const categoryResult = { data: snapshot.categories, error: null }
@@ -99,6 +100,7 @@ export async function loadWorkspace(client: DbClient, stallId: string): Promise<
 
   const rawStall = throwIfError(stallResult) as Stall
   const businessDateById = new Map(throwIfError(businessDayResult).map((day) => [day.id, day.business_date]))
+  for (const [id, date] of Object.entries(snapshot.archived_business_dates ?? {})) businessDateById.set(id, date)
   const businessDateFor = (dayId: string | null | undefined, occurredAt: string) => {
     if (!dayId) return getBusinessDateKey(occurredAt)
     const date = businessDateById.get(dayId)
@@ -132,6 +134,7 @@ export async function loadWorkspace(client: DbClient, stallId: string): Promise<
       ...entry,
       quantity_delta: Number(entry.quantity_delta),
       sealed_packs_delta: Number(entry.sealed_packs_delta ?? 0),
+      counted_quantity: entry.counted_quantity == null ? null : Number(entry.counted_quantity),
       unit_cost: entry.unit_cost == null ? null : Number(entry.unit_cost),
       business_date: businessDateFor(entry.business_day_id, entry.occurred_at),
     })) as InventoryEntry[], 'occurred_at'),
@@ -292,6 +295,10 @@ export async function saveProductWithRecipe(
   productId?: string,
   requestId?: string,
 ) {
+  if (values.menu_group) {
+    const { error } = await client.from('products').select('menu_group,serving_type,serving_size').eq('stall_id', values.stall_id).limit(1)
+    if (error) throw new Error('Could not verify POS menu options. Check the connection and confirm the menu options migration is applied.')
+  }
   if (!productId && requestId) {
     return submitImsChange<Product>(client, requestId, values.stall_id, 'create_product', { product: values, recipe })
   }
@@ -329,13 +336,19 @@ export async function setStockOnHand(client: DbClient, stallId: string, productI
 }
 
 export type DataResetResult = {
-  scope: 'operating_history' | 'stock'
+  scope: 'operating_history' | 'operating_day' | 'stock'
   affected_records: number
   affected_operating_days?: number
 }
 
 export async function resetTransactionsAndRevenue(client: DbClient, stallId: string) {
   return throwIfError(await client.rpc('reset_stall_transactions', { p_stall_id: stallId })) as DataResetResult
+}
+
+export async function resetClosedOperatingDay(client: DbClient, stallId: string, businessDayId: string) {
+  return throwIfError(await client.rpc('reset_closed_operating_day', {
+    p_stall_id: stallId, p_business_day_id: businessDayId,
+  })) as DataResetResult
 }
 
 export async function resetStockLevels(client: DbClient, stallId: string) {

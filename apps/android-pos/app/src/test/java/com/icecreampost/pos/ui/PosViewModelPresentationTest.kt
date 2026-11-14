@@ -39,11 +39,12 @@ class PosViewModelPresentationTest {
     @Before fun setup() {
         Dispatchers.setMain(StandardTestDispatcher())
         every { sessions.observeSession() } returns flowOf(null)
-        coEvery { sessions.restoreStoredSession() } returns null
+        coEvery { sessions.restoreStoredSession(allowExpiredForOfflineWork = true) } returns null
         every { products.observeProducts() } returns catalog
         every { products.observeRecipes() } returns recipes
         every { checkout.observeTransactions() } returns flowOf(emptyList())
         every { state.observe(any()) } returns flowOf(null)
+        every { sync.observeSyncState() } returns flowOf(null)
         every { days.observeLatest() } returns flowOf(null)
         every { days.observeDeductions() } returns flowOf(emptyList())
         every { reversals.observeAll() } returns flowOf(emptyList())

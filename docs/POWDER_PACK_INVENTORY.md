@@ -5,10 +5,16 @@ In IMS, edit each ice cream powder product and enable **Deduct powder when opene
 ## Daily use
 
 1. Receive powder in whole packs. Two packs add two sealed packs to stock.
-2. On the POS, open **Inventory**, choose **Open Powder Pack** on the powder product, enter the number of packs opened, and select **Record opening**. Each opening deducts one sealed pack and its configured stock quantity. The opening books the pack cost to the operating day.
+2. On the POS, open **Inventory → Daily inventory → Record powder opening**, select the powder, and enter the number of packs opened. Select **Record opening** to deduct the packs and book their cost to the operating day. Daily inventory lists powder openings and stock receipts with their sync status.
 3. Ring up cones and cups as usual. Checkout deducts packaging and any other automatically consumed ingredients. IMS shows powder openings separately from sales usage in daily reconciliation.
 
 The POS saves openings offline and syncs them with stable IDs. IMS shows the new stock after sync.
+
+## Closing stock count
+
+In **IMS → Products**, enable **Require a physical count when the cashier closes the POS** for each stock item to audit. The migration enables this for matching existing cup and cone sizes, vanilla and ube powder, and Sprite and Coke stock records. Add missing drinks as raw stock items with **Piece** as the base unit. If a drink is sold through a menu item, link that stock item as its recipe ingredient so sales deduct it.
+
+After the last sale, select **Inventory → Daily inventory → Count stock and close** on the POS. Enter what is physically left for each item, including zero when it has run out. For powder with pack tracking enabled, count unopened packs. Review the differences and confirm the close. The POS saves the counts and closing together. **Daily Close & Profit → Inventory reconciliation** in IMS shows the saved counts and differences after sync.
 
 ## Switch an existing stall
 

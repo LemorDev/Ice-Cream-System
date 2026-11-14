@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createClient } from '@supabase/supabase-js'
-import { addInventoryEntry, archiveCategory, archiveProduct, getOverheadForStall, getTransactionReceiptItems, resetStockLevels, resetTransactionsAndRevenue, saveProductWithRecipe, setPowderSealedPacks, setStockOnHand, updateStall, uploadProductImage, validateProductImage } from './api.ts'
+import { addInventoryEntry, archiveCategory, archiveProduct, getOverheadForStall, getTransactionReceiptItems, resetClosedOperatingDay, resetStockLevels, resetTransactionsAndRevenue, saveProductWithRecipe, setPowderSealedPacks, setStockOnHand, updateStall, uploadProductImage, validateProductImage } from './api.ts'
 
 test('product save keeps POS category separate from flavor for catalog sync', async () => {
   let request: { url: string; body: { p_product: { category_id: string; sell_category: string } } } | undefined
@@ -42,6 +42,25 @@ test('product save stops before mutation when the POS category migration is miss
     pack_size: 1, conversion_rate: 1, is_sellable: true, product_type: 'sellable', base_unit: 'piece',
   }, []), /POS categories are not ready/)
   assert.equal(requests, 1)
+})
+
+test('creating a priced POS variant requires its catalog columns before saving', async () => {
+  const requests: string[] = []
+  const client = createClient('https://example.invalid', 'test-key', {
+    auth: { persistSession: false },
+    global: { fetch: async (input) => {
+      requests.push(String(input))
+      return Response.json({ message: 'column products.menu_group does not exist' }, { status: 400 })
+    } },
+  })
+  await assert.rejects(saveProductWithRecipe(client, {
+    stall_id: 'stall-1', category_id: 'oreo', sell_category: 'Cup', name: 'Oreo 12 oz',
+    menu_group: 'Soft Serve', serving_type: 'cup', serving_size: '12 oz',
+    unit: 'piece', sale_price: 80, cost_price: 10, low_stock_threshold: 0,
+    pack_size: 1, conversion_rate: 1, is_sellable: true, product_type: 'sellable', base_unit: 'piece',
+  }, [], undefined, 'variant-1'), /Could not verify POS menu options/)
+  assert.equal(requests.length, 1)
+  assert.match(requests[0], /products\?/)
 })
 
 test('new products, deliveries and sealed counts send their request IDs with the same payload on retry', async () => {
@@ -159,6 +178,19 @@ test('data reset actions call their protected stall RPCs', async () => {
   assert.match(requests[1].url, /reset_stall_stock/)
   assert.deepEqual(requests.map((request) => request.body), [{ p_stall_id: 'stall-1' }, { p_stall_id: 'stall-1' }])
   assert.deepEqual(historyResult, { scope: 'operating_history', affected_records: 3, affected_operating_days: 2 })
+})
+
+test('operating-day reset addresses the confirmed stall and day', async () => {
+  const result = { scope: 'operating_day', affected_records: 1 }
+  const client = createClient('https://example.invalid', 'test-key', {
+    auth: { persistSession: false },
+    global: { fetch: async (input, init) => {
+      assert.match(String(input), /\/rpc\/reset_closed_operating_day$/)
+      assert.deepEqual(JSON.parse(String(init?.body)), { p_stall_id: 'stall-1', p_business_day_id: 'closed-day-1' })
+      return Response.json(result)
+    } },
+  })
+  assert.deepEqual(await resetClosedOperatingDay(client, 'stall-1', 'closed-day-1'), result)
 })
 
 test('a failed overhead update is reported instead of falling back to a partial save', async () => {

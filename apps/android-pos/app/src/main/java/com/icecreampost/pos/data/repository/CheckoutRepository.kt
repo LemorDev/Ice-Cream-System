@@ -2,6 +2,7 @@ package com.icecreampost.pos.data.repository
 
 import androidx.room.withTransaction
 import com.icecreampost.pos.core.logging.AppLogger
+import com.icecreampost.pos.core.time.parsePosTimestamp
 import com.icecreampost.pos.data.local.dao.InventoryLedgerDao
 import com.icecreampost.pos.data.local.dao.ProductDao
 import com.icecreampost.pos.data.local.dao.TransactionDao
@@ -14,6 +15,9 @@ import com.icecreampost.pos.data.local.entity.InventoryLedgerEntity
 import com.icecreampost.pos.data.local.entity.TransactionEntity
 import com.icecreampost.pos.data.local.entity.TransactionItemEntity
 import com.icecreampost.pos.domain.model.CartLine
+import com.icecreampost.pos.domain.model.receiptName
+import com.icecreampost.pos.domain.model.ADD_ON_CATALOG_STATUS
+import com.icecreampost.pos.domain.model.ADD_ON_PRICE_CENTS
 import com.icecreampost.pos.sync.SyncTrigger
 import kotlinx.coroutines.flow.Flow
 import java.time.Instant
@@ -76,7 +80,25 @@ class CheckoutRepository @Inject constructor(
         require(!resolvedDeviceId.isNullOrBlank()) { "This POS has not been activated." }
         val transactionId = checkoutId.toString()
         val receiptNumber = "LOCAL-${transactionId.uppercase()}"
-        val subtotalCents = lines.sumOf { it.lineTotalCents }
+        val now = Instant.now().toString()
+        val items = lines.flatMap { line ->
+            listOf(false, true).mapNotNull { withAddOn ->
+                val quantity = if (withAddOn) line.addOnQuantity else line.quantity - line.addOnQuantity
+                if (quantity == 0) return@mapNotNull null
+                val unitPrice = line.product.priceCents + if (withAddOn) ADD_ON_PRICE_CENTS else 0L
+                TransactionItemEntity(
+                    id = UUID.randomUUID().toString(),
+                    transactionId = transactionId,
+                    productId = line.product.id,
+                    productName = if (withAddOn) "${line.product.receiptName} + Add-on" else line.product.receiptName,
+                    quantity = quantity.toDouble(),
+                    unitPriceCents = unitPrice,
+                    lineTotalCents = unitPrice * quantity,
+                    updatedAt = now,
+                )
+            }
+        }
+        val subtotalCents = items.sumOf { it.lineTotalCents }
         require(cashReceivedCents >= subtotalCents) { "Cash received is less than the total." }
 
         val receipt = database.withTransaction {
@@ -84,8 +106,8 @@ class CheckoutRepository @Inject constructor(
             if (existing != null) {
                 val savedLines = transactionDao.getItems(transactionId)
                     .groupingBy { Triple(it.productId, it.quantity, it.unitPriceCents) }.eachCount()
-                val requestedLines = lines
-                    .groupingBy { Triple(it.product.id, it.quantity.toDouble(), it.product.priceCents) }.eachCount()
+                val requestedLines = items
+                    .groupingBy { Triple(it.productId, it.quantity, it.unitPriceCents) }.eachCount()
                 check(existing.stallId == resolvedStallId && existing.deviceId == resolvedDeviceId &&
                     existing.cashierId == resolvedCashierId && existing.deletedAt == null &&
                     existing.cashReceivedCents == cashReceivedCents && existing.subtotalCents == subtotalCents &&
@@ -95,10 +117,12 @@ class CheckoutRepository @Inject constructor(
                 return@withTransaction existing.toCheckoutReceipt()
             }
 
-            val now = Instant.now().toString()
             val revision = syncStateDao.find("catalog-revision:$resolvedDeviceId")
-            check(revision != null && revision.cursorUpdatedAt?.let { Instant.parse(it).isAfter(Instant.now()) } == true) {
+            check(revision != null && revision.cursorUpdatedAt?.let { parsePosTimestamp(it).isAfter(Instant.now()) } == true) {
                 "Sync the sales catalog before starting another sale."
+            }
+            check(lines.none { it.addOnQuantity > 0 } || revision?.status == ADD_ON_CATALOG_STATUS) {
+                "Sync the sales catalog to sell add-ons."
             }
             val openDay = requireNotNull(businessDayDao.findOpen(resolvedStallId)) {
                 "Open the operating day before starting a sale."
@@ -173,18 +197,7 @@ class CheckoutRepository @Inject constructor(
             )
             transactionDao.upsert(sale)
 
-            transactionDao.upsertItems(lines.map { line ->
-                TransactionItemEntity(
-                    id = UUID.randomUUID().toString(),
-                    transactionId = transactionId,
-                    productId = line.product.id,
-                    productName = line.product.name,
-                    quantity = line.quantity.toDouble(),
-                    unitPriceCents = line.product.priceCents,
-                    lineTotalCents = line.lineTotalCents,
-                    updatedAt = now,
-                )
-            })
+            transactionDao.upsertItems(items)
 
             inventoryLedgerDao.upsertAll(usage.map { (productId, quantity) ->
                 InventoryLedgerEntity(

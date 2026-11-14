@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 const schemaRoot = 'apps/android-pos/app/schemas/com.icecreampost.pos.data.local.database.CoolerzDatabase';
 const source = await readFile('apps/android-pos/app/src/main/java/com/icecreampost/pos/data/local/database/CoolerzDatabase.kt', 'utf8');
-const target = JSON.parse(await readFile(`${schemaRoot}/17.json`, 'utf8')).database;
+const target = JSON.parse(await readFile(`${schemaRoot}/19.json`, 'utf8')).database;
 const samples = {
   business_days: { id: 'day', stallId: 'stall', deviceId: 'device', cashierId: 'cashier', businessDate: '2026-10-12', openedAt: '2026-10-12T00:00:00Z', closedAt: null },
   products: { id: 'powder', stallId: 'stall', name: 'Powder fixture', category: 'Ingredients', productType: 'raw', baseUnit: 'g', unit: 'g', isSellable: 0, packSize: 1000, conversionRate: 1, unitsInStock: 2500 },
@@ -32,7 +32,7 @@ function migrationSql(from, to) {
   return calls.map((match) => JSON.parse(`"${match[1]}"`));
 }
 
-for (const scenario of [3, 4, 11, 12, 13, 14, 15, 16, 'cloud4']) {
+for (const scenario of [3, 4, 11, 12, 13, 14, 15, 16, 17, 18, 'cloud4']) {
   const cloud = scenario === 'cloud4';
   const startingVersion = cloud ? 3 : scenario;
   const db = new DatabaseSync(':memory:');
@@ -72,7 +72,7 @@ for (const scenario of [3, 4, 11, 12, 13, 14, 15, 16, 'cloud4']) {
       }
       version = 15;
     }
-    for (; version < 17; version++) for (const sql of migrationSql(version, version + 1)) db.exec(sql);
+    for (; version < 19; version++) for (const sql of migrationSql(version, version + 1)) db.exec(sql);
     db.exec('COMMIT');
     for (const entity of target.entities) {
       const columns = db.prepare(`PRAGMA table_info("${entity.tableName}")`).all();
@@ -87,7 +87,7 @@ for (const scenario of [3, 4, 11, 12, 13, 14, 15, 16, 'cloud4']) {
     }
     for (const [table, original] of before) {
       const actual = db.prepare(`SELECT * FROM "${table}"`).get();
-      if (table === 'app_session') {
+      if (table === 'app_session' && startingVersion < 17) {
         assert.equal(actual, undefined, 'Legacy bearer survived upgrade');
         assert.equal(db.prepare("SELECT value FROM sync_state WHERE key='device-stall'").get().value, original.stallId);
         continue;
@@ -100,7 +100,10 @@ for (const scenario of [3, 4, 11, 12, 13, 14, 15, 16, 'cloud4']) {
     assert.equal(db.prepare('SELECT businessDayId FROM inventory_ledger').get().businessDayId, 'day');
     assert.equal(db.prepare('SELECT catalogRevisionId FROM transactions').get().catalogRevisionId, null);
     assert.equal(db.prepare('SELECT catalogCostPrice FROM products').get().catalogCostPrice, null);
-    console.log(`PASS: Room ${cloud ? 'cloud version 4' : startingVersion}→17 preserves queued sale, stock, operating day, stall and photo while removing the legacy session`);
+    assert.equal(db.prepare('SELECT countAtClosing FROM products').get().countAtClosing, 0);
+    assert.equal(db.prepare('SELECT countedQuantity FROM inventory_ledger').get().countedQuantity, null);
+    assert.equal(db.prepare('SELECT menuGroup FROM products').get().menuGroup, null);
+    console.log(`PASS: Room ${cloud ? 'cloud version 4' : startingVersion}→19 preserves queued sale, stock, operating day, stall and photo`);
   } finally { db.close(); }
 }
 

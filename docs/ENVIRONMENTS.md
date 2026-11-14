@@ -2,9 +2,9 @@
 
 ## Current safety status
 
-This workspace uses only Supabase development project `fhyqrgxwdqlyzxsnpthr`. Production project `hdtizzdrbscchvqwcpkb` is retained with its data, but its credentials are disconnected locally. Development credentials are stored only in ignored local files and must not be committed.
+Local development uses Supabase project `fhyqrgxwdqlyzxsnpthr`. The new production target is `rldsdzdlbxedjyqkvcpq`, created on 5 November 2026 for the real-sales release. The previous target `hdtizzdrbscchvqwcpkb` contains old test records, as confirmed by the user; it must not be used as the production migration target. Production credentials remain disconnected from development builds. Client keys belong only in ignored local files or the corresponding hosting environment.
 
-The source labels the connected environment in IMS and POS. The old production URL remains only as a safety comparison: development IMS and Android builds reject that endpoint. It is not a connection and does not need a production key. Production build support and example templates remain dormant for possible future use.
+The source labels the connected environment in IMS and POS. Set `VITE_SUPABASE_PRODUCTION_URL` and Android's `supabase.production.url` to the new production URL for the development isolation checks. This comparison does not need a production key. The development Cloudflare Pages project's comparison variable must also use the new URL; its actual Supabase URL/key remain development values. Configure real production client keys separately only when preparing that release.
 
 ## Current source version
 
@@ -28,6 +28,52 @@ Install an update over the existing app. Do not uninstall it to update: uninstal
 
 An in-place update requires the same application ID and signing certificate as the installed copy. Keep the development signing key consistent between dev updates. Before changing package identity or signing, sync the POS and confirm the pending queue is empty. If the phone is already uninstalled, use the IMS device-recovery flow; data that existed only on that phone cannot be reconstructed from Supabase.
 
+### In-app APK updates
+
+Set `pos.dev.updateManifestUrl` and `pos.production.updateManifestUrl` in the corresponding build's `apps/android-pos/local.properties`. Each value is the stable HTTPS URL for that package's release manifest. The phone needs HTTPS access to both the manifest and APK. Use a versioned APK URL and publish the manifest after the APK is available.
+
+Build and install the first updater-enabled APK over the existing POS using its signing key. For each subsequent release, increment `versionCode` and sign with the same key. The development manifest uses the following fields.
+
+```json
+{
+  "applicationId": "com.icecreampost.pos.dev",
+  "versionCode": 6,
+  "versionName": "0.1.5-dev",
+  "apkUrl": "https://updates.example.invalid/dev/coolerz-pos-0.1.5-dev.apk",
+  "sha256": "<64-character SHA-256 of the signed APK>"
+}
+```
+
+Use `com.icecreampost.pos` for the production channel and the exact version and hash of its signed APK. Use `(Get-FileHash -LiteralPath $apkPath -Algorithm SHA256).Hash.ToLowerInvariant()` to compute the hash. The POS checks for updates after activation and shows available releases in **More → App updates**. Select **Download and install** and confirm in Android. Android may first ask you to allow the POS as an installation source. [Android app update requirements](https://developer.android.com/google/play/app-updates)
+
 ## Reset workflow
 
 Use the IMS reset actions only in the environment banner that says **DEVELOPMENT DATABASE**. Production resets are for an explicitly planned operational reset; they are not part of updating an APK. The production screen is labeled and requires the selected stall code in the confirmation phrase.
+
+For a same-date UAT rerun, close the stall and confirm sync on the POS. In IMS, select **Data reset → Today’s operating day → Reset today’s operating day**. Back on the POS, select **More → Operating day → Sync operating day** and open the stall again. The reset archives the closing in the security audit log and keeps the sales and inventory ledger available.
+
+### Backend setup for the UAT changes
+
+Run these commands from the repository root to confirm the linked project and preview the pending migrations.
+
+```powershell
+if ((Get-Content -LiteralPath 'supabase/.temp/project-ref' -Raw).Trim() -ne 'fhyqrgxwdqlyzxsnpthr') {
+    throw 'Link the development Supabase project before continuing.'
+}
+pnpm exec supabase migration list --linked
+pnpm exec supabase db push --dry-run
+```
+
+Review all pending migration files, including `202611110001_pos_fingerprint_sign_in.sql` and `202611110002_reset_closed_operating_day.sql`. The following commands apply the reviewed set, verify the history, and deploy the matching POS gateway.
+
+```powershell
+pnpm exec supabase db push
+pnpm exec supabase migration list --linked
+pnpm exec supabase functions deploy pos-gateway --project-ref fhyqrgxwdqlyzxsnpthr
+```
+
+After updating the POS, sign in online with the cashier password once on each activated phone to set up offline password sign-in. On a new phone, complete activation and sync the product catalog before going offline.
+
+Use **Open today's stall** to verify the cashier at the start of an operating day. An open day resumes when you return to the app. Use **More → Settings → Fingerprint login → Lock POS** to lock it manually. You can unlock with the saved cashier password or an enrolled fingerprint.
+
+The POS queues records while offline. If you signed out and signed back in offline, use **More → Sync status → Reconnect sync** with the cashier password once the phone is online.

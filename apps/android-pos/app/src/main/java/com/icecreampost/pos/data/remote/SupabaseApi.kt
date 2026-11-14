@@ -4,12 +4,14 @@ import com.icecreampost.pos.data.remote.dto.ProductDto
 import com.icecreampost.pos.data.remote.dto.PosCatalogRevisionDto
 import com.icecreampost.pos.data.remote.dto.LoginRequest
 import com.icecreampost.pos.data.remote.dto.LoginResponse
+import com.icecreampost.pos.data.remote.dto.FingerprintCredentialRequest
 import com.icecreampost.pos.data.remote.dto.ActivateDeviceRequest
 import com.icecreampost.pos.data.remote.dto.ActivateDeviceResponse
 import com.icecreampost.pos.data.remote.dto.PrepareReplacementRequest
 import com.icecreampost.pos.data.remote.dto.PrepareReplacementResponse
 import com.icecreampost.pos.data.remote.dto.RecoveredDayResponse
 import com.icecreampost.pos.data.remote.dto.RecoveredDayRequest
+import com.icecreampost.pos.data.remote.dto.OperatingDayResetRequest
 import com.icecreampost.pos.data.remote.dto.InventoryLedgerDto
 import com.icecreampost.pos.data.remote.dto.PushTransactionPayload
 import com.icecreampost.pos.data.remote.dto.PushTransactionResponse
@@ -42,8 +44,20 @@ interface SupabaseApi {
     @POST("rest/v1/rpc/login_pos_with_password")
     suspend fun login(@Body request: LoginRequest): List<LoginResponse>
 
+    @POST("rest/v1/rpc/login_pos_with_fingerprint")
+    suspend fun loginWithFingerprint(@Body request: FingerprintCredentialRequest): List<LoginResponse>
+
+    @POST("rest/v1/rpc/set_pos_fingerprint_credential")
+    suspend fun setFingerprintCredential(@Body request: FingerprintCredentialRequest): Boolean
+
     @POST("rest/v1/rpc/revoke_app_session")
     suspend fun revokeSession(@Header("X-Session-Token") token: String)
+
+    @POST("rest/v1/rpc/renew_pos_session")
+    suspend fun renewPosSession(
+        @Header("X-Session-Token") token: String,
+        @Body args: Map<String, String> = emptyMap(),
+    ): String
 
     @POST("rest/v1/rpc/activate_pos_device")
     suspend fun activateDevice(@Body request: ActivateDeviceRequest): ActivateDeviceResponse
@@ -53,6 +67,9 @@ interface SupabaseApi {
 
     @POST("rest/v1/rpc/get_resumable_pos_day")
     suspend fun getResumableDay(@Body request: RecoveredDayRequest): RecoveredDayResponse
+
+    @POST("rest/v1/rpc/get_pos_operating_day_reset")
+    suspend fun isOperatingDayReset(@Body request: OperatingDayResetRequest): Boolean
 
     @POST("rest/v1/rpc/push_pos_transaction_v2")
     suspend fun pushTransaction(@Body request: PushTransactionRpcRequest): PushTransactionResponse

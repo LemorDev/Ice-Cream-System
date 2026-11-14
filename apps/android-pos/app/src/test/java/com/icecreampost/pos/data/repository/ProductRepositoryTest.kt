@@ -189,6 +189,31 @@ class ProductRepositoryTest {
     }
 
     @Test
+    fun `ledger pages and catalog approval accept numeric timestamp offsets`() = runTest {
+        states["catalog-ledger"] = SyncStateEntity(
+            key = "catalog-ledger", value = "ledger", cursorUpdatedAt = "2026-09-08T01:00:00+00:00",
+        )
+        val firstPage = receipt.copy(updatedAt = "2026-09-08T09:00:00.478915+08:00")
+        val secondPage = receipt.copy(id = "receive-2", quantityDelta = 2.0, updatedAt = "2026-09-08T01:00:00.578915Z")
+        val revision = catalog(listOf(remoteProduct)).copy(validUntil = "2099-01-01T00:00:00.478915+00:00")
+        coEvery { api.getCatalogRevision() } returns revision
+        coEvery { api.getInventoryLedgerPage(any()) } coAnswers {
+            when (firstArg<CatalogPageRequest>()) {
+                CatalogPageRequest("2026-09-08T00:59:59Z", null) -> listOf(firstPage)
+                CatalogPageRequest(firstPage.updatedAt, firstPage.id) -> listOf(secondPage)
+                CatalogPageRequest(secondPage.updatedAt, secondPage.id) -> emptyList()
+                else -> error("Unexpected inventory page cursor")
+            }
+        }
+
+        repository.refreshFromCloud()
+
+        assertEquals(12.0, products.getValue("product-1").unitsInStock, 0.001)
+        assertEquals(secondPage.updatedAt, states["catalog-ledger"]?.cursorUpdatedAt)
+        assertEquals(revision.validUntil, states["catalog-revision:device-1"]?.cursorUpdatedAt)
+    }
+
+    @Test
     fun `replayed response does not add inventory again`() = runTest {
         repository.refreshFromCloud()
         repository.refreshFromCloud()

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { DbClient } from './lib/api'
 import { appEnvironment } from './lib/supabase'
-import { addInventoryEntry, adminCloseOpenBusinessDay, archiveCategory, archiveProduct, authorizePosRecovery, createCategory, createDeviceActivation, createManagedStall, getOverheadForStall, getPosDeviceStatus, getStockByProduct, getTransactionReceiptItems, listManagedUsers, resetStockLevels, resetTransactionsAndRevenue, revokePendingPosActivation, reviewPosRecovery, saveManagedUser, saveProduct, saveProductWithRecipe, setOwnerStalls, setPowderSealedPacks, setStockOnHand, updateStall, uploadProductImage, validateProductImage } from './lib/api'
+import { addInventoryEntry, adminCloseOpenBusinessDay, archiveCategory, archiveProduct, authorizePosRecovery, createCategory, createDeviceActivation, createManagedStall, getOverheadForStall, getPosDeviceStatus, getStockByProduct, getTransactionReceiptItems, listManagedUsers, resetClosedOperatingDay, resetStockLevels, resetTransactionsAndRevenue, revokePendingPosActivation, reviewPosRecovery, saveManagedUser, saveProduct, saveProductWithRecipe, setOwnerStalls, setPowderSealedPacks, setStockOnHand, updateStall, uploadProductImage, validateProductImage } from './lib/api'
 import type { PosDeviceStatus } from './lib/api'
 import type { WebView } from './lib/access'
 import { getDashboardMetrics, getDailyProfitReport, calculateDailyOverhead, DEFAULT_OVERHEAD_ITEMS, formatDateRangeLabel, getBusinessDateKey, getProductPerformance, getRevenueTrend, shiftDateKey, transactionBusinessDate } from './lib/dashboard'
@@ -14,6 +14,7 @@ import { receivedBaseUnits, targetBaseUnits } from './lib/inventory-units'
 import type { ManagedUser, OverheadItem, Product, Stall, TransactionItem, WorkspaceData } from './lib/types'
 import { Badge, Button, ConfirmationDialog, DeleteIcon, EditIcon, EmptyState, Input, Notice, OverheadIcon, Panel, Select, Table, TableCell, TableHead, Textarea } from './components/ui'
 import { HorizontalBarChart, RevenueTrendChart } from './components/charts'
+import { AdminPasskeyForm } from './components/AdminPasskeyForm'
 
 const dateTime = new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
 
@@ -398,7 +399,7 @@ export function StallScreen({ client, data, onRefresh, onError, amountsVisible }
   )
 }
 
-type DataResetAction = 'transactions' | 'stock'
+type DataResetAction = { type: 'transactions' | 'stock' } | { type: 'operatingDay'; dayId: string }
 
 export function DataResetScreen({ client, data, onRefresh, onError, amountsVisible }: ScreenProps) {
   const [pendingAction, setPendingAction] = useState<DataResetAction>()
@@ -413,6 +414,9 @@ export function DataResetScreen({ client, data, onRefresh, onError, amountsVisib
     .reduce((sum, transaction) => sum + transaction.total_amount, 0)
   const money = (value: number) => formatFinancialAmount(value, amountsVisible)
   const stallName = data.stall?.name ?? 'the selected stall'
+  const today = data.businessDays.find((day) => day.business_date === getBusinessDateKey())
+  const closedToday = today?.closed_at ? today : undefined
+  const syncedClosing = closedToday && data.dailyClosings.some((closing) => closing.business_day_id === closedToday.id)
 
   function requestReset(action: DataResetAction) {
     setMessage('')
@@ -434,15 +438,21 @@ export function DataResetScreen({ client, data, onRefresh, onError, amountsVisib
     setResetError('')
     setBusy(true)
     try {
-      const result = action === 'transactions'
-        ? await resetTransactionsAndRevenue(client, data.stall.id)
-        : await resetStockLevels(client, data.stall.id)
+      let success: string
+      if (action.type === 'transactions') {
+        const result = await resetTransactionsAndRevenue(client, data.stall.id)
+        success = `${result.affected_records} transaction${result.affected_records === 1 ? '' : 's'} and ${result.affected_operating_days ?? 0} operating day${result.affected_operating_days === 1 ? '' : 's'} reset successfully. Financial reports now exclude earlier inventory adjustments.`
+      } else if (action.type === 'operatingDay') {
+        await resetClosedOperatingDay(client, data.stall.id, action.dayId)
+        success = 'Today’s operating day was reset. On the POS, go to Operating day and sync before opening again.'
+      } else {
+        const result = await resetStockLevels(client, data.stall.id)
+        success = `${result.affected_records} stock balance${result.affected_records === 1 ? '' : 's'} reset to zero successfully.`
+      }
       await onRefresh()
       setPendingAction(undefined)
       setConfirmationText('')
-      setMessage(action === 'transactions'
-        ? `${result.affected_records} transaction${result.affected_records === 1 ? '' : 's'} and ${result.affected_operating_days ?? 0} operating day${result.affected_operating_days === 1 ? '' : 's'} reset successfully. Financial reports now exclude earlier inventory adjustments; stock balances and their audit trail remain unchanged.`
-        : `${result.affected_records} stock balance${result.affected_records === 1 ? '' : 's'} reset to zero successfully.`)
+      setMessage(success)
     } catch (error) {
       const errorMessage = getErrorMessage(error)
       setResetError(errorMessage)
@@ -452,7 +462,24 @@ export function DataResetScreen({ client, data, onRefresh, onError, amountsVisib
     }
   }
 
-  const transactionReset = pendingAction === 'transactions'
+  const actionDetails = {
+    transactions: {
+      label: 'Reset sales & operating history',
+      title: 'Reset sales and operating history?',
+      description: `This clears transactions, revenue, product COGS, daily closings, operating days, operating-day overhead, and the financial-report effect of earlier inventory adjustments for ${stallName}. Confirm that every POS is closed before continuing.`,
+    },
+    operatingDay: {
+      label: 'Reset today’s operating day',
+      title: 'Reset today’s operating day?',
+      description: `This archives today’s opening and closing for ${stallName} so the cashier can start a new operating day on the same date. Finish syncing the POS before continuing.`,
+    },
+    stock: {
+      label: 'Reset all stock levels',
+      title: 'Reset all stock levels?',
+      description: `This creates balancing adjustments that set every current stock quantity in ${stallName} to zero.`,
+    },
+  }
+  const confirmation = pendingAction && actionDetails[pendingAction.type]
   const resetPhrase = appEnvironment === 'production' && data.stall ? `RESET ${data.stall.code.toUpperCase()}` : 'RESET'
   return <div className="space-y-6">
     <section className="rounded-3xl border border-red-200 bg-[linear-gradient(135deg,_#fff8f8_0%,_#fffdf8_100%)] p-6 shadow-sm sm:p-8">
@@ -473,7 +500,7 @@ export function DataResetScreen({ client, data, onRefresh, onError, amountsVisib
             <div className="col-span-2 rounded-2xl bg-[#f7f1ff] p-4 sm:col-span-1"><p className="text-xs font-semibold text-slate-500">Operating days</p><p className="mt-2 text-2xl font-black text-[#220046]">{data.businessDays.length.toLocaleString()}</p></div>
           </div>
           <Notice tone="info"><strong>Close the operating day on every active POS first.</strong> The reset also clears a stale cloud copy that may still appear open after a failed sync. Earlier inventory adjustments stop affecting financial reports, but products, stock balances, inventory audit entries, recipes, staff, and settings remain unchanged.</Notice>
-          <Button variant="danger" onClick={() => requestReset('transactions')}><DeleteIcon />Reset sales & operating history</Button>
+          <Button variant="danger" onClick={() => requestReset({ type: 'transactions' })}><DeleteIcon />Reset sales & operating history</Button>
         </div>
       </Panel>
 
@@ -481,36 +508,45 @@ export function DataResetScreen({ client, data, onRefresh, onError, amountsVisib
         <div className="space-y-5">
           <div className="rounded-2xl bg-[#f7f1ff] p-4"><p className="text-xs font-semibold text-slate-500">Products with stock</p><p className="mt-2 text-2xl font-black text-[#220046]">{stockedProducts.toLocaleString()}</p></div>
           <p className="text-sm leading-6 text-slate-500">Products, transactions, and the inventory audit trail remain available. Only current quantities are balanced to zero.</p>
-          <Button variant="danger" onClick={() => requestReset('stock')}><DeleteIcon />Reset all stock levels</Button>
+          <Button variant="danger" onClick={() => requestReset({ type: 'stock' })}><DeleteIcon />Reset all stock levels</Button>
+        </div>
+      </Panel>
+
+      <Panel title="Today’s operating day" description="Archive today’s closing and allow the POS to open again on the same business date.">
+        <div className="space-y-4">
+          <p className="text-sm leading-6 text-slate-600">{syncedClosing ? `The closing for ${closedToday.business_date} has synced.`
+            : today ? 'Close the stall and sync its final closing from the POS first.' : 'There is no operating day for today.'}</p>
+          <Button variant="danger" disabled={!syncedClosing || busy} onClick={() => {
+            if (closedToday) requestReset({ type: 'operatingDay', dayId: closedToday.id })
+          }}><DeleteIcon />Reset today’s operating day</Button>
         </div>
       </Panel>
     </div>
 
-    {pendingAction && <ConfirmationDialog
+    {confirmation && <ConfirmationDialog
       busy={busy}
       confirmDisabled={confirmationText !== resetPhrase}
-      confirmLabel={transactionReset ? 'Reset sales & operating history' : 'Reset all stock levels'}
-      description={transactionReset
-        ? `This clears transactions, revenue, product COGS, daily closings, operating days, operating-day overhead, and the financial-report effect of earlier inventory adjustments for ${stallName}. Confirm that every POS is closed before continuing. Products, stock quantities, and inventory audit entries will not change.`
-        : `This creates balancing adjustments that set every current stock quantity in ${stallName} to zero. Transaction history will not change.`}
+      confirmLabel={confirmation.label}
+      description={confirmation.description}
       onCancel={closeDialog}
       onConfirm={() => void confirmReset()}
-      title={transactionReset ? 'Reset sales and operating history?' : 'Reset all stock levels?'}
+      title={confirmation.title}
     >
       {resetError && <div className="mb-4"><Notice>{resetError}</Notice></div>}
       <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
         <label className="block text-sm font-semibold text-red-900">Type <span className="font-black">{resetPhrase}</span> to continue
-          <input aria-label="Type RESET to confirm" autoComplete="off" className="mt-2 w-full rounded-xl border border-red-200 bg-white px-3 py-2 text-sm uppercase outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100" onChange={(event) => setConfirmationText(event.target.value.toUpperCase())} value={confirmationText} />
+          <input autoComplete="off" className="mt-2 w-full rounded-xl border border-red-200 bg-white px-3 py-2 text-sm uppercase outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100" onChange={(event) => setConfirmationText(event.target.value.toUpperCase())} value={confirmationText} />
         </label>
       </div>
     </ConfirmationDialog>}
   </div>
 }
 
-type ProductFormValues = { image_url: string; name: string; unit: string; category_id: string; sell_category: string; sale_price: string; cost_price: string; purchase_unit_name: string; purchase_quantity: string; pack_size: string; conversion_rate: string; low_stock_threshold: string; tracks_powder_packs: boolean; amounts_visible: boolean; is_sellable: boolean; product_type: Product['product_type'] | ''; base_unit: Product['base_unit'] }
-const emptyProduct: ProductFormValues = { image_url: '', name: '', unit: 'piece', category_id: '', sell_category: '', sale_price: '0', cost_price: '0', purchase_unit_name: 'Pack', purchase_quantity: '1', pack_size: '1', conversion_rate: '1', low_stock_threshold: '0', tracks_powder_packs: false, amounts_visible: true, is_sellable: false, product_type: '', base_unit: 'piece' }
+type ProductFormValues = { image_url: string; name: string; unit: string; category_id: string; sell_category: string; menu_group: string; serving_type: NonNullable<Product['serving_type']> | ''; serving_size: string; sale_price: string; cost_price: string; purchase_unit_name: string; purchase_quantity: string; pack_size: string; conversion_rate: string; low_stock_threshold: string; tracks_powder_packs: boolean; count_at_closing: boolean; amounts_visible: boolean; is_sellable: boolean; product_type: Product['product_type'] | ''; base_unit: Product['base_unit'] }
+const emptyProduct: ProductFormValues = { image_url: '', name: '', unit: 'piece', category_id: '', sell_category: '', menu_group: '', serving_type: '', serving_size: '', sale_price: '0', cost_price: '0', purchase_unit_name: 'Pack', purchase_quantity: '1', pack_size: '1', conversion_rate: '1', low_stock_threshold: '0', tracks_powder_packs: false, count_at_closing: false, amounts_visible: true, is_sellable: false, product_type: '', base_unit: 'piece' }
+const cupSizes = ['6 oz', '12 oz', '16 oz']
 
-function ProductFormFields({ form, setField, categories, sellCategories }: { form: ProductFormValues; setField: (field: keyof ProductFormValues, value: string | boolean) => void; categories: WorkspaceData['categories']; sellCategories: string[] }) {
+function ProductFormFields({ form, setField, categories, sellCategories, menuGroups }: { form: ProductFormValues; setField: (field: keyof ProductFormValues, value: string | boolean) => void; categories: WorkspaceData['categories']; sellCategories: string[]; menuGroups: string[] }) {
   const stockItem = form.product_type === 'raw' || form.product_type === 'packaging'
   const purchaseQuantity = Number(form.purchase_quantity)
   const validPurchaseQuantity = Number.isFinite(purchaseQuantity) && purchaseQuantity > 0
@@ -522,6 +558,29 @@ function ProductFormFields({ form, setField, categories, sellCategories }: { for
   return <>
     <div className="grid gap-3 sm:grid-cols-2"><Input label="Product name" value={form.name} onChange={(event) => setField('name', event.target.value)} required autoFocus /><Select label="Classification" value={form.product_type} onChange={(event) => setField('product_type', event.target.value)} required><option value="" disabled>Choose classification</option><option value="sellable">Sellable menu item</option><option value="raw">Raw ingredient</option><option value="packaging">Packaging</option></Select></div>
     {form.product_type === 'sellable' && <><div><Input label="POS category" list="pos-category-suggestions" maxLength={50} placeholder="e.g. Cup, Cone, Sundae" required value={form.sell_category} onChange={(event) => setField('sell_category', event.target.value)} /><datalist id="pos-category-suggestions">{sellCategories.map((category) => <option key={category} value={category} />)}</datalist><p className="mt-1 text-xs text-slate-500">Groups this menu item in POS Sell after sync. Flavor is separate.</p></div><p className="rounded-xl border border-[#eadcff] bg-[#fbf7ff] px-3 py-2 text-sm text-[#4b2a7a]"><span className="font-semibold">SKU:</span> Generated automatically when you save this product.</p><Input label="Retail Sale Price" type="number" min="0" step="0.01" value={form.sale_price} onChange={(event) => setField('sale_price', event.target.value)} required /></>}
+    {form.product_type === 'sellable' && <fieldset className="space-y-3 rounded-2xl border border-[#eadcff] bg-white p-4">
+      <legend className="px-1 font-bold text-[#220046]">Options in POS Sell</legend>
+      <Input label="Menu group" list="menu-group-suggestions" maxLength={80} placeholder="e.g. Soft Serve" value={form.menu_group} onChange={(event) => setField('menu_group', event.target.value)} />
+      <datalist id="menu-group-suggestions">{menuGroups.map((group) => <option key={group} value={group} />)}</datalist>
+      <p className="text-sm text-slate-600">Save one product per size and flavor, with its own retail price and recipe. Use the same menu group to put those options on one card in Sell.</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Select label="Serving" value={form.serving_type} required={Boolean(form.menu_group.trim())} onChange={(event) => setField('serving_type', event.target.value)}>
+          <option value="">Choose serving</option>
+          <option value="cup">Cup</option>
+          <option value="cone">Cone</option>
+          <option value="other">No cup or cone</option>
+        </Select>
+        {form.serving_type === 'cup' && <Select label="Cup size" value={form.serving_size} required onChange={(event) => setField('serving_size', event.target.value)}>
+          <option value="">Choose cup size</option>
+          {cupSizes.map((size) => <option key={size}>{size}</option>)}
+        </Select>}
+        {form.serving_type === 'cone' && <Input label="Cone size" maxLength={30} placeholder="e.g. Regular" required value={form.serving_size} onChange={(event) => setField('serving_size', event.target.value)} />}
+        <Select label="Flavor" value={form.category_id} onChange={(event) => setField('category_id', event.target.value)}>
+          <option value="">No flavor</option>
+          {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+        </Select>
+      </div>
+    </fieldset>}
     {stockItem && <>
       <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">Only <strong>Raw ingredient</strong> and <strong>Packaging</strong> appear in Receive Stock. Sellable menu items use a recipe and are not received directly.</p>
       <p className="rounded-xl border border-[#eadcff] bg-[#fbf7ff] px-3 py-2 text-sm text-[#4b2a7a]"><span className="font-semibold">SKU:</span> Generated automatically when you save this product.</p>
@@ -530,6 +589,10 @@ function ProductFormFields({ form, setField, categories, sellCategories }: { for
       {form.product_type === 'raw' && ['g', 'piece'].includes(form.base_unit) && <label className="flex items-center gap-2 text-sm font-medium text-[#39235f]"><input type="checkbox" checked={form.tracks_powder_packs} onChange={(event) => setField('tracks_powder_packs', event.target.checked)} /> Deduct powder when opened in POS</label>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><Input label={quantityLabel} type="number" min="0.001" step="0.001" value={form.purchase_quantity} onChange={(event) => setField('purchase_quantity', event.target.value)} required /><Input label={`Low-stock threshold (${form.tracks_powder_packs ? 'packs' : form.base_unit})`} type="number" min="0" step="0.001" value={form.low_stock_threshold} onChange={(event) => setField('low_stock_threshold', event.target.value)} /></div>
       {form.tracks_powder_packs && <p className="text-xs text-slate-500">Alerts when recorded powder stock is at or below {Number(form.low_stock_threshold).toLocaleString()} packs. Each pack is {form.base_unit === 'piece' ? 'one piece' : '1,000g'}.</p>}
+      <label className="flex min-h-11 items-center gap-2 text-sm font-medium text-[#39235f]">
+        <input type="checkbox" checked={form.count_at_closing} onChange={(event) => setField('count_at_closing', event.target.checked)} />
+        Require a physical count when the cashier closes the POS
+      </label>
       <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-900"><p className="font-semibold">Conversion Summary</p>{validPreview ? <p className="mt-1">1 {purchaseUnitName} = {purchaseQuantity.toLocaleString()} {form.base_unit}. Receiving 1 {purchaseUnitName} will add <strong>{purchaseQuantity.toLocaleString()} {form.base_unit}</strong> to inventory at <strong>{formatUnitCostAmount(baseUnitCost, form.amounts_visible)} / {form.base_unit}</strong>.</p> : <p className="mt-1">Enter a valid quantity and purchase cost to preview the conversion.</p>}</div>
     </>}
   </>
@@ -717,22 +780,32 @@ export function StaffScreen({ client, data, onError, stalls }: ScreenProps) {
   </div>
 }
 
-function PowderCountDialog({ product, stockOnHand, sealedPacks, onCancel, onSave }: { product: Product; stockOnHand: number; sealedPacks: number; onCancel: () => void; onSave: (count: number) => Promise<void> }) {
+function PowderCountDialog({ product, stockOnHand, sealedPacks, onCancel, onSave }: { product: Product; stockOnHand: number; sealedPacks: number; onCancel: () => void; onSave: (count: number, requestId: string) => Promise<void> }) {
   const [count, setCount] = useState(String(sealedPacks))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const requestId = useRef<string | null>(null)
+  const submitting = useRef(false)
   const maximum = Math.floor(Math.max(0, stockOnHand) / product.pack_size)
   async function submit(event: FormEvent) {
     event.preventDefault()
+    if (submitting.current) return
     const value = Number(count)
     if (!Number.isInteger(value) || value < 0 || value > maximum) { setError(`Enter a whole number from 0 to ${maximum}.`); return }
+    submitting.current = true
     setBusy(true)
-    try { await onSave(value) } catch (cause) { setError(getErrorMessage(cause)); setBusy(false) }
+    try {
+      requestId.current ??= crypto.randomUUID()
+      await onSave(value, requestId.current)
+    } catch (cause) { setError(getErrorMessage(cause)) }
+    finally { submitting.current = false; setBusy(false) }
   }
   return <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#18002f]/55 p-4"><section role="dialog" aria-modal="true" aria-labelledby="powder-count-title" className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><h2 id="powder-count-title" className="text-lg font-bold">Count sealed packs: {product.name}</h2><p className="mt-2 text-sm text-slate-600">Total stock is {stockOnHand.toLocaleString()} {product.base_unit}. Use this count to reconcile sealed packs. Record new openings in POS to deduct stock.</p><form className="mt-4 space-y-4" onSubmit={(event) => void submit(event)}><Input label="Sealed packs" type="number" min="0" max={maximum} step="1" value={count} onChange={(event) => setCount(event.target.value)} required />{error && <Notice>{error}</Notice>}<div className="flex justify-end gap-2"><Button type="button" variant="ghost" disabled={busy} onClick={onCancel}>Cancel</Button><Button disabled={busy}>{busy ? 'Saving…' : 'Save count'}</Button></div></form></section></div>
 }
 
-export function ProductsScreen({ client, data, onRefresh, onError, amountsVisible }: ScreenProps) {
+export function ProductsScreen({ client, data, onRefresh, onError, amountsVisible, passkey }: ScreenProps & {
+  passkey?: { token: string; onVerified: (verifiedAt: string) => void }
+}) {
   const money = (value: number) => formatFinancialAmount(value, amountsVisible)
   const unitMoney = (value: number) => formatUnitCostAmount(value, amountsVisible)
   const [form, setForm] = useState(emptyProduct)
@@ -751,6 +824,11 @@ export function ProductsScreen({ client, data, onRefresh, onError, amountsVisibl
   }
   const [editingId, setEditingId] = useState<string>()
   const [productModalOpen, setProductModalOpen] = useState(false)
+  const [showSaveVerification, setShowSaveVerification] = useState(false)
+  const saveVerification = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (showSaveVerification) saveVerification.current?.scrollIntoView({ block: 'nearest' })
+  }, [showSaveVerification])
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<ProductTypeFilter>('all')
   const [message, setMessage] = useState('')
@@ -760,25 +838,38 @@ export function ProductsScreen({ client, data, onRefresh, onError, amountsVisibl
   const [deletingProductId, setDeletingProductId] = useState<string>()
   const [pendingDelete, setPendingDelete] = useState<{ kind: 'product' | 'flavor'; id: string; name: string }>()
   const [saving, setSaving] = useState(false)
+  const productRequestId = useRef<string | null>(null)
+  const submittingProduct = useRef(false)
   const [countProduct, setCountProduct] = useState<Product | null>(null)
   const [recipeLines, setRecipeLines] = useState<Array<{ ingredient_product_id: string; quantity: string }>>([])
   const sellCategories = [...new Set(['Cup', 'Cone', ...data.products.map((product) => product.sell_category?.trim() ?? '').filter(Boolean)])].sort((a, b) => a.localeCompare(b))
+  const menuGroups = [...new Set(data.products.flatMap((product) => product.menu_group ? [product.menu_group] : []))].sort((a, b) => a.localeCompare(b))
   const stock = getStockByProduct(data.inventory)
   const sealedPacks = data.inventory.reduce<Record<string, number>>((result, entry) => {
     result[entry.product_id] = (result[entry.product_id] ?? 0) + (entry.sealed_packs_delta ?? 0)
     return result
   }, {})
-  async function savePowderCount(count: number) {
+  async function savePowderCount(count: number, requestId: string) {
     if (!countProduct) return
-    await setPowderSealedPacks(client, countProduct.id, count)
-    await onRefresh()
+    await setPowderSealedPacks(client, countProduct.stall_id, countProduct.id, count, requestId)
     setCountProduct(null)
     setSuccessMessage('Sealed pack count saved.')
+    await onRefresh()
   }
-  const filtered = data.products.filter((product) => productMatchesType(product, typeFilter) && `${product.name} ${product.sku}`.toLowerCase().includes(search.toLowerCase()))
+  const flavorNames = new Map(data.categories.map((category) => [category.id, category.name]))
+  function optionDetails(product: Product) {
+    if (!product.menu_group) return ''
+    const serving = product.serving_size ? `${product.serving_size} ${product.serving_type}` : ''
+    return [product.menu_group, serving, flavorNames.get(product.category_id ?? '')].filter(Boolean).join(' · ')
+  }
+  const filtered = data.products.filter((product) => productMatchesType(product, typeFilter) &&
+    `${product.name} ${product.sku} ${optionDetails(product)}`.toLowerCase().includes(search.trim().toLowerCase()))
   useEffect(() => { setForm((current) => current.amounts_visible === amountsVisible ? current : { ...current, amounts_visible: amountsVisible }) }, [amountsVisible])
   function setField(field: keyof typeof emptyProduct, value: string | boolean) {
     setForm((current) => {
+      if (field === 'serving_type') {
+        return { ...current, serving_type: value as ProductFormValues['serving_type'], serving_size: '' }
+      }
       if (field === 'base_unit') {
         return { ...current, base_unit: value as Product['base_unit'], unit: value as Product['base_unit'], tracks_powder_packs: false, low_stock_threshold: current.tracks_powder_packs ? '0' : current.low_stock_threshold, pack_size: value === 'piece' ? '1' : current.purchase_quantity, conversion_rate: value === 'piece' ? current.purchase_quantity : '1' }
       }
@@ -789,10 +880,10 @@ export function ProductsScreen({ client, data, onRefresh, onError, amountsVisibl
     })
   }
   function openAddProduct() { setImageFile(null); setEditingId(undefined); setForm({ ...emptyProduct, amounts_visible: amountsVisible }); setRecipeLines([]); setMessage(''); setProductModalOpen(true) }
-  function edit(product: Product) { setImageFile(null); const purchaseQuantity = product.pack_size * product.conversion_rate; setEditingId(product.id); setForm({ image_url: product.image_url ?? '', name: product.name, unit: product.unit, category_id: product.category_id ?? '', sell_category: product.sell_category ?? data.categories.find((category) => category.id === product.category_id)?.name ?? '', sale_price: String(product.sale_price), cost_price: String(product.cost_price), purchase_unit_name: product.purchase_unit_name ?? 'Pack', purchase_quantity: String(purchaseQuantity), pack_size: String(product.base_unit === 'piece' ? 1 : purchaseQuantity), conversion_rate: String(product.base_unit === 'piece' ? purchaseQuantity : 1), low_stock_threshold: String(product.tracks_powder_packs ? product.low_stock_threshold / product.pack_size : product.low_stock_threshold), tracks_powder_packs: Boolean(product.tracks_powder_packs), amounts_visible: amountsVisible, is_sellable: product.is_sellable, product_type: product.product_type, base_unit: product.base_unit }); setRecipeLines(data.recipes.filter((recipe) => recipe.parent_product_id === product.id).map((recipe) => ({ ingredient_product_id: recipe.ingredient_product_id, quantity: String(recipe.quantity) }))); setMessage(''); setProductModalOpen(true) }
-  const closeProductModal = useCallback(() => { if (saving) return; setImageFile(null); setProductModalOpen(false); setEditingId(undefined); setForm(emptyProduct); setMessage('') }, [saving])
+  function edit(product: Product) { setImageFile(null); const purchaseQuantity = product.pack_size * product.conversion_rate; setEditingId(product.id); setForm({ image_url: product.image_url ?? '', name: product.name, unit: product.unit, category_id: product.category_id ?? '', sell_category: product.sell_category ?? data.categories.find((category) => category.id === product.category_id)?.name ?? '', menu_group: product.menu_group ?? '', serving_type: product.serving_type ?? '', serving_size: product.serving_size ?? '', sale_price: String(product.sale_price), cost_price: String(product.cost_price), purchase_unit_name: product.purchase_unit_name ?? 'Pack', purchase_quantity: String(purchaseQuantity), pack_size: String(product.base_unit === 'piece' ? 1 : purchaseQuantity), conversion_rate: String(product.base_unit === 'piece' ? purchaseQuantity : 1), low_stock_threshold: String(product.tracks_powder_packs ? product.low_stock_threshold / product.pack_size : product.low_stock_threshold), tracks_powder_packs: Boolean(product.tracks_powder_packs), count_at_closing: Boolean(product.count_at_closing), amounts_visible: amountsVisible, is_sellable: product.is_sellable, product_type: product.product_type, base_unit: product.base_unit }); setRecipeLines(data.recipes.filter((recipe) => recipe.parent_product_id === product.id).map((recipe) => ({ ingredient_product_id: recipe.ingredient_product_id, quantity: String(recipe.quantity) }))); setMessage(''); setProductModalOpen(true) }
+  const closeProductModal = useCallback(() => { if (saving) return; productRequestId.current = null; setImageFile(null); setProductModalOpen(false); setShowSaveVerification(false); setEditingId(undefined); setForm(emptyProduct); setMessage('') }, [saving])
   async function submit(event: FormEvent) {
-    event.preventDefault(); if (saving) return; setMessage('')
+    event.preventDefault(); if (submittingProduct.current || showSaveVerification) return; setMessage('')
     if (!form.product_type) { setMessage('Choose whether this product is a sellable menu item, raw ingredient, or packaging.'); return }
     const values = { ...form, name: form.name.trim(), unit: form.unit.trim(), sell_category: form.sell_category.trim() }
     const posCategory = sellCategories.find((category) => category.toLocaleLowerCase() === values.sell_category.toLocaleLowerCase()) ?? values.sell_category
@@ -800,6 +891,18 @@ export function ProductsScreen({ client, data, onRefresh, onError, amountsVisibl
     const stockItem = isStockable({ product_type: form.product_type })
     if (!values.name || !values.unit || numbers.some((value) => !Number.isFinite(value) || value < 0) || (stockItem && (numbers[3] <= 0 || !form.purchase_unit_name.trim()))) { setMessage('Enter a product name and valid purchase unit, cost, and quantity.'); return }
     if (form.product_type === 'sellable' && !values.sell_category) { setMessage('Enter a POS category for this menu item.'); return }
+    const groupInput = form.product_type === 'sellable' ? form.menu_group.trim() : ''
+    const menuGroup = menuGroups.find((group) => group.toLowerCase() === groupInput.toLowerCase()) ?? groupInput
+    const servingSize = form.serving_type === 'other' ? '' : form.serving_size.trim()
+    if (form.product_type === 'sellable' && (menuGroup || form.serving_type) &&
+      (!menuGroup || !form.serving_type || (form.serving_type !== 'other' && !servingSize))) {
+      setMessage('Enter a menu group and choose the serving and size for this option.')
+      return
+    }
+    if (menuGroup && form.serving_type === 'cup' && !cupSizes.includes(servingSize)) {
+      setMessage('Choose 6 oz, 12 oz, or 16 oz for this cup.')
+      return
+    }
     const recipe = form.product_type === 'sellable' ? recipeLines.filter((line) => line.ingredient_product_id).map((line) => ({ ingredient_product_id: line.ingredient_product_id, quantity: Number(line.quantity) })) : []
     if (recipe.some((line) => !Number.isFinite(line.quantity) || line.quantity <= 0)) { setMessage('Every recipe quantity must be greater than zero.'); return }
     const computedCost = form.product_type === 'sellable' ? recipeCost(recipe.map((line, index) => ({ ...line, id: String(index), stall_id: data.stall?.id ?? '', parent_product_id: editingId ?? '', updated_at: '' })), data.products) : numbers[1]
@@ -808,18 +911,30 @@ export function ProductsScreen({ client, data, onRefresh, onError, amountsVisibl
     const packSize = stockItem && form.base_unit !== 'piece' ? purchaseQuantity : 1
     const conversionRate = stockItem && form.base_unit === 'piece' ? purchaseQuantity : 1
     const wasEditing = Boolean(editingId)
+    submittingProduct.current = true
     setSaving(true)
     try {
       if (!data.stall) throw new Error('Select a stall before saving a product.')
       const imageUrl = imageFile ? await uploadProductImage(client, data.stall.id, imageFile) : form.image_url || null
       if (imageFile) { setField('image_url', imageUrl ?? ''); setImageFile(null) }
-      await saveProductWithRecipe(client, { image_url: imageUrl, stall_id: data.stall?.id ?? '', category_id: values.category_id || null, sell_category: form.product_type === 'sellable' ? posCategory : null, name: values.name, unit: values.base_unit, sale_price: numbers[0], cost_price: computedCost, purchase_unit_name: stockItem ? form.purchase_unit_name.trim() : null, purchase_quantity: purchaseQuantity, low_stock_threshold: form.tracks_powder_packs ? numbers[2] * purchaseQuantity : numbers[2], pack_size: packSize, conversion_rate: conversionRate, tracks_powder_packs: form.tracks_powder_packs, is_sellable: form.product_type === 'sellable', product_type: form.product_type, base_unit: form.base_unit }, recipe, editingId)
-      await onRefresh()
+      if (!wasEditing) productRequestId.current ??= crypto.randomUUID()
+      await saveProductWithRecipe(client, { image_url: imageUrl, stall_id: data.stall.id, category_id: values.category_id || null, sell_category: form.product_type === 'sellable' ? posCategory : null, name: values.name, menu_group: menuGroup || null, serving_type: menuGroup ? form.serving_type || null : null, serving_size: menuGroup ? servingSize || null : null, unit: values.base_unit, sale_price: numbers[0], cost_price: computedCost, purchase_unit_name: stockItem ? form.purchase_unit_name.trim() : null, purchase_quantity: purchaseQuantity, low_stock_threshold: form.tracks_powder_packs ? numbers[2] * purchaseQuantity : numbers[2], pack_size: packSize, conversion_rate: conversionRate, tracks_powder_packs: form.tracks_powder_packs, count_at_closing: stockItem && form.count_at_closing, is_sellable: form.product_type === 'sellable', product_type: form.product_type, base_unit: form.base_unit }, recipe, editingId, productRequestId.current ?? undefined)
       closeProductModal()
       setSuccessMessage(isStockable({ product_type: form.product_type })
         ? `Product successfully ${wasEditing ? 'updated' : 'created'}. It is available in Receive Stock.`
         : `Menu item successfully ${wasEditing ? 'updated' : 'created'}. Its ${posCategory} category will appear in POS Sell after sync.`)
-    } catch (error) { onError(getErrorMessage(error)) } finally { setSaving(false) }
+      await onRefresh()
+    } catch (error) {
+      const errorMessage = getErrorMessage(error)
+      if (passkey && (errorMessage === 'FORBIDDEN' || /row-level security policy/i.test(errorMessage))) {
+        setMessage('Verify your passkey to save this product. Your draft is still here.')
+        setShowSaveVerification(true)
+      } else {
+        setMessage(errorMessage.includes('products_active_menu_option_key')
+          ? 'This menu group already has that serving, size, and flavor. Edit the existing option to change its price.'
+          : errorMessage)
+      }
+    } finally { submittingProduct.current = false; setSaving(false) }
   }
   async function addNewCategory(event: FormEvent) {
     event.preventDefault()
@@ -878,8 +993,16 @@ export function ProductsScreen({ client, data, onRefresh, onError, amountsVisibl
   const margin = Number(form.sale_price) - cogs
   return <>{countProduct && <PowderCountDialog product={countProduct} stockOnHand={stock[countProduct.id] ?? 0} sealedPacks={sealedPacks[countProduct.id] ?? 0} onCancel={() => setCountProduct(null)} onSave={savePowderCount} />}{pendingDelete && <ConfirmationDialog busy={Boolean(deletingProductId || deletingCategoryId)} confirmLabel={`Delete ${pendingDelete.kind}`} description={pendingDelete.kind === 'product' ? `${pendingDelete.name} will be removed from the product catalog. Historical sales and inventory records will be preserved.` : `${pendingDelete.name} will be removed from the available flavor list.`} onCancel={() => setPendingDelete(undefined)} onConfirm={() => void confirmCatalogDelete()} title={`Delete ${pendingDelete.name}?`} />}{successMessage && <div className="fixed right-4 top-4 z-[70] w-[min(24rem,calc(100vw-2rem))] shadow-lg"><Notice tone="success">{successMessage}</Notice></div>}<Panel title="Product catalog" description="Manage menu items, raw ingredients, packaging, recipes, and reorder thresholds." action={<div className="flex flex-col gap-2 sm:flex-row"><Input aria-label="Search products" placeholder="Search name or SKU" value={search} onChange={(event) => setSearch(event.target.value)} /><Button className="shrink-0" onClick={openAddProduct}>Add product</Button></div>}>
     <div className="mb-4 flex flex-wrap gap-2" role="group" aria-label="Filter products by classification">{([['all', 'All'], ['sellable', 'Sellable Menu Items'], ['raw', 'Raw Ingredients'], ['packaging', 'Packaging']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={typeFilter === value} onClick={() => setTypeFilter(value)} className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${typeFilter === value ? 'border-violet-700 bg-violet-700 text-white' : 'border-[#eadcff] bg-white text-[#4b2a7a] hover:bg-[#f5ebff]'}`}>{label}</button>)}</div>
-    {filtered.length === 0 ? <EmptyState title="No products found" description={search || typeFilter !== 'all' ? 'Try a different search or classification.' : 'Add your first product to begin building the catalog.'} /> : <Table><TableHead><th className="px-3 py-3">Product</th><th className="px-3 py-3">Classification</th><th className="px-3 py-3">Sale price / unit cost</th><th className="px-3 py-3">On hand</th><th className="px-3 py-3">Status</th><th className="px-3 py-3" /></TableHead><tbody>{filtered.map((product) => { const stockable = isStockable(product); const onHand = stock[product.id] ?? 0; const low = stockable && onHand <= product.low_stock_threshold; const productRecipes = data.recipes.filter((recipe) => recipe.parent_product_id === product.id); return <tr key={product.id} className="border-b border-slate-100"><TableCell><p className="font-medium">{product.name}</p><p className="text-xs text-slate-400">{product.sku} · {product.base_unit}</p>{product.product_type === 'sellable' && <p className="mt-0.5 text-xs font-medium text-[#5a1bb0]">POS category: {product.sell_category || data.categories.find((category) => category.id === product.category_id)?.name || 'Uncategorized'}</p>}</TableCell><TableCell><Badge tone={product.product_type}>{productTypeLabel(product.product_type)}</Badge></TableCell><TableCell>{stockable ? `Cost: ${unitMoney(unitCost(product))}/${product.base_unit}` : <><span>Sale: {money(product.sale_price)}</span>{productRecipes.length > 0 && <span className="block text-xs text-slate-500">Estimated recipe cost: {money(recipeCost(productRecipes, data.products))}</span>}</>}</TableCell><TableCell>{stockable ? product.tracks_powder_packs ? <><span className="block">{onHand.toLocaleString()} {product.base_unit} on hand</span><span className="block text-xs text-slate-500">{(sealedPacks[product.id] ?? 0)} sealed packs</span></> : `${onHand.toLocaleString()} ${product.base_unit}` : <span className="text-slate-500">— Made to order</span>}</TableCell><TableCell>{stockable ? <Badge tone={low ? 'warning' : 'success'}>{low ? 'Low stock' : 'Active'}</Badge> : <span className="text-slate-400">—</span>}</TableCell><TableCell><div className="flex gap-2"><Button variant="ghost" onClick={() => edit(product)}><EditIcon />Edit</Button>{product.tracks_powder_packs && <Button variant="secondary" onClick={() => setCountProduct(product)}>Count sealed packs</Button>}<Button disabled={deletingProductId === product.id} variant="danger" onClick={() => void deleteProduct(product)}><DeleteIcon />{deletingProductId === product.id ? 'Deleting…' : 'Delete'}</Button></div></TableCell></tr> })}</tbody></Table>}
-  </Panel>{productModalOpen && <div className="fixed inset-0 z-50 flex items-end bg-[#18002f]/55 p-0 backdrop-blur-[2px] sm:items-center sm:justify-center sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) closeProductModal() }}><section aria-labelledby="product-modal-title" aria-modal="true" className="product-modal-scrollbar max-h-[92vh] w-full overflow-y-auto rounded-t-3xl bg-[#fffdf8] shadow-2xl sm:max-w-3xl sm:rounded-3xl" role="dialog"><div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-[#eadcff] bg-[#fffdf8]/95 p-5 backdrop-blur"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#5a1bb0]">Product catalog</p><h2 id="product-modal-title" className="mt-1 text-xl font-black text-[#220046]">{editingId ? 'Edit product' : 'Add product'}</h2><p className="mt-1 text-sm text-slate-500">Classify the item first; the form adapts to the inventory workflow.</p></div><button aria-label="Close product form" className="rounded-lg p-2 text-[#4b2a7a] transition hover:bg-[#f5ebff]" onClick={closeProductModal} type="button">×</button></div><form className="space-y-4 p-5" onSubmit={submit}><ProductFormFields categories={data.categories} sellCategories={sellCategories} form={form} setField={setField} /><fieldset disabled={saving} className="space-y-2"><Input label="Product picture (optional)" type="file" accept="image/jpeg,image/png,image/webp" hint="JPG, PNG or WebP, up to 5 MB. Shown in the POS after syncing." onChange={(event) => { selectImage(event.target.files?.[0]); event.target.value = '' }} />{(imagePreview || form.image_url) && <><img src={imagePreview || form.image_url} alt="Product picture preview" className="h-32 w-32 rounded-xl border border-slate-200 object-cover" /><Button type="button" variant="ghost" onClick={() => { setImageFile(null); setField('image_url', '') }}>Remove picture</Button></>}</fieldset>{form.product_type === 'sellable' && <fieldset className="rounded-2xl border border-[#eadcff] bg-white p-4"><div className="flex items-start justify-between gap-3"><div><legend className="font-bold text-[#220046]">Recipe</legend><p className="mt-1 text-xs text-slate-500">Ingredients are deducted automatically when this item is sold.</p></div><Button type="button" variant="secondary" onClick={() => setRecipeLines((current) => [...current, { ingredient_product_id: '', quantity: '1' }])}>Add ingredient</Button></div><div className="mt-4 space-y-3">{recipeLines.map((line, index) => <div className="grid gap-2 rounded-xl bg-[#fbf7ff] p-3 sm:grid-cols-[1fr_9rem_auto]" key={index}><Select aria-label={`Ingredient ${index + 1}`} value={line.ingredient_product_id} onChange={(event) => setRecipeLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ingredient_product_id: event.target.value } : item))}><option value="">Choose ingredient</option>{ingredients.map((product) => <option key={product.id} value={product.id}>{product.name} ({product.base_unit})</option>)}</Select><Input aria-label={`Quantity ${index + 1}`} type="number" min="0.001" step="0.001" value={line.quantity} onChange={(event) => setRecipeLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, quantity: event.target.value } : item))} /><Button type="button" variant="ghost" onClick={() => setRecipeLines((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</Button></div>)}{recipeLines.length === 0 && <p className="text-sm text-slate-500">No ingredients added. Add at least one for automatic stock usage.</p>}</div><div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-[#f4ecff] p-3"><p className="text-xs text-slate-500">Estimated recipe cost</p><p className="mt-1 font-black text-[#220046]">{money(cogs)}</p></div><div className={`rounded-xl p-3 ${margin >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}><p className="text-xs text-slate-500">Gross margin</p><p className={`mt-1 font-black ${margin >= 0 ? 'text-emerald-800' : 'text-red-800'}`}>{money(margin)} ({Number(form.sale_price) > 0 ? ((margin / Number(form.sale_price)) * 100).toFixed(1) : '0.0'}%)</p></div></div></fieldset>}{message && <Notice>{message}</Notice>}<div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4"><Button type="button" variant="ghost" onClick={closeProductModal}>Cancel</Button><Button disabled={saving}>{saving ? 'Saving…' : editingId ? 'Save changes' : 'Add product'}</Button></div></form><div className="border-t border-slate-100 p-5"><form onSubmit={addNewCategory}><p className="text-sm font-semibold text-[#39235f]">Manage flavors</p><div className="mt-2 flex flex-col gap-2 sm:flex-row"><Input aria-label="New flavor name" placeholder="e.g. Vanilla" value={categoryName} onChange={(event) => setCategoryName(event.target.value)} /><Button type="submit">Add flavor</Button></div></form>{data.categories.length > 0 && <ul aria-label="Existing flavors" className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-200">{data.categories.map((category) => <li className="flex items-center justify-between gap-3 px-3 py-2" key={category.id}><span className="text-sm font-medium text-[#39235f]">{category.name}</span><Button disabled={deletingCategoryId === category.id} type="button" variant="danger" onClick={() => void deleteFlavor(category.id, category.name)}>{deletingCategoryId === category.id ? 'Deleting…' : 'Delete'}</Button></li>)}</ul>}</div></section></div>}</>
+    {filtered.length === 0 ? <EmptyState title="No products found" description={search || typeFilter !== 'all' ? 'Try a different search or classification.' : 'Add your first product to begin building the catalog.'} /> : <Table><TableHead><th className="px-3 py-3">Product</th><th className="px-3 py-3">Classification</th><th className="px-3 py-3">Sale price / unit cost</th><th className="px-3 py-3">On hand</th><th className="px-3 py-3">Status</th><th className="px-3 py-3" /></TableHead><tbody>{filtered.map((product) => { const stockable = isStockable(product); const onHand = stock[product.id] ?? 0; const low = stockable && onHand <= product.low_stock_threshold; const productRecipes = data.recipes.filter((recipe) => recipe.parent_product_id === product.id); return <tr key={product.id} className="border-b border-slate-100"><TableCell><p className="font-medium">{product.name}</p><p className="text-xs text-slate-400">{product.sku} · {product.base_unit}</p>{product.menu_group && <p className="mt-1 text-sm text-slate-600">{optionDetails(product)}</p>}{product.product_type === 'sellable' && <p className="mt-0.5 text-xs font-medium text-[#5a1bb0]">POS category: {product.sell_category || data.categories.find((category) => category.id === product.category_id)?.name || 'Uncategorized'}</p>}</TableCell><TableCell><Badge tone={product.product_type}>{productTypeLabel(product.product_type)}</Badge></TableCell><TableCell>{stockable ? `Cost: ${unitMoney(unitCost(product))}/${product.base_unit}` : <><span>Sale: {money(product.sale_price)}</span>{productRecipes.length > 0 && <span className="block text-xs text-slate-500">Estimated recipe cost: {money(recipeCost(productRecipes, data.products))}</span>}</>}</TableCell><TableCell>{stockable ? product.tracks_powder_packs ? <><span className="block">{onHand.toLocaleString()} {product.base_unit} on hand</span><span className="block text-xs text-slate-500">{(sealedPacks[product.id] ?? 0)} sealed packs</span></> : `${onHand.toLocaleString()} ${product.base_unit}` : <span className="text-slate-500">— Made to order</span>}</TableCell><TableCell>{stockable ? <Badge tone={low ? 'warning' : 'success'}>{low ? 'Low stock' : 'Active'}</Badge> : <span className="text-slate-400">—</span>}</TableCell><TableCell><div className="flex gap-2"><Button variant="ghost" onClick={() => edit(product)}><EditIcon />Edit</Button>{product.tracks_powder_packs && <Button variant="secondary" onClick={() => setCountProduct(product)}>Count sealed packs</Button>}<Button disabled={deletingProductId === product.id} variant="danger" onClick={() => void deleteProduct(product)}><DeleteIcon />{deletingProductId === product.id ? 'Deleting…' : 'Delete'}</Button></div></TableCell></tr> })}</tbody></Table>}
+  </Panel>{productModalOpen && <div className="fixed inset-0 z-50 flex items-end bg-[#18002f]/55 p-0 backdrop-blur-[2px] sm:items-center sm:justify-center sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) closeProductModal() }}><section aria-labelledby="product-modal-title" aria-modal="true" className="product-modal-scrollbar max-h-[92vh] w-full overflow-y-auto rounded-t-3xl bg-[#fffdf8] shadow-2xl sm:max-w-3xl sm:rounded-3xl" role="dialog"><div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-[#eadcff] bg-[#fffdf8]/95 p-5 backdrop-blur"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#5a1bb0]">Product catalog</p><h2 id="product-modal-title" className="mt-1 text-xl font-black text-[#220046]">{editingId ? 'Edit product' : 'Add product'}</h2><p className="mt-1 text-sm text-slate-500">Classify the item first; the form adapts to the inventory workflow.</p></div><button aria-label="Close product form" className="rounded-lg p-2 text-[#4b2a7a] transition hover:bg-[#f5ebff]" onClick={closeProductModal} type="button">×</button></div><form className="space-y-4 p-5" onSubmit={submit}><ProductFormFields categories={data.categories} sellCategories={sellCategories} menuGroups={menuGroups} form={form} setField={setField} /><fieldset disabled={saving} className="space-y-2"><Input label="Product picture (optional)" type="file" accept="image/jpeg,image/png,image/webp" hint="JPG, PNG or WebP, up to 5 MB. Shown in the POS after syncing." onChange={(event) => { selectImage(event.target.files?.[0]); event.target.value = '' }} />{(imagePreview || form.image_url) && <><img src={imagePreview || form.image_url} alt="Product picture preview" className="h-32 w-32 rounded-xl border border-slate-200 object-cover" /><Button type="button" variant="ghost" onClick={() => { setImageFile(null); setField('image_url', '') }}>Remove picture</Button></>}</fieldset>{form.product_type === 'sellable' && <fieldset className="rounded-2xl border border-[#eadcff] bg-white p-4"><div className="flex items-start justify-between gap-3"><div><legend className="font-bold text-[#220046]">Recipe</legend><p className="mt-1 text-xs text-slate-500">Ingredients are deducted automatically when this item is sold.</p></div><Button type="button" variant="secondary" onClick={() => setRecipeLines((current) => [...current, { ingredient_product_id: '', quantity: '1' }])}>Add ingredient</Button></div><div className="mt-4 space-y-3">{recipeLines.map((line, index) => <div className="grid gap-2 rounded-xl bg-[#fbf7ff] p-3 sm:grid-cols-[1fr_9rem_auto]" key={index}><Select aria-label={`Ingredient ${index + 1}`} value={line.ingredient_product_id} onChange={(event) => setRecipeLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ingredient_product_id: event.target.value } : item))}><option value="">Choose ingredient</option>{ingredients.map((product) => <option key={product.id} value={product.id}>{product.name} ({product.base_unit})</option>)}</Select><Input aria-label={`Quantity ${index + 1}`} type="number" min="0.001" step="0.001" value={line.quantity} onChange={(event) => setRecipeLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, quantity: event.target.value } : item))} /><Button type="button" variant="ghost" onClick={() => setRecipeLines((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</Button></div>)}{recipeLines.length === 0 && <p className="text-sm text-slate-500">No ingredients added. Add at least one for automatic stock usage.</p>}</div><div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-[#f4ecff] p-3"><p className="text-xs text-slate-500">Estimated recipe cost</p><p className="mt-1 font-black text-[#220046]">{money(cogs)}</p></div><div className={`rounded-xl p-3 ${margin >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}><p className="text-xs text-slate-500">Gross margin</p><p className={`mt-1 font-black ${margin >= 0 ? 'text-emerald-800' : 'text-red-800'}`}>{money(margin)} ({Number(form.sale_price) > 0 ? ((margin / Number(form.sale_price)) * 100).toFixed(1) : '0.0'}%)</p></div></div></fieldset>}{message && <Notice>{message}</Notice>}<div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4"><Button type="button" variant="ghost" onClick={closeProductModal}>Cancel</Button><Button type="submit" disabled={saving || showSaveVerification}>{saving ? 'Saving…' : editingId ? 'Save changes' : 'Add product'}</Button></div></form>
+    {showSaveVerification && passkey && <div ref={saveVerification} className="border-t border-[#eadcff] bg-white p-5">
+      <AdminPasskeyForm token={passkey.token} onCancel={() => setShowSaveVerification(false)} onVerified={(verifiedAt) => {
+        passkey.onVerified(verifiedAt)
+        setShowSaveVerification(false)
+        setMessage('')
+      }} />
+    </div>}
+    <div className="border-t border-slate-100 p-5"><form onSubmit={addNewCategory}><p className="text-sm font-semibold text-[#39235f]">Manage flavors</p><div className="mt-2 flex flex-col gap-2 sm:flex-row"><Input aria-label="New flavor name" placeholder="e.g. Vanilla" value={categoryName} onChange={(event) => setCategoryName(event.target.value)} /><Button type="submit">Add flavor</Button></div></form>{data.categories.length > 0 && <ul aria-label="Existing flavors" className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-200">{data.categories.map((category) => <li className="flex items-center justify-between gap-3 px-3 py-2" key={category.id}><span className="text-sm font-medium text-[#39235f]">{category.name}</span><Button disabled={deletingCategoryId === category.id} type="button" variant="danger" onClick={() => void deleteFlavor(category.id, category.name)}>{deletingCategoryId === category.id ? 'Deleting…' : 'Delete'}</Button></li>)}</ul>}</div></section></div>}</>
 }
 
 function InventoryEntryForm({ mode, client, data, onRefresh, onError }: ScreenProps & { mode: 'receive' | 'adjust' }) {
@@ -891,6 +1014,8 @@ function InventoryEntryForm({ mode, client, data, onRefresh, onError }: ScreenPr
   const [message, setMessage] = useState('')
   const [messageTone, setMessageTone] = useState<'error' | 'success'>('error')
   const [saving, setSaving] = useState(false)
+  const requestId = useRef<string | null>(null)
+  const submitting = useRef(false)
   const stock = getStockByProduct(data.inventory)
   const stockableProducts = data.products.filter(isStockable)
   const selectedProduct = stockableProducts.find((item) => item.id === productId)
@@ -906,6 +1031,7 @@ function InventoryEntryForm({ mode, client, data, onRefresh, onError }: ScreenPr
 
   async function submit(event: FormEvent) {
     event.preventDefault()
+    if (submitting.current) return
     setMessage('')
     setMessageTone('error')
     const qty = Number(quantity)
@@ -919,46 +1045,38 @@ function InventoryEntryForm({ mode, client, data, onRefresh, onError }: ScreenPr
       setMessage('Receive tracked powder in whole packs.')
       return
     }
-    let delta: number
+    let units: number
     try {
-      const units = mode === 'receive' ? receivedBaseUnits(qty, product) : targetBaseUnits(qty, adjustmentUnit, product)
-      if (mode === 'adjust' && direction === 'set') {
-        setSaving(true)
-        try {
-          const result = await setStockOnHand(client, data.stall?.id ?? '', product.id, units, reason.trim())
-          setQuantity('')
-          await onRefresh()
-          setMessageTone('success')
-          setMessage(result.status === 'unchanged'
-            ? `Stock was already ${result.target_stock.toLocaleString()} ${product.base_unit}.`
-            : `Stock corrected from ${result.previous_stock.toLocaleString()} to ${result.target_stock.toLocaleString()} ${product.base_unit} (${result.quantity_delta > 0 ? '+' : ''}${result.quantity_delta.toLocaleString()} ${product.base_unit}).`)
-        } catch (error) { onError(getErrorMessage(error)) }
-        finally { setSaving(false) }
-        return
-      }
-      delta = mode === 'receive' || direction === 'add' ? units : -units
+      units = mode === 'receive' ? receivedBaseUnits(qty, product) : targetBaseUnits(qty, adjustmentUnit, product)
     } catch (error) {
       setMessage(getErrorMessage(error))
       return
     }
-    if (mode === 'adjust' && delta < 0 && (stock[product.id] ?? 0) + delta < 0) {
-      setMessage('This adjustment would make stock negative.')
-      return
-    }
+    submitting.current = true
     setSaving(true)
     try {
-      await addInventoryEntry(client, {
-        stall_id: data.stall?.id ?? '', product_id: product.id, quantity_delta: delta,
-        movement_type: mode === 'receive' ? 'receive' : 'adjustment', reason: reason.trim(),
-      })
+      requestId.current ??= crypto.randomUUID()
+      let confirmation: string
+      if (mode === 'adjust' && direction === 'set') {
+        const result = await setStockOnHand(client, product.stall_id, product.id, units, reason.trim(), requestId.current)
+        confirmation = result.status === 'unchanged'
+          ? `Stock was already ${result.target_stock.toLocaleString()} ${product.base_unit}.`
+          : `Stock corrected from ${result.previous_stock.toLocaleString()} to ${result.target_stock.toLocaleString()} ${product.base_unit} (${result.quantity_delta > 0 ? '+' : ''}${result.quantity_delta.toLocaleString()} ${product.base_unit}).`
+      } else {
+        const delta = mode === 'receive' || direction === 'add' ? units : -units
+        await addInventoryEntry(client, {
+          stall_id: product.stall_id, product_id: product.id, quantity_delta: delta,
+          movement_type: mode === 'receive' ? 'receive' : 'adjustment', reason: reason.trim(),
+        }, requestId.current)
+        confirmation = mode === 'receive' ? `Stock received successfully: ${delta.toLocaleString()} ${product.base_unit} added.` : 'Inventory adjusted successfully.'
+      }
+      requestId.current = null
       setQuantity('')
-      await onRefresh()
       setMessageTone('success')
-      setMessage(mode === 'receive'
-        ? `Stock received successfully: ${delta.toLocaleString()} ${product.base_unit} added.`
-        : 'Inventory adjusted successfully.')
+      setMessage(confirmation)
+      await onRefresh()
     } catch (error) { onError(getErrorMessage(error)) }
-    finally { setSaving(false) }
+    finally { submitting.current = false; setSaving(false) }
   }
 
   return <Panel title={mode === 'receive' ? 'Receive stock' : 'Adjust inventory'} description={mode === 'receive' ? 'Enter the number of purchase units received; IMS converts them into the product’s base stock unit.' : 'Set the counted total or add/remove stock in purchase units or base units.'}>
@@ -1322,7 +1440,6 @@ export function ReportsScreen({ data, amountsVisible }: ScreenProps) {
 export function DailyCloseScreen({ data, amountsVisible }: ScreenProps) {
   const money = (value: number) => formatFinancialAmount(value, amountsVisible)
   const [date, setDate] = useState(getBusinessDateKey())
-  const [physical, setPhysical] = useState<Record<string, string>>({})
   const overheadItems = data.stall?.overhead_config?.length ? data.stall.overhead_config : DEFAULT_OVERHEAD_ITEMS
   const [report] = getDailyProfitReport(data.products, data.inventory, data.transactions, data.transactionItems, date, date, overheadItems, data.businessDays.map((day) => day.business_date), data.stall?.financial_report_reset_at, data.revenueDeductions, data.dailyClosings, data.saleComponents)
   const emptyReport = { businessDate: date, revenue: 0, cogs: 0, wasteCost: 0, fixedOverhead: 0, revenueDeduction: 0, profitDeduction: 0, netProfit: 0, completedSales: 0, voidedSales: 0 }
@@ -1334,7 +1451,7 @@ export function DailyCloseScreen({ data, amountsVisible }: ScreenProps) {
   const dayDeductions = data.revenueDeductions.filter((entry) => entry.business_date === date)
   return <div className="space-y-5">
     {!data.deductionsAvailable && <Notice tone="info">POS deductions are unavailable until the revenue-deductions database migration is applied. Profit may be incomplete.</Notice>}
-    <Panel title="Daily Close & Profit" description="Review the day’s cash, recipe usage, costs, and physical stock before final reconciliation." action={<Input label="Business date" type="date" value={date} onChange={(event) => { setDate(event.target.value); setPhysical({}) }} />}>
+    <Panel title="Daily Close & Profit" description="Review the day’s cash, costs, and physical stock counts from the POS." action={<Input label="Business date" type="date" value={date} onChange={(event) => setDate(event.target.value)} />}>
       {saved && <Notice tone="success">Closed at {dateTime.format(new Date(saved.closed_at))} · collected {money(saved.collected_cash)} vs expected {money(saved.expected_cash)}.</Notice>}
       {import.meta.env.DEV && serverDay && <p className="break-all text-xs text-slate-500">Day ID: {serverDay.id}<br />POS ID: {serverDay.device_id}<br />Cashier ID: {serverDay.cashier_id}<br />Opened at (UTC): {serverDay.opened_at}<br />Opening notes: {serverDay.opening_notes ?? '—'}</p>}
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
@@ -1348,8 +1465,42 @@ export function DailyCloseScreen({ data, amountsVisible }: ScreenProps) {
     </Panel>
     <div className="grid gap-5 lg:grid-cols-[0.65fr_1.35fr]">
       <Panel title="Overhead breakdown" description="Itemized daily operating cost."><div className="divide-y divide-slate-100">{overheadItems.map((item) => <div className="flex items-center justify-between gap-3 py-3" key={item.key}><div><p className="text-sm font-semibold text-[#39235f]">{item.label}</p>{item.description && <p className="text-xs text-slate-400">{item.description}</p>}</div><p className="font-bold text-[#220046]">{money(item.dailyRate)}</p></div>)}</div></Panel>
-      <Panel title="Inventory reconciliation" description="Expected stock uses starting quantity, receipts, recipe-based sales usage, and recorded waste.">
-        {reconciliation.length === 0 ? <EmptyState title="No inventory components" description="Add raw ingredients or packaging products to begin reconciliation." /> : <Table><TableHead><th className="px-3 py-3">Item</th><th className="px-3 py-3 text-right">Starting</th><th className="px-3 py-3 text-right">Sales usage</th><th className="px-3 py-3 text-right">Powder opened</th><th className="px-3 py-3 text-right">Waste</th><th className="px-3 py-3 text-right">Expected</th><th className="px-3 py-3">Physical count</th><th className="px-3 py-3 text-right">Variance</th></TableHead><tbody>{reconciliation.map((row) => { const count = physical[row.product.id] === undefined || physical[row.product.id] === '' ? null : Number(physical[row.product.id]); const variance = count === null || !Number.isFinite(count) ? null : count - row.expected; return <tr className="border-b border-slate-100" key={row.product.id}><TableCell><p className="font-semibold">{row.product.name}</p><p className="text-xs text-slate-400">{row.product.base_unit}</p></TableCell><TableCell className="text-right">{row.starting.toLocaleString()}</TableCell><TableCell className="text-right">{row.salesUsage.toLocaleString()}</TableCell><TableCell className="text-right">{row.powderOpened.toLocaleString()}</TableCell><TableCell className="text-right">{row.waste.toLocaleString()}</TableCell><TableCell className="text-right font-bold">{row.expected.toLocaleString()}</TableCell><TableCell><input aria-label={`Physical count for ${row.product.name}`} className="w-28 rounded-lg border border-[#dfd4f3] px-2 py-2" min="0" step="0.001" type="number" value={physical[row.product.id] ?? ''} onChange={(event) => setPhysical((current) => ({ ...current, [row.product.id]: event.target.value }))} /></TableCell><TableCell className={`text-right font-semibold ${variance === null ? 'text-slate-400' : Math.abs(variance) < 0.001 ? 'text-emerald-700' : 'text-red-700'}`}>{variance === null ? '—' : variance.toLocaleString()}</TableCell></tr> })}</tbody></Table>}
+      <Panel title="Inventory reconciliation" description="Expected stock is the recorded balance before the closing count. Variance shows the adjustment saved by the POS.">
+        {reconciliation.length === 0 ? (
+          <EmptyState title="No inventory components" description="Add raw ingredients or packaging products to begin reconciliation." />
+        ) : (
+          <Table>
+            <TableHead>
+              <th className="px-3 py-3">Item</th>
+              <th className="px-3 py-3 text-right">Starting</th>
+              <th className="px-3 py-3 text-right">Sales usage</th>
+              <th className="px-3 py-3 text-right">Powder opened</th>
+              <th className="px-3 py-3 text-right">Waste</th>
+              <th className="px-3 py-3 text-right">Expected</th>
+              <th className="px-3 py-3 text-right">Physical count</th>
+              <th className="px-3 py-3 text-right">Variance</th>
+            </TableHead>
+            <tbody>{reconciliation.map((row) => (
+              <tr className="border-b border-slate-100" key={row.product.id}>
+                <TableCell>
+                  <p className="font-semibold">{row.product.name}</p>
+                  <p className="text-xs text-slate-500">{row.product.base_unit}</p>
+                </TableCell>
+                <TableCell className="text-right">{row.starting.toLocaleString()}</TableCell>
+                <TableCell className="text-right">{row.salesUsage.toLocaleString()}</TableCell>
+                <TableCell className="text-right">{row.powderOpened.toLocaleString()}</TableCell>
+                <TableCell className="text-right">{row.waste.toLocaleString()}</TableCell>
+                <TableCell className="text-right font-bold">{row.expected.toLocaleString()}</TableCell>
+                <TableCell className="text-right">
+                  {row.physicalCount === null ? '—' : `${row.physicalCount.toLocaleString()} ${row.countUnit === 'pack' ? 'sealed packs' : row.countUnit}`}
+                </TableCell>
+                <TableCell className={`text-right font-semibold ${row.variance === null ? 'text-slate-500' : row.variance === 0 ? 'text-emerald-700' : 'text-slate-900'}`}>
+                  {row.variance === null ? '—' : `${row.variance.toLocaleString(undefined, { signDisplay: 'exceptZero' })}${row.countUnit === 'pack' ? ' packs' : ''}`}
+                </TableCell>
+              </tr>
+            ))}</tbody>
+          </Table>
+        )}
       </Panel>
     </div>
   </div>

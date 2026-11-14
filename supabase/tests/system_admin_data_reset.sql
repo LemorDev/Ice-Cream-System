@@ -14,7 +14,7 @@ $$;
 
 create trigger reject_reset_audit
 before insert on public.security_audit_log for each row
-when (new.action in ('stall.stock_reset', 'stall.operating_history_reset'))
+when (new.action in ('stall.stock_reset', 'stall.operating_history_reset', 'business_day.reset'))
 execute function pg_temp.reject_reset_audit();
 
 do $$
@@ -131,6 +131,125 @@ begin
       and details ->> 'stale_open_day_count' = '1'
   ) then
     raise exception 'The stale cloud operating day was not recorded in the reset audit';
+  end if;
+end;
+$$;
+
+do $$
+declare
+  stall uuid := gen_random_uuid();
+  admin uuid := gen_random_uuid();
+  cashier uuid := gen_random_uuid();
+  device uuid := gen_random_uuid();
+  product uuid := gen_random_uuid();
+  sale uuid := gen_random_uuid();
+  first_day uuid := gen_random_uuid();
+  second_day uuid := gen_random_uuid();
+  closing uuid := gen_random_uuid();
+  today date := (statement_timestamp() at time zone 'Asia/Manila')::date;
+  admin_token text := encode(gen_random_bytes(32), 'hex');
+  cashier_token text := encode(gen_random_bytes(32), 'hex');
+  admin_headers text := jsonb_build_object('x-session-token', admin_token)::text;
+  cashier_headers text := jsonb_build_object('x-session-token', cashier_token, 'x-device-id', 'reset-pos')::text;
+  opening jsonb := jsonb_build_object('id', first_day, 'stall_id', stall, 'device_id', device,
+    'business_date', today, 'opened_at', now() - interval '1 hour');
+  closed jsonb := opening || jsonb_build_object('closed_at', now(), 'closing_cash_total', 25);
+  result jsonb;
+begin
+  insert into public.stalls(id, name, code) values (stall, 'Same-date fixture', 'DAY-' || substr(stall::text, 1, 8));
+  insert into public.app_users(id, stall_id, email, employee_id, display_name, role, password_hash) values
+    (admin, stall, admin::text || '@example.invalid', null, 'Reset admin', 'system_admin', 'unused'),
+    (cashier, stall, cashier::text || '@example.invalid', 'CASH-1', 'Reset cashier', 'cashier', 'unused');
+  insert into public.app_sessions(user_id, token_hash, expires_at) values
+    (admin, encode(digest(admin_token, 'sha256'), 'hex'), now() + interval '1 hour'),
+    (cashier, encode(digest(cashier_token, 'sha256'), 'hex'), now() + interval '1 hour');
+  insert into public.devices(id, stall_id, device_name, activation_code_hash, hardware_id)
+  values (device, stall, 'Reset POS', 'used', 'reset-pos');
+  insert into public.products(id, stall_id, sku, name, unit, product_type, base_unit)
+  values (product, stall, 'TEST-POWDER', 'Powder', 'piece', 'raw', 'piece');
+
+  perform set_config('request.headers', cashier_headers, true);
+  perform public.push_business_day(opening);
+  begin
+    perform public.reset_closed_operating_day(stall, first_day);
+    raise exception 'Cashier could reset an operating day';
+  exception when insufficient_privilege then null;
+  end;
+  perform set_config('request.headers', admin_headers, true);
+  begin
+    perform public.reset_closed_operating_day(stall, first_day);
+    raise exception 'An open operating day was reset';
+  exception when invalid_parameter_value then null;
+  end;
+
+  perform set_config('request.headers', cashier_headers, true);
+  perform public.push_business_day(closed);
+  insert into public.inventory_ledger(stall_id, product_id, business_day_id, quantity_delta, movement_type)
+  values (stall, product, first_day, 2, 'receive');
+  insert into public.transactions(id, stall_id, business_day_id, receipt_number, subtotal, total_amount)
+  values (sale, stall, first_day, 'DAY-RESET-RECEIPT', 25, 25);
+  perform set_config('request.headers', admin_headers, true);
+  begin
+    perform public.reset_closed_operating_day(stall, first_day);
+    raise exception 'The reset accepted a missing final closing';
+  exception when invalid_parameter_value then null;
+  end;
+
+  perform set_config('request.headers', cashier_headers, true);
+  result := public.push_daily_store_closing_v2(jsonb_build_object(
+    'id', closing, 'stall_id', stall, 'device_id', device, 'business_day_id', first_day,
+    'business_date', today, 'closed_at', now(), 'sale_count', 1, 'movement_count', 1, 'deduction_count', 0,
+    'reversal_count', 0, 'gross_sales', 25, 'cogs', 0, 'waste_cost', 0, 'revenue_deduction', 0,
+    'expected_cash', 25, 'collected_cash', 25));
+  if result->>'status' is distinct from 'accepted' then raise exception 'First closing failed'; end if;
+
+  perform set_config('request.headers', admin_headers, true);
+  perform set_config('test.reject_reset_audit', 'on', true);
+  begin
+    perform public.reset_closed_operating_day(stall, first_day);
+    raise exception 'Operating-day reset ignored the audit failure';
+  exception when sqlstate 'P0099' then null;
+  end;
+  if not exists (select 1 from public.business_days where id = first_day and deleted_at is null)
+    or not exists (select 1 from public.daily_store_closings where id = closing) then
+    raise exception 'Failed operating-day reset left partial changes';
+  end if;
+  perform set_config('test.reject_reset_audit', 'off', true);
+  result := public.reset_closed_operating_day(stall, first_day);
+  if result->>'affected_records' is distinct from '1'
+    or not exists (select 1 from public.transactions where id = sale and business_day_id = first_day and deleted_at is null)
+    or public.get_stock_on_hand(stall, product) is distinct from 2::numeric
+    or not exists (select 1 from public.security_audit_log where stall_id = stall and action = 'business_day.reset'
+      and details->'closing'->>'id' = closing::text) then
+    raise exception 'Same-date reset failed to preserve the sale, stock, or closing audit';
+  end if;
+
+  perform set_config('request.headers', cashier_headers, true);
+  if not public.get_pos_operating_day_reset(first_day) then raise exception 'POS did not see the reset'; end if;
+  if not public.get_pos_operating_day_reset(first_day, closing)
+    or public.get_pos_operating_day_reset(first_day, gen_random_uuid()) then
+    raise exception 'A closing retry did not match its archived acknowledgement';
+  end if;
+  begin
+    perform public.push_business_day(closed);
+    raise exception 'An old device upload recreated the reset day';
+  exception when invalid_parameter_value then null;
+  end;
+  opening := opening || jsonb_build_object('id', second_day, 'opened_at', now() + interval '1 second');
+  perform public.push_business_day(opening);
+  perform public.push_business_day(opening || jsonb_build_object('closed_at', now() + interval '2 seconds', 'closing_cash_total', 0));
+  result := public.push_daily_store_closing_v2(jsonb_build_object(
+    'id', gen_random_uuid(), 'stall_id', stall, 'device_id', device, 'business_day_id', second_day,
+    'business_date', today, 'closed_at', now() + interval '2 seconds', 'sale_count', 0, 'movement_count', 0,
+    'deduction_count', 0, 'reversal_count', 0, 'gross_sales', 0, 'cogs', 0, 'waste_cost', 0,
+    'revenue_deduction', 0, 'expected_cash', 0, 'collected_cash', 0));
+  if result->>'status' is distinct from 'accepted' then raise exception 'Second closing on the same date failed'; end if;
+
+  perform set_config('request.headers', admin_headers, true);
+  result := public.reset_closed_operating_day(stall, first_day);
+  if result->>'affected_records' is distinct from '0'
+    or not exists (select 1 from public.business_days where id = second_day and deleted_at is null) then
+    raise exception 'Retrying the old reset affected the new operating day';
   end if;
 end;
 $$;

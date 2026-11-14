@@ -23,8 +23,9 @@ interface SaleReversalDao {
     @Query("SELECT COALESCE(SUM(cashReturnedCents), 0) FROM sale_reversals WHERE payoutDayId = :dayId AND kind = 'refund'")
     suspend fun cashReturnedForDay(dayId: String): Long
 
-    @Query("SELECT COALESCE(SUM(t.cogsCents), 0) FROM sale_reversals r JOIN transactions t ON t.id = r.transactionId WHERE r.originalDayId = :dayId AND r.restock = 0")
-    suspend fun wasteCostForOriginalDay(dayId: String): Long
+    @Query("""SELECT COALESCE(SUM(t.cogsCents), 0) FROM sale_reversals r JOIN transactions t ON t.id = r.transactionId
+        WHERE r.originalDayId = :dayId AND r.restock = 0 AND julianday(r.occurredAt) <= julianday(:closedAt)""")
+    suspend fun wasteCostForOriginalDay(dayId: String, closedAt: String): Long
 
     @Upsert suspend fun upsert(reversal: SaleReversalEntity)
 

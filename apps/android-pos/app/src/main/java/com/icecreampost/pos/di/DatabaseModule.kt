@@ -46,6 +46,8 @@ object DatabaseModule {
                 CoolerzDatabase.MIGRATION_14_15,
                 CoolerzDatabase.MIGRATION_15_16,
                 CoolerzDatabase.MIGRATION_16_17,
+                CoolerzDatabase.MIGRATION_17_18,
+                CoolerzDatabase.MIGRATION_18_19,
                 CoolerzDatabase.MIGRATION_4_15,
             )
             .addCallback(object : RoomDatabase.Callback() {

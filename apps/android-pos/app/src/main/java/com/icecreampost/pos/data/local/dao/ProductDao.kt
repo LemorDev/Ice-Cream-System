@@ -11,6 +11,10 @@ interface ProductDao {
     @Query("SELECT * FROM products WHERE deletedAt IS NULL ORDER BY name")
     fun observeProducts(): Flow<List<ProductEntity>>
 
+    @Query("""SELECT * FROM products WHERE stallId = :stallId AND deletedAt IS NULL
+        AND countAtClosing = 1 AND productType IN ('raw', 'packaging') ORDER BY name""")
+    suspend fun findClosingStockItems(stallId: String): List<ProductEntity>
+
     @Query("SELECT * FROM products WHERE id = :id LIMIT 1")
     suspend fun findById(id: String): ProductEntity?
 

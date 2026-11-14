@@ -18,4 +18,6 @@ data class InventoryLedgerDto(
     @SerialName("business_day_id") val businessDayId: String? = null,
     @SerialName("unit_cost") val unitCost: Double? = null,
     @SerialName("sealed_packs_delta") val sealedPacksDelta: Int = 0,
+    @SerialName("counted_quantity") val countedQuantity: Double? = null,
+    @SerialName("counted_unit") val countedUnit: String? = null,
 )

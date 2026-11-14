@@ -1,6 +1,7 @@
 package com.icecreampost.pos.data.repository
 
 import com.icecreampost.pos.core.logging.AppLogger
+import com.icecreampost.pos.core.time.parsePosTimestamp
 import com.icecreampost.pos.data.local.dao.SyncStateDao
 import com.icecreampost.pos.data.local.dao.TransactionDao
 import com.icecreampost.pos.data.local.dao.BusinessDayDao
@@ -23,15 +24,20 @@ import com.icecreampost.pos.data.remote.dto.PushInventoryEntryRequest
 import com.icecreampost.pos.data.remote.dto.PushPackUnsealPayload
 import com.icecreampost.pos.data.remote.dto.PushPackUnsealRequest
 import com.icecreampost.pos.data.remote.dto.PushDailyClosingPayload
+import com.icecreampost.pos.data.remote.dto.PushClosingStockCount
 import com.icecreampost.pos.data.remote.dto.PushDailyClosingRequest
 import com.icecreampost.pos.data.remote.dto.ClosingCountsRequest
 import com.icecreampost.pos.data.remote.dto.ClosingCountsResponse
+import com.icecreampost.pos.data.remote.dto.OperatingDayResetRequest
 import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionPayload
 import com.icecreampost.pos.data.remote.dto.PushRevenueDeductionRequest
 import com.icecreampost.pos.data.remote.dto.PushSaleReversalPayload
 import com.icecreampost.pos.data.remote.dto.PushSaleReversalRequest
 import com.icecreampost.pos.data.remote.dto.PushReversalMovementPayload
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -40,13 +46,26 @@ import kotlinx.serialization.json.jsonPrimitive
 import retrofit2.HttpException
 import java.io.IOException
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 
 class RetryableSyncException(message: String, cause: Throwable? = null) : Exception(message, cause)
-class PosAuthorizationException(message: String, cause: Throwable) : Exception(message, cause)
+const val SYNC_SIGN_IN_REQUIRED = "sign-in-required"
 
-data class SyncReport(val pushed: Int, val permanentFailures: Int, val businessDaysSynced: Int = 0, val ledgerEntriesSynced: Int = 0, val closingsSynced: Int = 0, val deductionsSynced: Int = 0, val failureMessage: String? = null, val reversalsSynced: Int = 0)
+data class SyncReport(val pushed: Int, val permanentFailures: Int, val businessDaysSynced: Int = 0, val ledgerEntriesSynced: Int = 0, val closingsSynced: Int = 0, val deductionsSynced: Int = 0, val failureMessage: String? = null, val reversalsSynced: Int = 0) {
+    operator fun plus(next: SyncReport) = SyncReport(
+        pushed + next.pushed,
+        permanentFailures + next.permanentFailures,
+        businessDaysSynced + next.businessDaysSynced,
+        ledgerEntriesSynced + next.ledgerEntriesSynced,
+        closingsSynced + next.closingsSynced,
+        deductionsSynced + next.deductionsSynced,
+        failureMessage ?: next.failureMessage,
+        reversalsSynced + next.reversalsSynced,
+    )
+}
 
 @Singleton
 class SyncRepository @Inject constructor(
@@ -60,23 +79,81 @@ class SyncRepository @Inject constructor(
     private val api: SupabaseApi,
     private val productRepository: ProductRepository,
     private val logger: AppLogger,
+    private val sessionRepository: SessionRepository,
 ) {
     private val syncMutex = Mutex()
-    fun observeSyncState(): Flow<SyncStateEntity?> = syncStateDao.observe("sync")
+    private val syncActive = MutableStateFlow(false)
 
-    suspend fun resetStatus() {
-        setState("offline-ready", null)
+    fun observeSyncState(): Flow<SyncStateEntity?> = syncStateDao.observe("sync").combine(syncActive) { saved, active ->
+        when {
+            active -> (saved ?: SyncStateEntity(key = "sync", value = "android-sync"))
+                .copy(status = "running", errorMessage = null)
+            saved?.status == "running" -> saved.copy(status = "error", errorMessage = "Sync was interrupted. Try syncing again.")
+            else -> saved
+        }
     }
 
-    suspend fun hasPendingWork(): Boolean = businessDayDao.getUnsynced().isNotEmpty() ||
+    suspend fun hasPendingWork(): Boolean = hasPendingOperations() || dailyStoreClosingDao.getUnsynced().isNotEmpty()
+
+    private suspend fun hasPendingOperations(): Boolean = businessDayDao.getUnsynced().isNotEmpty() ||
         transactionDao.getUnsynced().isNotEmpty() || inventoryLedgerDao.countPending() > 0 ||
-        revenueDeductionDao.getUnsynced().isNotEmpty() || reversalDao.getUnsynced().isNotEmpty() ||
-        dailyStoreClosingDao.getUnsynced().isNotEmpty()
+        revenueDeductionDao.getUnsynced().isNotEmpty() || reversalDao.getUnsynced().isNotEmpty()
 
-    suspend fun sync(): SyncReport = syncMutex.withLock { syncOnce() }
+    suspend fun sync(): SyncReport = syncMutex.withLock {
+        syncActive.value = true
+        try {
+            prepareCloudSync()
+            refreshPreviousDeviceDay()
+            refreshClosedOperatingDay()
+            var report = SyncReport(pushed = 0, permanentFailures = 0)
+            var nextCutoff = dailyStoreClosingDao.getUnsynced().firstOrNull { it.stockCountRevisionId != null }?.closedAt
+            do {
+                val cutoff = nextCutoff
+                val batch = syncThrough(cutoff)
+                report += batch
+                nextCutoff = dailyStoreClosingDao.getUnsynced().firstOrNull { it.stockCountRevisionId != null }?.closedAt
+            } while (nextCutoff != cutoff && batch.permanentFailures == 0)
+            if (nextCutoff != null && report.permanentFailures == 0) {
+                report = report.copy(permanentFailures = 1,
+                    failureMessage = "The closing stock count is waiting for earlier records. Review the sync queue.")
+            }
+            val failures = report.permanentFailures
+            setState(if (failures == 0) "success" else "error",
+                report.failureMessage?.let { "$failures queued record(s) need attention. $it" })
+            report
+        } catch (error: CloudSignInRequiredException) {
+            setState(SYNC_SIGN_IN_REQUIRED, error.message)
+            throw error
+        } finally {
+            syncActive.value = false
+        }
+    }
 
-    private suspend fun syncOnce(): SyncReport {
-        setState("running", null)
+    private suspend fun prepareCloudSync() {
+        try {
+            sessionRepository.prepareCloudSync()
+        } catch (error: Exception) {
+            if (error is CancellationException || error is CloudSignInRequiredException) throw error
+            if (error is RetryableSyncException) {
+                setState("retrying", error.message)
+                throw error
+            }
+            val retryable = isRetryable(error)
+            val message = if (retryable) {
+                "Cloud sync is unavailable. Records remain saved on this device."
+            } else {
+                error.message ?: "Could not start cloud sync."
+            }
+            setState(if (retryable) "retrying" else "error", message)
+            if (retryable) throw RetryableSyncException(message, error)
+            throw IllegalStateException(message, error)
+        }
+    }
+
+    private suspend fun syncThrough(cutoff: String?): SyncReport {
+        // An offline close can change the stock used by the next day's sales.
+        val through = cutoff?.let(::parsePosTimestamp) ?: Instant.now()
+        fun inBatch(timestamp: String) = parsePosTimestamp(timestamp) <= through
         var pushed = 0
         var permanentFailures = 0
         var businessDaysSynced = 0
@@ -86,37 +163,41 @@ class SyncRepository @Inject constructor(
         var reversalsSynced = 0
         val failureMessages = mutableListOf<String>()
 
-        for (day in businessDayDao.getUnsynced()) {
+        for (queuedDay in businessDayDao.getUnsynced()) {
+            if (!inBatch(queuedDay.openedAt)) continue
+            var day = queuedDay
             try {
-                pushBusinessDay(day)
-                businessDayDao.markSynced(day.id)
-                businessDaysSynced += 1
-            } catch (error: Exception) {
-                authorizationError(error)?.let {
-                    setState("error", it.message)
-                    throw it
+                if (syncBusinessDay(day)) {
+                    businessDaysSynced += 1
+                    continue
                 }
+                // Closing can change the local row while the opening uploads.
+                day = businessDayDao.getUnsynced().firstOrNull { it.id == queuedDay.id } ?: continue
+                if (syncBusinessDay(day)) businessDaysSynced += 1
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                authorizationError(error)?.let { throw it }
                 val message = describeSyncError("Operating day", error)
                 if (isRetryable(error)) {
                     setState("retrying", message)
                     throw RetryableSyncException(message, error)
                 }
-                businessDayDao.markSyncError(day.id, message)
-                failureMessages += message
-                permanentFailures += 1
+                if (businessDayDao.markSyncError(day.id, day.updatedAt, day.closedAt, message) == 1) {
+                    failureMessages += message
+                    permanentFailures += 1
+                }
             }
         }
 
         for (transaction in transactionDao.getUnsynced()) {
+            if (!inBatch(transaction.occurredAt)) continue
             try {
                 push(transaction)
                 transactionDao.markSynced(transaction.id)
                 pushed += 1
             } catch (error: Exception) {
-                authorizationError(error)?.let {
-                    setState("error", it.message)
-                    throw it
-                }
+                if (error is CancellationException) throw error
+                authorizationError(error)?.let { throw it }
                 val message = describeSyncError("Sale", error)
                 if (isRetryable(error)) {
                     setState("retrying", message)
@@ -130,6 +211,7 @@ class SyncRepository @Inject constructor(
         }
 
         for (entry in inventoryLedgerDao.getUnsynced()) {
+            if (!inBatch(entry.occurredAt)) continue
             try {
                 val response = if (entry.movementType == "pack_unsealed") {
                     val request = PushPackUnsealRequest(PushPackUnsealPayload(
@@ -150,7 +232,8 @@ class SyncRepository @Inject constructor(
                 inventoryLedgerDao.markSynced(entry.id)
                 ledgerEntriesSynced += 1
             } catch (error: Exception) {
-                authorizationError(error)?.let { setState("error", it.message); throw it }
+                if (error is CancellationException) throw error
+                authorizationError(error)?.let { throw it }
                 val message = describeSyncError("Inventory movement", error)
                 if (isRetryable(error)) { setState("retrying", message); throw RetryableSyncException(message, error) }
                 if (entry.movementType != "receive") inventoryLedgerDao.markSyncError(entry.id, message)
@@ -159,6 +242,7 @@ class SyncRepository @Inject constructor(
         }
 
         for (reversal in reversalDao.getUnsynced()) {
+            if (!inBatch(reversal.occurredAt)) continue
             if (transactionDao.getUnsynced().any { it.id == reversal.transactionId }) continue
             try {
                 val movements = inventoryLedgerDao.getReversalMovements(reversal.transactionId)
@@ -184,7 +268,10 @@ class SyncRepository @Inject constructor(
                 reversalDao.markSynced(reversal.id)
                 reversalsSynced += 1
             } catch (error: Exception) {
-                authorizationError(error)?.let { setState("error", it.message); throw it }
+                if (error is CancellationException) {
+                    throw error
+                }
+                authorizationError(error)?.let { throw it }
                 val message = describeSyncError("Sale reversal", error)
                 if (isRetryable(error)) { setState("retrying", message); throw RetryableSyncException(message, error) }
                 reversalDao.markSyncError(reversal.id, message)
@@ -194,6 +281,7 @@ class SyncRepository @Inject constructor(
         }
 
         for (deduction in revenueDeductionDao.getUnsynced()) {
+            if (!inBatch(deduction.occurredAt)) continue
             if (businessDayDao.getUnsynced().any { it.id == deduction.businessDayId }) continue
             try {
                 val response = api.pushRevenueDeduction(PushRevenueDeductionRequest(PushRevenueDeductionPayload(
@@ -204,7 +292,10 @@ class SyncRepository @Inject constructor(
                 revenueDeductionDao.markSynced(deduction.id)
                 deductionsSynced += 1
             } catch (error: Exception) {
-                authorizationError(error)?.let { setState("error", it.message); throw it }
+                if (error is CancellationException) {
+                    throw error
+                }
+                authorizationError(error)?.let { throw it }
                 val message = describeSyncError("Revenue deduction", error)
                 if (isRetryable(error)) { setState("retrying", message); throw RetryableSyncException(message, error) }
                 revenueDeductionDao.markSyncError(deduction.id, message)
@@ -219,7 +310,8 @@ class SyncRepository @Inject constructor(
         try {
             productRepository.refreshFromCloud()
         } catch (error: Exception) {
-            authorizationError(error)?.let { setState("error", it.message); throw it }
+            if (error is CancellationException) throw error
+            authorizationError(error)?.let { throw it }
             val message = error.message ?: "Unable to update the product catalog."
             if (isRetryable(error)) { setState("retrying", message); throw RetryableSyncException(message, error) }
             setState("error", message)
@@ -227,13 +319,18 @@ class SyncRepository @Inject constructor(
         }
 
         for (closing in dailyStoreClosingDao.getUnsynced()) {
+            if (!inBatch(closing.closedAt)) continue
             if (businessDayDao.getUnsynced().any { it.id == closing.businessDayId }) continue
             if (revenueDeductionDao.getUnsynced().any { it.businessDayId == closing.businessDayId }) continue
-            if (reversalDao.getUnsynced().any { it.payoutDayId == closing.businessDayId || it.originalDayId == closing.businessDayId }) continue
+            if (reversalDao.getUnsynced().any {
+                (it.payoutDayId == closing.businessDayId || it.originalDayId == closing.businessDayId) &&
+                    parsePosTimestamp(it.occurredAt) <= parsePosTimestamp(closing.closedAt)
+            }) continue
             // A server closing is final. Never acknowledge it while any local sale or
             // stock movement can still change its totals, including failed records.
-            if (transactionDao.getUnsynced().any { it.stallId == closing.stallId && it.occurredAt <= closing.closedAt }) continue
-            if (inventoryLedgerDao.countPending() > 0) continue
+            if (transactionDao.getUnsynced().any { it.stallId == closing.stallId &&
+                    parsePosTimestamp(it.occurredAt) <= parsePosTimestamp(closing.closedAt) }) continue
+            if (inventoryLedgerDao.countPendingStockThrough(closing.stallId, closing.closedAt) > 0) continue
             try {
                 val day = businessDayDao.findByDate(closing.stallId, closing.businessDate)
                     ?: error("The operating day for this closing is missing on this POS.")
@@ -244,7 +341,7 @@ class SyncRepository @Inject constructor(
                 val cashSales = transactionDao.getCashSalesBetween(closing.stallId, day.openedAt, closing.closedAt) + day.recoveryKnownSalesCents
                 val cogs = inventoryLedgerDao.getPowderOpeningCost(day.id) + transactionDao.getCompletedCogsBetween(closing.stallId, day.openedAt, closing.closedAt) + day.recoveryKnownCogsCents
                 val waste = inventoryLedgerDao.getWasteCostBetween(closing.stallId, day.openedAt, closing.closedAt) +
-                    reversalDao.wasteCostForOriginalDay(day.id) + day.recoveryKnownWasteCents
+                    reversalDao.wasteCostForOriginalDay(day.id, closing.closedAt) + day.recoveryKnownWasteCents
                 val cashDeductions = revenueDeductionDao.totalForDay(day.id) + day.recoveryKnownDeductionsCents
                 val profitDeductions = revenueDeductionDao.profitAffectingTotalForDay(day.id) + day.recoveryKnownProfitDeductionsCents
                 val refundPayout = reversalDao.cashReturnedForDay(day.id)
@@ -274,6 +371,12 @@ class SyncRepository @Inject constructor(
                         }
                     }
                 } else localCounts
+                val stockCounts = closing.stockCountRevisionId?.let {
+                    inventoryLedgerDao.getClosingStockCounts(closing.businessDayId).map { entry ->
+                        PushClosingStockCount(entry.id, entry.productId, requireNotNull(entry.countedQuantity),
+                            requireNotNull(entry.countedUnit))
+                    }
+                }
                 val response = api.pushDailyClosing(PushDailyClosingRequest(PushDailyClosingPayload(
                     id = closing.id,
                     stallId = closing.stallId,
@@ -294,25 +397,80 @@ class SyncRepository @Inject constructor(
                     movementCount = closingCounts.movementCount,
                     deductionCount = closingCounts.deductionCount,
                     reversalCount = closingCounts.reversalCount,
+                    stockCountRevisionId = closing.stockCountRevisionId,
+                    stockCounts = stockCounts,
                 )))
                 check(response.status == "accepted" || response.status == "duplicate") { "IMS rejected the daily closing." }
                 check(response.closingId == closing.id) { "IMS acknowledged a different closing." }
+                if (stockCounts != null) {
+                    check(response.stockCountsAccepted == stockCounts.size) {
+                        "IMS has not acknowledged the physical counts. Update IMS and sync again."
+                    }
+                    if (stockCounts.isNotEmpty()) {
+                        productRepository.refreshFromCloud()
+                        if (!stockCounts.all { inventoryLedgerDao.findById(it.id)?.isSynced == true }) {
+                            throw IOException("The closing stock counts have not finished downloading.")
+                        }
+                        ledgerEntriesSynced += stockCounts.size
+                    }
+                }
                 dailyStoreClosingDao.markSynced(closing.id); closingsSynced += 1
             } catch (error: Exception) {
-                authorizationError(error)?.let { setState("error", it.message); throw it }
+                if (error is CancellationException) throw error
+                authorizationError(error)?.let { throw it }
                 val message = describeSyncError("Daily closing", error)
                 if (isRetryable(error)) { setState("retrying", message); throw RetryableSyncException(message, error) }
+                if (closing.stockCountRevisionId != null) {
+                    inventoryLedgerDao.getClosingStockCounts(closing.businessDayId).filterNot { it.isSynced }.forEach {
+                        inventoryLedgerDao.markSyncError(it.id, message)
+                    }
+                }
                 dailyStoreClosingDao.markSyncError(closing.id, message); failureMessages += message; permanentFailures += 1
             }
         }
 
-        val status = if (permanentFailures == 0) "success" else "error"
         val failureMessage = failureMessages.firstOrNull()
-        setState(status, if (permanentFailures == 0) null else "$permanentFailures queued record(s) need attention. ${failureMessage.orEmpty()}".trim())
         return SyncReport(pushed, permanentFailures, businessDaysSynced, ledgerEntriesSynced, closingsSynced, deductionsSynced, failureMessage, reversalsSynced)
     }
 
-    private suspend fun pushBusinessDay(day: BusinessDayEntity) {
+    private suspend fun refreshPreviousDeviceDay() {
+        try {
+            sessionRepository.refreshPreviousDeviceDay()
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            authorizationError(error)?.let { throw it }
+            val message = describeSyncError("Operating day", error)
+            val retryable = isRetryable(error)
+            setState(if (retryable) "retrying" else "error", message)
+            if (retryable) throw RetryableSyncException(message, error)
+            throw error
+        }
+    }
+
+    private suspend fun refreshClosedOperatingDay() {
+        val today = LocalDate.now(ZoneId.of("Asia/Manila")).toString()
+        val closedDay = businessDayDao.findSyncedClosedDay(today) ?: return
+        if (hasPendingOperations()) return
+        // A closing may have reached IMS before this POS received its acknowledgement.
+        val pendingClosingId = dailyStoreClosingDao.getUnsynced().firstOrNull { it.businessDayId == closedDay.id }?.id
+        val reset = try {
+            api.isOperatingDayReset(OperatingDayResetRequest(closedDay.id, pendingClosingId))
+        } catch (error: HttpException) {
+            if (error.code() == 404) return // The backend can be upgraded independently of the POS.
+            authorizationError(error)?.let { throw it }
+            val message = describeSyncError("Operating-day refresh", error)
+            setState(if (isRetryable(error)) "retrying" else "error", message)
+            if (isRetryable(error)) throw RetryableSyncException(message, error)
+            throw error
+        } catch (error: IOException) {
+            val message = "Could not refresh the operating day. Try syncing again."
+            setState("retrying", message)
+            throw RetryableSyncException(message, error)
+        }
+        if (reset) businessDayDao.clearResetDay(closedDay.id, pendingClosingId)
+    }
+
+    private suspend fun syncBusinessDay(day: BusinessDayEntity): Boolean {
         val response = api.pushBusinessDay(PushBusinessDayRequest(PushBusinessDayPayload(
             id = day.id, stallId = day.stallId, deviceId = day.deviceId,
             businessDate = day.businessDate, openedAt = day.openedAt, openingNotes = day.openingNotes,
@@ -320,7 +478,8 @@ class SyncRepository @Inject constructor(
             closingNotes = day.closingNotes,
         )))
         check(response.status == "accepted" || response.status == "duplicate") { "IMS rejected the operating day acknowledgement." }
-        check(response.businessDayId.isNotBlank()) { "IMS did not acknowledge the operating day." }
+        check(response.businessDayId == day.id) { "IMS acknowledged a different operating day." }
+        return businessDayDao.markSynced(day.id, day.updatedAt, day.closedAt) == 1
     }
 
     private suspend fun push(transaction: TransactionEntity) {
@@ -417,17 +576,17 @@ class SyncRepository @Inject constructor(
             "SALE_CATALOG_REVISION_REQUIRED" -> "Catalog approval is missing or expired. Keep this sale for reconciliation."
             "SALE_CATALOG_PRICE_MISMATCH", "SALE_CATALOG_COMPONENT_MISMATCH" ->
                 "The sale does not match its approved catalog. Keep it for reconciliation."
+            "CLOSING_STOCK_LIST_MISMATCH", "CLOSING_STOCK_UNIT_CHANGED" ->
+                "The saved stock count differs from the IMS catalog. Review the product settings in IMS."
+            "CLOSING_STOCK_COUNT_CONFLICT", "INVALID_CLOSING_STOCK_COUNTS", "INVALID_CLOSING_STOCK_COUNT" ->
+                "IMS could not accept the saved stock counts. The counts are still on this POS."
             else -> serverMessage ?: error.message ?: "Unable to synchronize."
         }
         return "$label: $message"
     }
 
-    private fun authorizationError(error: Exception): PosAuthorizationException? {
+    private fun authorizationError(error: Exception): CloudSignInRequiredException? {
         val status = (error as? HttpException)?.code() ?: return null
-        return when (status) {
-            401 -> PosAuthorizationException("Cloud sync needs a fresh sign-in. Your sale remains saved on this device.", error)
-            403 -> PosAuthorizationException("This POS device is not authorized for the selected stall. Your sale remains saved on this device.", error)
-            else -> null
-        }
+        return if (status == 401 || status == 403) CloudSignInRequiredException(error) else null
     }
 }

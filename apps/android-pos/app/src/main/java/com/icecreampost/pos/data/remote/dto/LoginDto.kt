@@ -15,6 +15,9 @@ data class LoginRequest(
 )
 
 @Serializable
+data class FingerprintCredentialRequest(@SerialName("p_secret") val secret: String?)
+
+@Serializable
 data class LoginResponse(
     @SerialName("session_token") val sessionToken: String,
     @SerialName("user_id") val userId: String,

@@ -94,6 +94,12 @@ data class PushBusinessDayResponse(
 )
 
 @Serializable
+data class OperatingDayResetRequest(
+    @SerialName("p_business_day_id") val businessDayId: String,
+    @SerialName("p_pending_closing_id") val pendingClosingId: String? = null,
+)
+
+@Serializable
 data class PushInventoryEntryPayload(
     val id: String,
     @SerialName("stall_id") val stallId: String,
@@ -122,6 +128,14 @@ data class PushInventoryEntryPayload(
 @Serializable data class PushPackUnsealRequest(@SerialName("p_entry") val entry: PushPackUnsealPayload)
 
 @Serializable
+data class PushClosingStockCount(
+    val id: String,
+    @SerialName("product_id") val productId: String,
+    val quantity: Double,
+    val unit: String,
+)
+
+@Serializable
 data class PushDailyClosingPayload(
     val id: String,
     @SerialName("stall_id") val stallId: String,
@@ -142,10 +156,17 @@ data class PushDailyClosingPayload(
     @SerialName("movement_count") val movementCount: Int = 0,
     @SerialName("deduction_count") val deductionCount: Int = 0,
     @SerialName("reversal_count") val reversalCount: Int = 0,
+    @SerialName("stock_count_revision_id") val stockCountRevisionId: String? = null,
+    @SerialName("stock_counts") val stockCounts: List<PushClosingStockCount>? = null,
 )
 
 @Serializable data class PushDailyClosingRequest(@SerialName("p_closing") val closing: PushDailyClosingPayload)
-@Serializable data class PushDailyClosingResponse(val status: String, @SerialName("closing_id") val closingId: String)
+@Serializable
+data class PushDailyClosingResponse(
+    val status: String,
+    @SerialName("closing_id") val closingId: String,
+    @SerialName("stock_counts_accepted") val stockCountsAccepted: Int? = null,
+)
 
 @Serializable data class ClosingCountsRequest(
     @SerialName("p_business_day_id") val businessDayId: String,

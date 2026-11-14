@@ -45,7 +45,7 @@ import com.icecreampost.pos.data.local.dao.SaleReversalDao
         RevenueDeductionEntity::class,
         SaleReversalEntity::class,
     ],
-    version = 17,
+    version = 19,
     exportSchema = true,
 )
 abstract class CoolerzDatabase : RoomDatabase() {
@@ -93,6 +93,24 @@ abstract class CoolerzDatabase : RoomDatabase() {
                     db.execSQL("UPDATE products SET imageUrl=(SELECT imageUrl FROM product_image_upgrade WHERE product_image_upgrade.id=products.id)")
                     db.execSQL("DROP TABLE product_image_upgrade")
                 }
+            }
+        }
+
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE products ADD COLUMN menuGroup TEXT")
+                db.execSQL("ALTER TABLE products ADD COLUMN servingType TEXT")
+                db.execSQL("ALTER TABLE products ADD COLUMN servingSize TEXT")
+                db.execSQL("ALTER TABLE products ADD COLUMN flavorName TEXT")
+            }
+        }
+
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE products ADD COLUMN countAtClosing INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE inventory_ledger ADD COLUMN countedQuantity REAL")
+                db.execSQL("ALTER TABLE inventory_ledger ADD COLUMN countedUnit TEXT")
+                db.execSQL("ALTER TABLE daily_store_closings ADD COLUMN stockCountRevisionId TEXT")
             }
         }
 

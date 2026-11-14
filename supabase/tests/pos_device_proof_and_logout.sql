@@ -18,11 +18,16 @@ declare
   permit text;
   activated jsonb;
   signed_in record;
+  fingerprint_secret text := encode(gen_random_bytes(32), 'hex');
+  fingerprint_session text;
   fresh_stall uuid := gen_random_uuid();
   fresh_cashier uuid := gen_random_uuid();
   fresh_device uuid := gen_random_uuid();
   fresh_token text := encode(gen_random_bytes(32), 'hex');
   fresh_hardware text := '000000012345abce';
+  renewal_token text := encode(gen_random_bytes(32), 'hex');
+  renewal_hash text := encode(digest(renewal_token, 'sha256'), 'hex');
+  renewal_headers jsonb := jsonb_build_object('x-session-token', renewal_token, 'x-device-id', hardware);
   headers jsonb := jsonb_build_object('x-session-token', token, 'x-device-id', hardware);
 begin
   if has_function_privilege('anon', 'public.issue_pos_request_permit(text,uuid,text,text,text,text,text)', 'EXECUTE')
@@ -109,6 +114,82 @@ begin
     raise exception 'Signed password login did not restore the enrolled device';
   end if;
 
+  perform set_config('role', 'none', true);
+  insert into public.app_sessions(user_id, token_hash, expires_at, pos_device_id, pos_key_hash)
+    values (cashier, renewal_hash, now() - interval '1 hour', device, encode(digest(key_b, 'sha256'), 'hex'));
+  perform set_config('role', 'service_role', true);
+  if public.issue_pos_request_permit(hardware, gen_random_uuid(), key_b, renewal_hash,
+      'POST', '/rpc/get_pos_catalog_revision', null) is not null then
+    raise exception 'An expired bearer acquired an ordinary sync permit';
+  end if;
+  if public.issue_pos_request_permit(hardware, gen_random_uuid(), key_a, renewal_hash,
+      'POST', '/rpc/renew_pos_session', null) is not null
+    or public.issue_pos_request_permit(fresh_hardware, gen_random_uuid(), key_b, renewal_hash,
+      'POST', '/rpc/renew_pos_session', null) is not null
+    or public.issue_pos_request_permit(hardware, gen_random_uuid(), key_b, null,
+      'POST', '/rpc/renew_pos_session', null) is not null then
+    raise exception 'Renewal admitted a missing bearer, wrong device, or prior key';
+  end if;
+  permit := public.issue_pos_request_permit(hardware, gen_random_uuid(), key_b, renewal_hash,
+    'POST', '/rpc/renew_pos_session', null);
+  if permit is null then raise exception 'Renewal denied the registered device'; end if;
+  perform set_config('role', 'anon', true);
+  perform set_config('request.path', '/rpc/renew_pos_session', true);
+  perform set_config('request.headers', renewal_headers::text, true);
+  begin
+    perform public.renew_pos_session();
+    raise exception 'A direct caller renewed a copied bearer';
+  exception when insufficient_privilege then null;
+  end;
+  perform set_config('request.headers', (renewal_headers || jsonb_build_object('x-pos-permit', permit))::text, true);
+  if public.renew_pos_session() is distinct from now() + interval '12 hours' then
+    raise exception 'The registered device did not receive a renewed session';
+  end if;
+  perform set_config('role', 'service_role', true);
+  permit := public.issue_pos_request_permit(hardware, gen_random_uuid(), key_b, renewal_hash,
+    'POST', '/rpc/get_pos_catalog_revision', null);
+  perform set_config('role', 'anon', true);
+  perform set_config('request.path', '/rpc/get_pos_catalog_revision', true);
+  perform set_config('request.headers', (renewal_headers || jsonb_build_object('x-pos-permit', permit))::text, true);
+  if public.active_pos_device(device) is distinct from true then
+    raise exception 'Ordinary sync failed after renewal';
+  end if;
+
+  perform set_config('role', 'none', true);
+  update public.app_sessions s set expires_at = now() - interval '31 days' where s.token_hash = renewal_hash;
+  perform set_config('role', 'service_role', true);
+  if public.issue_pos_request_permit(hardware, gen_random_uuid(), key_b, renewal_hash,
+      'POST', '/rpc/renew_pos_session', null) is not null then
+    raise exception 'Renewal accepted a bearer past its grace period';
+  end if;
+  perform set_config('role', 'none', true);
+  update public.app_sessions s set expires_at = now() - interval '1 hour' where s.token_hash = renewal_hash;
+  update public.devices set is_active = false where id = device;
+  perform set_config('role', 'service_role', true);
+  if public.issue_pos_request_permit(hardware, gen_random_uuid(), key_b, renewal_hash,
+      'POST', '/rpc/renew_pos_session', null) is not null then
+    raise exception 'Renewal accepted a disabled device';
+  end if;
+  perform set_config('role', 'none', true);
+  update public.devices set is_active = true where id = device;
+  perform set_config('role', 'service_role', true);
+  permit := public.issue_pos_request_permit(hardware, gen_random_uuid(), key_b, renewal_hash,
+    'POST', '/rpc/renew_pos_session', null);
+  perform set_config('role', 'anon', true);
+  perform set_config('request.path', '/rpc/renew_pos_session', true);
+  perform set_config('request.headers', (renewal_headers || jsonb_build_object('x-pos-permit', permit))::text, true);
+  perform public.revoke_app_session();
+  begin
+    perform public.renew_pos_session();
+    raise exception 'A permit obtained before logout revived the revoked bearer';
+  exception when insufficient_privilege then null;
+  end;
+  perform set_config('role', 'service_role', true);
+  if public.issue_pos_request_permit(hardware, gen_random_uuid(), key_b, renewal_hash,
+      'POST', '/rpc/renew_pos_session', null) is not null then
+    raise exception 'Logout did not revoke an expired renewable bearer';
+  end if;
+  perform set_config('role', 'anon', true);
   perform set_config('request.headers', headers::text, true);
   perform public.revoke_app_session();
   perform public.revoke_app_session();
@@ -119,6 +200,67 @@ begin
   if public.issue_pos_request_permit(hardware, gen_random_uuid(), key_b, encode(digest(other_token,'sha256'),'hex'),
     'POST', '/rpc/get_pos_catalog_revision', null) is null then
     raise exception 'Logout revoked a different session';
+  end if;
+
+  fingerprint_session := signed_in.session_token;
+  permit := public.issue_pos_request_permit(hardware, gen_random_uuid(), key_b,
+    encode(digest(fingerprint_session, 'sha256'), 'hex'), 'POST', '/rpc/set_pos_fingerprint_credential', null);
+  perform set_config('role', 'anon', true);
+  perform set_config('request.path', '/rpc/set_pos_fingerprint_credential', true);
+  perform set_config('request.headers', (headers || jsonb_build_object('x-session-token', fingerprint_session))::text, true);
+  begin
+    perform public.set_pos_fingerprint_credential(fingerprint_secret);
+    raise exception 'A copied bearer enrolled fingerprint sign-in';
+  exception when insufficient_privilege then null;
+  end;
+  perform set_config('request.headers', (headers || jsonb_build_object(
+    'x-session-token', fingerprint_session, 'x-pos-permit', permit))::text, true);
+  if not public.set_pos_fingerprint_credential(fingerprint_secret) then
+    raise exception 'Fingerprint sign-in enrollment failed';
+  end if;
+  perform public.revoke_app_session();
+  perform set_config('request.path', '/rpc/login_pos_with_fingerprint', true);
+  perform set_config('request.headers', jsonb_build_object('x-device-id', hardware)::text, true);
+  if exists (select 1 from public.login_pos_with_fingerprint(fingerprint_secret)) then
+    raise exception 'A fingerprint credential worked without signed device proof';
+  end if;
+
+  perform set_config('role', 'service_role', true);
+  if public.issue_pos_request_permit(hardware, gen_random_uuid(), key_a, null,
+      'POST', '/rpc/login_pos_with_fingerprint', null) is not null then
+    raise exception 'An unregistered key obtained a fingerprint sign-in permit';
+  end if;
+  permit := public.issue_pos_request_permit(hardware, gen_random_uuid(), key_b, null,
+    'POST', '/rpc/login_pos_with_fingerprint', null);
+  perform set_config('role', 'anon', true);
+  perform set_config('request.headers', jsonb_build_object('x-device-id', hardware, 'x-pos-permit', permit)::text, true);
+  select * into signed_in from public.login_pos_with_fingerprint(fingerprint_secret);
+  if signed_in.session_token is null or signed_in.session_token = fingerprint_session
+    or signed_in.user_id is distinct from cashier or signed_in.device_id is distinct from device
+    or signed_in.is_activated is distinct from true then
+    raise exception 'Fingerprint sign-in did not create a fresh device-bound cashier session after logout';
+  end if;
+
+  perform set_config('role', 'service_role', true);
+  permit := public.issue_pos_request_permit(hardware, gen_random_uuid(), key_b,
+    encode(digest(signed_in.session_token, 'sha256'), 'hex'), 'POST', '/rpc/set_pos_fingerprint_credential', null);
+  perform set_config('role', 'anon', true);
+  perform set_config('request.path', '/rpc/set_pos_fingerprint_credential', true);
+  perform set_config('request.headers', (headers || jsonb_build_object(
+    'x-session-token', signed_in.session_token, 'x-pos-permit', permit))::text, true);
+  if not public.set_pos_fingerprint_credential(null) then
+    raise exception 'Fingerprint opt-out failed';
+  end if;
+  perform set_config('role', 'none', true);
+  if exists (select 1 from private.pos_fingerprint_credentials where device_id = device) then
+    raise exception 'Opt-out left a server credential';
+  end if;
+  perform set_config('role', 'anon', true);
+  perform public.set_pos_fingerprint_credential(fingerprint_secret);
+  perform set_config('role', 'none', true);
+  update public.app_users set password_hash = 'fixture-changed' where id = cashier;
+  if exists (select 1 from private.pos_fingerprint_credentials where device_id = device) then
+    raise exception 'Password change left a usable fingerprint credential';
   end if;
 
   perform set_config('role', 'none', true);

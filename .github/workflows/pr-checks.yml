@@ -68,7 +68,7 @@ jobs:
           pnpm exec supabase db reset --local --no-seed
           db_container=$(docker ps --filter 'name=supabase_db_' --format '{{.Names}}')
           test -n "$db_container"
-          for fixture in app_authorization admin_passkey_assurance pos_device_proof_and_logout r08_development_contract system_admin_data_reset product_images powder_pack_inventory; do
+          for fixture in app_authorization admin_passkey_assurance pos_device_proof_and_logout r08_development_contract system_admin_data_reset product_images powder_pack_inventory ims_submission_idempotency; do
             docker exec -i "$db_container" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "supabase/tests/$fixture.sql"
           done
       - name: Stop disposable local Supabase

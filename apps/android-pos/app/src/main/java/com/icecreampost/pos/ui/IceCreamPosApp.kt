@@ -6,5 +6,5 @@ import com.icecreampost.pos.ui.navigation.AppNavHost
 
 @Composable
 fun IceCreamPosApp() {
-    AppNavHost(viewModel = hiltViewModel())
+    AppNavHost(viewModel = hiltViewModel(), appUpdates = hiltViewModel())
 }

@@ -13,8 +13,10 @@ object Routes {
     const val SETTINGS = "settings"
     const val MORE = "more"
     const val OPERATING_DAY = "operating-day"
+    const val CLOSE_OPERATING_DAY = "close-operating-day"
     const val DEDUCTIONS = "deductions"
     const val SYNC = "sync-status"
     const val DEVICE = "device-information"
+    const val UPDATES = "app-updates"
     const val HISTORY_RECEIPT = "history-receipt"
 }

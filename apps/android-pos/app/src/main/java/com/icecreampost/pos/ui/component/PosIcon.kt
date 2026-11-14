@@ -12,7 +12,10 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 
-internal enum class PosSymbol { Search, Add, Bell, Trend, Orders, ChevronUp, Packaging, Ingredient }
+internal enum class PosSymbol {
+    Search, Add, Bell, Trend, Orders, ChevronUp, Packaging, Ingredient,
+    Store, EmployeeBadge, Lock, Eye, EyeOff, ArrowRight,
+}
 
 @Composable
 internal fun PosIcon(symbol: PosSymbol, modifier: Modifier = Modifier) {
@@ -61,6 +64,30 @@ internal fun PosIcon(symbol: PosSymbol, modifier: Modifier = Modifier) {
                 outline(7 to 3, 17 to 3, 17 to 7, 20 to 10, 20 to 21, 4 to 21, 4 to 10, 7 to 7, closed = true)
                 outline(7 to 7, 17 to 7)
                 outline(8 to 13, 16 to 13, 16 to 17, 8 to 17, closed = true)
+            }
+            PosSymbol.Store -> {
+                outline(4 to 10, 6 to 4, 18 to 4, 20 to 10, closed = true)
+                outline(5 to 10, 5 to 20, 19 to 20, 19 to 10)
+                outline(10 to 20, 10 to 14, 15 to 14, 15 to 20)
+            }
+            PosSymbol.EmployeeBadge -> {
+                outline(5 to 3, 19 to 3, 19 to 21, 5 to 21, closed = true)
+                drawCircle(color, 2.5f * scale, Offset(12f * scale, 9f * scale), style = stroke)
+                outline(8 to 17, 10 to 14, 14 to 14, 16 to 17)
+            }
+            PosSymbol.Lock -> {
+                outline(5 to 10, 19 to 10, 19 to 21, 5 to 21, closed = true)
+                outline(8 to 10, 8 to 6, 10 to 3, 14 to 3, 16 to 6, 16 to 10)
+                outline(12 to 14, 12 to 17)
+            }
+            PosSymbol.Eye, PosSymbol.EyeOff -> {
+                outline(2 to 12, 7 to 7, 12 to 5, 17 to 7, 22 to 12, 17 to 17, 12 to 19, 7 to 17, closed = true)
+                drawCircle(color, 3f * scale, style = stroke)
+                if (symbol == PosSymbol.EyeOff) outline(3 to 3, 21 to 21)
+            }
+            PosSymbol.ArrowRight -> {
+                outline(4 to 12, 20 to 12)
+                outline(14 to 6, 20 to 12, 14 to 18)
             }
         }
     }

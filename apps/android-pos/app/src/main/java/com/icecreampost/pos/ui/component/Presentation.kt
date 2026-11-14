@@ -17,6 +17,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.icecreampost.pos.ui.PosViewModel
 import com.icecreampost.pos.BuildConfig
 import com.icecreampost.pos.data.local.entity.SyncStateEntity
+import com.icecreampost.pos.data.repository.SYNC_SIGN_IN_REQUIRED
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.time.Instant
@@ -67,6 +68,7 @@ internal fun syncStatusLabel(state: SyncStateEntity?, pending: Int, online: Bool
         "running" -> "Syncing${if (pending > 0) " · $queued" else "…"}"
         "error" -> "Sync failed · $queued"
         "retrying" -> "Sync retry scheduled · $queued"
+        SYNC_SIGN_IN_REQUIRED -> "Reconnect in Sync status · $queued"
         else -> {
             val last = state?.lastSyncAt?.let { runCatching { Instant.parse(it) }.getOrNull() }
             when {
@@ -118,7 +120,7 @@ fun SyncStatusLine(
     val pending = transactions.count { it.stallId == session?.stallId && !it.isSynced }
     Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         val label = syncStatusLabel(state, pending, online, now)
-        val syncIssue = state?.status == "error" || state?.status == "retrying"
+        val syncIssue = state?.status in listOf("error", "retrying", SYNC_SIGN_IN_REQUIRED)
         if (showStatusIndicator) {
             val statusColor = when {
                 !online || syncIssue -> MaterialTheme.colorScheme.tertiary

@@ -11,7 +11,7 @@ import com.icecreampost.pos.data.remote.SupabaseApi
 import com.icecreampost.pos.data.remote.interceptor.SessionTokenStore
 import com.icecreampost.pos.data.remote.interceptor.DeviceIdentity
 import com.icecreampost.pos.data.repository.SessionRepository
-import com.icecreampost.pos.data.repository.PosAuthorizationException
+import com.icecreampost.pos.data.repository.CloudSignInRequiredException
 import com.icecreampost.pos.data.repository.SyncReport
 import com.icecreampost.pos.data.repository.SyncRepository
 import com.icecreampost.pos.security.PosCredentialVault
@@ -86,10 +86,7 @@ class SyncWorkerTest {
             isActivated = true,
         )
         val syncRepository = mockk<SyncRepository>()
-        coEvery { syncRepository.sync() } throws PosAuthorizationException(
-            "Cloud sync needs a fresh sign-in. Your sale remains saved on this device.",
-            IllegalStateException("HTTP 401"),
-        )
+        coEvery { syncRepository.sync() } throws CloudSignInRequiredException()
         val sessionRepository = SessionRepository(
             sessionDao,
             mockk<SupabaseApi>(),

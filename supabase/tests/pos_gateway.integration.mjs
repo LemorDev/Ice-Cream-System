@@ -72,10 +72,17 @@ assert.equal((await handler(request(query, '', queryProof, 'GET'))).status, 200)
 assert.equal((await handler(request('/rpc/issue_pos_request_permit', '{}', signedRequest('/rpc/issue_pos_request_permit', '{}')))).status, 404);
 
 const apiSource = await readFile('apps/android-pos/app/src/main/java/com/icecreampost/pos/data/remote/SupabaseApi.kt', 'utf8');
+const signInRpcs = new Set(['login_pos_with_password', 'login_pos_with_fingerprint']);
 for (const [, name] of apiSource.matchAll(/@POST\("rest\/v1\/rpc\/([^"]+)"\)/g)) {
   if (name === 'revoke_app_session') continue;
   const path = `/rpc/${name}`;
-  const headers = signedRequest(path, '{}', { token: name === 'login_pos_with_password' ? '' : bearer });
+  const headers = signedRequest(path, '{}', { token: signInRpcs.has(name) ? '' : bearer });
   assert.equal((await handler(request(path, '{}', headers))).status, 200, `Android RPC is missing from the relay allowlist: ${name}`);
 }
+const fingerprintLogin = '/rpc/login_pos_with_fingerprint';
+assert.equal((await handler(request(fingerprintLogin, '{}', signedRequest(fingerprintLogin, '{}')))).status, 403);
+const renew = '/rpc/renew_pos_session';
+assert.equal((await handler(request(renew, '{}', signedRequest(renew, '{}', { token: '' })))).status, 403);
+assert.equal((await handler(request(renew, '{}', signedRequest(renew, '{}')))).status, 200);
+assert.deepEqual(relayed.at(-1), { url: `${base}/rest/v1${renew}`, body: '{}' });
 console.log('PASS: Real P-256 request signatures, replay rejection, signed payload and query, restricted relay routes');

@@ -10,6 +10,8 @@ data class PosCatalogRevisionDto(
     @SerialName("device_id") val deviceId: String,
     val products: List<ProductDto>,
     val recipes: List<ProductRecipeDto>,
+    @SerialName("add_on_price_cents") val addOnPriceCents: Long? = null,
+    @SerialName("closing_stock_counts_supported") val closingStockCountsSupported: Boolean = false,
 )
 
 @Serializable
@@ -33,6 +35,11 @@ data class ProductDto(
     @SerialName("updated_at") val updatedAt: String = "",
     @SerialName("image_url") val imageUrl: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
+    @SerialName("count_at_closing") val countAtClosing: Boolean = false,
+    @SerialName("menu_group") val menuGroup: String? = null,
+    @SerialName("serving_type") val servingType: String? = null,
+    @SerialName("serving_size") val servingSize: String? = null,
+    @SerialName("flavor_name") val flavorName: String? = null,
 )
 
 @Serializable

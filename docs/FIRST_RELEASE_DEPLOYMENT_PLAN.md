@@ -2,6 +2,8 @@
 
 Updated: 2 November 2026. Status: proposed plan. This revision updates hosting choices and source findings; it does not deploy the project or mark release tasks complete. Record execution evidence in [FIRST_RELEASE_TASKS.md](FIRST_RELEASE_TASKS.md).
 
+Production update, 5 November 2026: PR #3 was merged into `develop`; development web hosting is working. The user created new production project `rldsdzdlbxedjyqkvcpq` and its 62 migrations were applied and verified. See [production initialization](PRODUCTION_INITIALIZATION_2026-11-05.md). The older project `hdtizzdrbscchvqwcpkb` contains test data and is no longer the release target. Historical snapshots below do not override this new target or the initialization evidence. Initial production account setup, promotion to `main`, production hosting/functions, release signing and handset acceptance remain pending.
+
 Execution update, 5 November 2026: local preflight is recorded in [DEPLOYMENT_PREFLIGHT_2026-11-05.md](DEPLOYMENT_PREFLIGHT_2026-11-05.md). The current source already includes `build:production` and production-mode CI checks. The findings dated 2 November below are historical. The candidate remains an uncommitted working tree; do not deploy the older `develop` or `main` revisions.
 
 The newer security implementation also requires the `admin-passkey` and `pos-gateway` Supabase Edge Functions. Before hosted acceptance, reserve a stable development HTTPS hostname, inspect the actual pending security migrations, and follow the rollout and enrollment procedures in [supabase/README.md](../supabase/README.md). Set `ADMIN_WEBAUTHN_ORIGIN` to that exact hostname's origin, deploy both functions to the verified development project, and verify custom-session authorization and POS device proof before testing management or synchronization. Service credentials stay in server configuration. Database migrations alone do not deploy these functions. Existing queued POS sales need the documented reconciliation and compatible client rollout before the catalog/device policy changes.
@@ -124,7 +126,7 @@ if ((Get-Content -LiteralPath 'supabase/.temp/project-ref' -Raw).Trim() -ne 'fhy
 For the eventual production window, first confirm the retained reference below in the dashboard and finish the inventory, backup and compatibility review. Run separately from the development block:
 
 ```powershell
-$productionProjectRef = 'hdtizzdrbscchvqwcpkb'
+$productionProjectRef = 'rldsdzdlbxedjyqkvcpq'
 .\node_modules\.bin\supabase.cmd link --project-ref $productionProjectRef
 if ((Get-Content -LiteralPath 'supabase/.temp/project-ref' -Raw).Trim() -ne $productionProjectRef) { throw 'Unexpected linked project' }
 .\node_modules\.bin\supabase.cmd migration list --linked

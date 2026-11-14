@@ -21,13 +21,26 @@ interface TransactionDao {
     @Query("SELECT * FROM transaction_items WHERE transactionId = :transactionId AND deletedAt IS NULL")
     suspend fun getItems(transactionId: String): List<TransactionItemEntity>
 
-    @Query("SELECT COALESCE(SUM(totalCents), 0) FROM transactions t WHERE stallId = :stallId AND status = 'completed' AND occurredAt >= :openedAt AND occurredAt <= :closedAt AND NOT EXISTS (SELECT 1 FROM sale_reversals r WHERE r.transactionId = t.id)")
+    @Query("""SELECT COALESCE(SUM(totalCents), 0) FROM transactions t
+        WHERE stallId = :stallId AND (status = 'completed' OR EXISTS (SELECT 1 FROM sale_reversals r
+            WHERE r.transactionId = t.id AND julianday(r.occurredAt) > julianday(:closedAt)))
+        AND julianday(occurredAt) BETWEEN julianday(:openedAt) AND julianday(:closedAt) AND NOT EXISTS (
+            SELECT 1 FROM sale_reversals r WHERE r.transactionId = t.id AND julianday(r.occurredAt) <= julianday(:closedAt))""")
     suspend fun getCompletedTotalBetween(stallId: String, openedAt: String, closedAt: String): Long
 
-    @Query("SELECT COALESCE(SUM(cogsCents), 0) FROM transactions t WHERE stallId = :stallId AND status = 'completed' AND occurredAt >= :openedAt AND occurredAt <= :closedAt AND NOT EXISTS (SELECT 1 FROM sale_reversals r WHERE r.transactionId = t.id)")
+    @Query("""SELECT COALESCE(SUM(cogsCents), 0) FROM transactions t
+        WHERE stallId = :stallId AND (status = 'completed' OR EXISTS (SELECT 1 FROM sale_reversals r
+            WHERE r.transactionId = t.id AND julianday(r.occurredAt) > julianday(:closedAt)))
+        AND julianday(occurredAt) BETWEEN julianday(:openedAt) AND julianday(:closedAt) AND NOT EXISTS (
+            SELECT 1 FROM sale_reversals r WHERE r.transactionId = t.id AND julianday(r.occurredAt) <= julianday(:closedAt))""")
     suspend fun getCompletedCogsBetween(stallId: String, openedAt: String, closedAt: String): Long
 
-    @Query("SELECT COALESCE(SUM(totalCents), 0) FROM transactions t WHERE stallId = :stallId AND occurredAt >= :openedAt AND occurredAt <= :closedAt AND status != 'voided' AND NOT EXISTS (SELECT 1 FROM sale_reversals r WHERE r.transactionId = t.id AND r.kind = 'void')")
+    @Query("""SELECT COALESCE(SUM(totalCents), 0) FROM transactions t
+        WHERE stallId = :stallId AND julianday(occurredAt) BETWEEN julianday(:openedAt) AND julianday(:closedAt)
+        AND (status != 'voided' OR EXISTS (SELECT 1 FROM sale_reversals r
+            WHERE r.transactionId = t.id AND r.kind = 'void' AND julianday(r.occurredAt) > julianday(:closedAt)))
+        AND NOT EXISTS (SELECT 1 FROM sale_reversals r
+            WHERE r.transactionId = t.id AND r.kind = 'void' AND julianday(r.occurredAt) <= julianday(:closedAt))""")
     suspend fun getCashSalesBetween(stallId: String, openedAt: String, closedAt: String): Long
 
     @Query("SELECT COUNT(*) FROM transactions WHERE businessDayId = :dayId AND stallId = :stallId AND deletedAt IS NULL")

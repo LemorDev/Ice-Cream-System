@@ -20,7 +20,7 @@ class SupabaseHeadersInterceptor(
         val request = chain.request()
         val path = request.url.encodedPath.removePrefix("/rest/v1")
         val signedUrl = request.url.encodedQuery?.let { "$path?$it" } ?: path
-        val token = if (path == "/rpc/login_pos_with_password") null else
+        val token = if (path == "/rpc/login_pos_with_password" || path == "/rpc/login_pos_with_fingerprint") null else
             request.header("X-Session-Token") ?: sessionTokenStore.token
         val builder = request.newBuilder()
             .header("apikey", apiKey)

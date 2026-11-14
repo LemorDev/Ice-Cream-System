@@ -452,7 +452,7 @@ function Workspace({ session, onSignOut, onAdminVerified }: {
                       Live updates on{lastUpdatedAt ? ` · updated ${lastUpdatedAt.toLocaleTimeString()}` : ''}
                     </p>
                     <span className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-extrabold tracking-wide ${appEnvironment === 'production' ? 'bg-red-100 text-red-800 ring-1 ring-red-300' : 'bg-emerald-100 text-emerald-900 ring-1 ring-emerald-300'}`}>
-                      {appEnvironment === 'production' ? 'PRODUCTION DATABASE' : 'DEVELOPMENT DATABASE'}
+                      {appEnvironment === 'production' ? 'PRODUCTION' : 'DEVELOPMENT'}
                     </span>
                   </div>
                   <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">

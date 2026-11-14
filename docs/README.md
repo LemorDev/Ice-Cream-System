@@ -2,6 +2,57 @@
 
 This folder contains the project architecture, data model, synchronization protocol, user guides, and operational commands.
 
+## Push updates from development to production
+
+The release path is **feature branch → `develop` → `main`**. Review the source in GitHub and use its checks to validate the release. Cloudflare Pages publishes the web build, and Supabase migrations, Edge Functions, and Android APKs each have their own release step.
+
+| Environment | Git branch | Web dashboard | Supabase project | Android app |
+| --- | --- | --- | --- | --- |
+| Development | `develop` | [Development IMS](https://ice-cream-system.pages.dev/) | `fhyqrgxwdqlyzxsnpthr` | DEV POS (`com.icecreampost.pos.dev`) |
+| Production | `main` | [Production IMS](https://icecream-system.pages.dev/) | `rldsdzdlbxedjyqkvcpq` | Signed Coolerz POS (`com.icecreampost.pos`) |
+
+Use test data in development and real stall records in production. Each Pages project uses its own branch, build mode, Supabase URL, and public key. [Environment setup](ENVIRONMENTS.md)
+
+### Develop and test a change
+
+1. Start new work from the latest `origin/develop`. Check your working tree first and preserve any unfinished work. From a clean checkout in repository-root PowerShell, use a short branch name for the change.
+
+   ```powershell
+   git status --short
+   git fetch origin
+   git switch -c codex/pos-login-ui origin/develop
+   ```
+
+2. Test locally with the development web app and DEV POS. For a production APK update, include the higher `versionCode` and new `versionName` in the reviewed change. For a database change, add a migration with a unique version prefix and run its fixtures on a disposable local database.
+3. Stage the reviewed files, then inspect the staged diff, commit, and push. These commands use the login screen example from step 1.
+
+   ```powershell
+   git diff --cached --check
+   git diff --cached
+   git commit -m 'Update POS login screen'
+   git push -u origin codex/pos-login-ui
+   ```
+
+   Open a GitHub PR with **base `develop`** and **compare your feature branch**. Wait for **Web checks**, **Database checks**, and **Android checks** to pass.
+4. Coordinate any required development migrations and Edge Functions before the matching clients need them. Merge into `develop`, verify the development Pages deployment, and test the change with the hosted dashboard and DEV POS. Record the tested revision and any issues to fix before release. [Development acceptance checks](DEVELOPMENT_UAT.md)
+
+### Promote the tested revision to production
+
+1. Open a release PR with **base `main`** and **compare `develop`**. Review the complete release diff and wait for the three GitHub checks on the latest PR revision. Record which web, database, function, and APK updates this release needs.
+2. For a backend change, schedule a quiet window and verify the production backup and recovery procedure. Sync the cashier's pending queue and keep the currently installed clients compatible during the rollout. Apply the reviewed production migration and deploy required Edge Functions before the new web build or APK uses them. If the old and new clients need incompatible contracts, plan a compatible transition before proceeding.
+3. Merge the accepted PR into `main` using **Create a merge commit**. The production Pages project builds from `main` when automatic deployment is enabled. If deployment is manual, deploy the accepted `main` revision. Confirm the successful deployment shows the intended commit, `PRODUCTION DATABASE`, and the production Supabase endpoint.
+4. If Android changed, build and sign the production APK from the accepted `main` revision. Share the versioned signed APK privately and install it over the current production app between shifts. Follow the [Android POS update procedure](#release-an-update-to-the-android-pos).
+5. Verify the affected production workflow. For POS updates, check the app version, cashier sign-in, catalog and opening stock, then confirm the next controlled real transaction syncs once and leaves the queue clear. Record the `main` commit, deployed web revision, any applied migration versions, and the signed APK version and hash.
+
+### Release steps by change type
+
+| Change | How it reaches production |
+| --- | --- |
+| IMS or Owner dashboard UI | Promote through the PRs above. Cloudflare Pages builds `build:production` from `main`. |
+| Android login screen or other POS UI | Promote the source and version bump, then build, sign, and distribute the new APK. Install it as an update with the same application ID and production signing key. |
+| Database or RPC contract | Apply the reviewed migration to development first and test the complete workflow. During production release, verify the linked project and history with `migration list --linked`, inspect `db push --dry-run`, apply with `db push`, and confirm the remote history afterward. Restore the repository link to development when finished. [PowerShell migration commands](FIRST_RELEASE_DEPLOYMENT_PLAN.md#migration-commands-repository-root-powershell) |
+| Supabase Edge Function | Deploy the reviewed function to development first, test it, then deploy it to the explicit production project reference during release. Verify the function is active and that administrator passkey origin or POS device proof behaves as expected. [Function deployment and enrollment](../supabase/README.md#deploy-the-sale-catalog-and-administrator-passkey-changes) |
+
 ## Run the IMS web dashboard locally
 
 Open PowerShell in the project root:
@@ -13,9 +64,8 @@ pnpm dev
 ```
 
 `pnpm dev` is the root shortcut for `pnpm --dir apps/web-ims dev`.
-Both run the local development IMS against the development Supabase project;
-neither deploys the website. See the [first-release deployment plan](FIRST_RELEASE_DEPLOYMENT_PLAN.md)
-for the online IMS, Owner dashboard, and POS release workflow.
+Both start the local IMS against the development Supabase project. Follow the
+[release workflow](#push-updates-from-development-to-production) when the change is ready for hosting.
 
 Open the URL shown in the terminal, normally [http://localhost:5173](http://localhost:5173).
 
@@ -36,14 +86,16 @@ pnpm --dir apps/web-ims lint
 
 ## Configure the POS app locally
 
-Open PowerShell in the Android project:
+Open PowerShell in the Android project. Create `local.properties` from the example only on a new checkout.
 
 ```powershell
 cd "C:\Desktop Apps and Files\Ice cream system\apps\android-pos"
-Copy-Item local.properties.example local.properties
+if (-not (Test-Path -LiteralPath 'local.properties')) {
+    Copy-Item local.properties.example local.properties
+}
 ```
 
-Open `local.properties` in VS Code and update the Android SDK path plus the Supabase values. Use the Supabase **anon key** only; never use the service-role key in the mobile app.
+Keep `sdk.dir` and your existing development configuration. For a production build, set `supabase.production.url` to `https://rldsdzdlbxedjyqkvcpq.supabase.co` and `supabase.production.anonKey` to that project's publishable key or legacy `anon` key. Keep service-role keys in server configuration. [Environment setup](ENVIRONMENTS.md)
 
 ## Build the POS development APK
 
@@ -58,20 +110,59 @@ The development APK is created here:
 C:\Desktop Apps and Files\Ice cream system\apps\android-pos\app\build\outputs\apk\dev\debug\app-dev-debug.apk
 ```
 
-## Build the POS production release APK
+## Release an update to the Android POS
+
+Android POS changes, including login screen changes, ship in a new APK. Test the update in **DEV POS** first. Use the reviewed release revision for the production build.
+
+Increase `versionCode` above the last distributed production build and set a new `versionName` in [app/build.gradle.kts](../apps/android-pos/app/build.gradle.kts). For example, an update from `0.1.0` with code `1` can use `0.1.1` with code `2`. Keep the production application ID `com.icecreampost.pos` and reuse the production signing key so Android can install the update over the existing app.
+
+### Build the production APK
 
 ```powershell
 cd "C:\Desktop Apps and Files\Ice cream system\apps\android-pos"
-.\gradlew.bat :app:assembleProductionRelease
+.\gradlew.bat :app:assembleProductionRelease --dependency-verification=strict
 ```
 
-The current project does not yet have release signing configured, so this produces an **unsigned** release APK:
+Gradle writes the unsigned APK to `app/build/outputs/apk/production/release/app-production-release-unsigned.apk`. Sign it with the existing `coolerz-production.p12` keystore before distribution.
 
-```text
-app\build\outputs\apk\production\release\app-production-release-unsigned.apk
+### Sign and verify the APK
+
+Run the following in PowerShell. Set `$releaseVersion` to the `versionName` you just built. Enter the keystore password when `apksigner` prompts for it.
+
+```powershell
+Set-Location 'C:\Desktop Apps and Files\Ice cream system'
+$releaseVersion = '0.1.1'
+$keystore = Join-Path $PWD 'apps/android-pos/.local/coolerz-production.p12'
+$signer = Join-Path $env:LOCALAPPDATA 'Android/Sdk/build-tools/36.0.0/apksigner.bat'
+$unsignedApk = Join-Path $PWD 'apps/android-pos/app/build/outputs/apk/production/release/app-production-release-unsigned.apk'
+$signedDir = Join-Path $PWD "apps/android-pos/.local/releases/$releaseVersion"
+$signedApk = Join-Path $signedDir 'app-production-release.apk'
+
+if (-not (Test-Path -LiteralPath $keystore)) { throw 'Restore the original production keystore before signing' }
+if (-not (Test-Path -LiteralPath $unsignedApk)) { throw 'Build the production APK first' }
+if (Test-Path -LiteralPath $signedApk) { throw 'A signed APK already exists for this version' }
+New-Item -ItemType Directory -Path $signedDir -Force | Out-Null
+
+& $signer sign --ks $keystore --ks-type PKCS12 --ks-key-alias coolerz-production --out $signedApk $unsignedApk
+if ($LASTEXITCODE -ne 0) { throw 'APK signing failed' }
+& $signer verify --verbose --print-certs $signedApk
+if ($LASTEXITCODE -ne 0) { throw 'APK verification failed' }
+Get-FileHash -LiteralPath $signedApk -Algorithm SHA256
 ```
 
-An unsigned APK cannot be installed as-is. Before distributing it to real devices, configure a signing key and release signing configuration, then rebuild this same variant.
+The versioned `.local/releases` folder keeps the signed APK available after subsequent Gradle builds. Compare the signer certificate's SHA-256 digest against the previous production release. Retain the signed APK, its file hash, and the corresponding Git commit. Back up the keystore and store its password privately. [Android APK signing](https://developer.android.com/tools/apksigner)
+
+### Distribute and install the update
+
+Share the verified `app-production-release.apk` privately. Schedule the update between shifts and confirm the cashier's pending queue has synced. Open the APK on the phone and choose **Update**, or connect the cashier's phone with USB debugging and run the following in the same PowerShell session.
+
+```powershell
+$adb = Join-Path $env:LOCALAPPDATA 'Android/Sdk/platform-tools/adb.exe'
+& $adb devices
+& $adb install -r $signedApk
+```
+
+Installing over the existing production app preserves its local data and device activation. After installation, check the displayed version, cashier sign-in, catalog sync, and pending queue before the next shift. Use the [database setup guide](../supabase/README.md) when a release also changes the server contract.
 
 ## Connect an Android phone with USB debugging
 

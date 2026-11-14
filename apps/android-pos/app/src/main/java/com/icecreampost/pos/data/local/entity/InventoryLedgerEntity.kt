@@ -20,4 +20,6 @@ data class InventoryLedgerEntity(
     val deletedAt: String? = null,
     val isSynced: Boolean = false,
     val syncError: String? = null,
+    val countedQuantity: Double? = null,
+    val countedUnit: String? = null,
 )

@@ -13,14 +13,19 @@ import com.icecreampost.pos.data.repository.HistoricalReceipt
 import com.icecreampost.pos.data.repository.CheckoutRepository
 import com.icecreampost.pos.data.repository.ProductRepository
 import com.icecreampost.pos.data.repository.SessionRepository
+import com.icecreampost.pos.data.repository.FingerprintSignInRejectedException
 import com.icecreampost.pos.data.repository.SyncRepository
 import com.icecreampost.pos.data.repository.BusinessDayRepository
 import com.icecreampost.pos.data.repository.SaleReversalRepository
 import com.icecreampost.pos.data.local.entity.BusinessDayEntity
 import com.icecreampost.pos.domain.model.CartLine
+import com.icecreampost.pos.domain.model.ADD_ON_CATALOG_STATUS
+import com.icecreampost.pos.domain.model.CLOSING_COUNTS_CATALOG
+import com.icecreampost.pos.domain.model.ClosingStockCount
 import com.icecreampost.pos.domain.model.additionalMenuPortions
 import com.icecreampost.pos.domain.model.MenuAvailability
 import com.icecreampost.pos.domain.model.menuAvailability
+import com.icecreampost.pos.domain.model.receiptName
 import com.icecreampost.pos.ui.component.ServingFilter
 import com.icecreampost.pos.ui.component.menuServings
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -34,7 +39,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.UUID
+import java.time.LocalDate
+import java.time.ZoneId
 
 @HiltViewModel
 class PosViewModel @Inject constructor(
@@ -51,14 +64,19 @@ class PosViewModel @Inject constructor(
     private val fingerprintLoginStore: FingerprintLoginStore,
 ) : ViewModel() {
     private val unlockedCredentialRef = MutableStateFlow<String?>(null)
+    private var lockedCredentialRef: String? = null
     private val _fingerprintEnabled = MutableStateFlow(fingerprintLoginStore.isEnabled)
-    private val _fingerprintUnlockRequired = MutableStateFlow(false)
+    private val _posLocked = MutableStateFlow(false)
     private val _offerFingerprintSetup = MutableStateFlow(false)
+    private val _offlineSignInDetails = MutableStateFlow<Pair<String, String>?>(null)
     private var appInForeground = true
     private var backgroundGeneration = 0L
-    private var fingerprintAccountId: String? = null
+    private var fingerprintAccountId = fingerprintLoginStore.signInAccountId?.takeIf { it.isNotBlank() }
+    private val _fingerprintSignInAvailable = MutableStateFlow(fingerprintAccountId != null)
     val fingerprintEnabled = _fingerprintEnabled.asStateFlow()
-    val fingerprintUnlockRequired = _fingerprintUnlockRequired.asStateFlow()
+    val fingerprintSignInAvailable = _fingerprintSignInAvailable.asStateFlow()
+    val posLocked = _posLocked.asStateFlow()
+    val offlineSignInDetails = _offlineSignInDetails.asStateFlow()
     val offerFingerprintSetup = _offerFingerprintSetup.asStateFlow()
     val session: StateFlow<AppSessionEntity?> = combine(sessionRepository.observeSession(), unlockedCredentialRef) { saved, reference ->
         saved?.takeIf { reference != null && it.credentialRef == reference }
@@ -70,6 +88,11 @@ class PosViewModel @Inject constructor(
     val sealedPacks: StateFlow<Map<String, Int>> = inventoryLedgerDao.observeActive()
         .map { entries -> entries.groupBy { it.productId }.mapValues { (_, rows) -> rows.sumOf { it.sealedPacksDelta } } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    fun observeDailyStockUpdates(stallId: String, dayId: String?, date: LocalDate) =
+        inventoryLedgerDao.observeDailyStockUpdates(stallId, dayId,
+            date.atStartOfDay(ZoneId.of("Asia/Manila")).toInstant().toString(),
+            date.plusDays(1).atStartOfDay(ZoneId.of("Asia/Manila")).toInstant().toString())
 
     val recipes = productRepository.observeRecipes()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -93,10 +116,13 @@ class PosViewModel @Inject constructor(
     val saleReversals = saleReversalRepository.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val syncState: StateFlow<SyncStateEntity?> = syncStateDao.observe("sync")
+    val syncState: StateFlow<SyncStateEntity?> = syncRepository.observeSyncState()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val inventorySyncState: StateFlow<SyncStateEntity?> = syncStateDao.observe("catalog-ledger")
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val closingStockCatalog = syncStateDao.observe(CLOSING_COUNTS_CATALOG)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val businessDay: StateFlow<BusinessDayEntity?> = businessDayRepository.observeLatest()
@@ -109,7 +135,14 @@ class PosViewModel @Inject constructor(
     private val selectedCategory = MutableStateFlow<String?>(null)
     private val selectedServing = MutableStateFlow<ServingFilter?>(null)
     val serving = selectedServing.asStateFlow()
-    private val cart = MutableStateFlow<Map<String, Int>>(emptyMap())
+    private data class CartSelection(val quantity: Int, val addOnQuantity: Int = 0)
+    private val cart = MutableStateFlow<Map<String, CartSelection>>(emptyMap())
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val addOnsEnabled: StateFlow<Boolean> = session.flatMapLatest { current ->
+        val deviceId = current?.deviceId ?: return@flatMapLatest flowOf(false)
+        syncStateDao.observe("catalog-revision:$deviceId").map { it?.status == ADD_ON_CATALOG_STATUS }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    private var checkoutId: UUID? = null
     private val _busy = MutableStateFlow(false)
     private val _syncBusy = MutableStateFlow(false)
     private val _error = MutableStateFlow<String?>(null)
@@ -136,15 +169,22 @@ class PosViewModel @Inject constructor(
         viewModelScope.launch {
             var restoredSession: AppSessionEntity? = null
             try {
-                restoredSession = sessionRepository.restoreStoredSession(activateToken = !_fingerprintEnabled.value)
-                _fingerprintUnlockRequired.value = restoredSession != null && _fingerprintEnabled.value
-                fingerprintAccountId = restoredSession?.userId?.takeIf { _fingerprintEnabled.value }
-                unlockedCredentialRef.value = restoredSession?.credentialRef?.takeUnless { _fingerprintUnlockRequired.value }
-                if (restoredSession != null) syncRepository.resetStatus()
+                restoredSession = sessionRepository.restoreStoredSession(allowExpiredForOfflineWork = true)
+                _offlineSignInDetails.value = sessionRepository.offlineSignInDetails()
+                _posLocked.value = restoredSession != null && sessionRepository.isLocked()
+                if (_posLocked.value) lockedCredentialRef = restoredSession?.credentialRef
+                if (_fingerprintEnabled.value && !_fingerprintSignInAvailable.value) {
+                    fingerprintAccountId = restoredSession?.userId
+                }
+                unlockedCredentialRef.value = restoredSession?.credentialRef?.takeUnless { _posLocked.value }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _error.value = error.message ?: "Could not restore this POS. Sign in again."
             } finally {
                 _sessionReady.value = true
             }
-            if (restoredSession?.isActivated == true && !_fingerprintUnlockRequired.value) syncToIms()
+            if (restoredSession?.isActivated == true && !restoredSession.transferReady && !_posLocked.value) syncToIms()
         }
     }
 
@@ -159,7 +199,8 @@ class PosViewModel @Inject constructor(
         val recipesByMenu = allRecipes.groupBy { it.parentProductId }
         allProducts.filter { product ->
             product.isSellable && product.productType == "sellable" && product.deletedAt == null &&
-                product.name.contains(query.trim(), ignoreCase = true) &&
+                listOfNotNull(product.name, product.menuGroup, product.servingSize, product.flavorName)
+                    .joinToString(" ").contains(query.trim(), ignoreCase = true) &&
                 (category == null || product.category == category) &&
                 (serving == null || serving in menuServings(product, productsById, recipesByMenu[product.id].orEmpty()))
         }
@@ -169,13 +210,16 @@ class PosViewModel @Inject constructor(
         .combine(MutableStateFlow(Unit)) { values, _ -> values.filter { it.isSellable && it.productType == "sellable" && it.deletedAt == null }.map { it.category }.distinct().sorted() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val cartLines: StateFlow<List<CartLine>> = combine(products, cart) { allProducts, quantities ->
-        quantities.mapNotNull { (productId, quantity) ->
-            allProducts.firstOrNull { it.id == productId }?.let { CartLine(it, quantity) }
+    private fun cartLinesFor(allProducts: List<ProductEntity>, selections: Map<String, CartSelection>) =
+        selections.mapNotNull { (productId, selection) ->
+            allProducts.firstOrNull { it.id == productId }?.let { CartLine(it, selection.quantity, selection.addOnQuantity) }
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val availability: StateFlow<Map<String, MenuAvailability>> = combine(products, recipes, cart) { allProducts, allRecipes, quantities ->
+    val cartLines: StateFlow<List<CartLine>> = combine(products, cart, ::cartLinesFor)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val availability: StateFlow<Map<String, MenuAvailability>> = combine(products, recipes, cart) { allProducts, allRecipes, selections ->
+        val quantities = selections.mapValues { it.value.quantity }
         allProducts.filter { it.isSellable && it.productType == "sellable" && it.deletedAt == null }
             .associate { it.id to menuAvailability(it, allProducts, allRecipes, quantities) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
@@ -192,36 +236,91 @@ class PosViewModel @Inject constructor(
     }
 
     fun addToCart(product: ProductEntity) {
-        val currentQuantity = cart.value[product.id] ?: 0
-        if (additionalAvailable(product) > 0) {
-            cart.value = cart.value + (product.id to currentQuantity + 1)
-        } else {
-            _error.value = if (hasRecipe(product)) "Not enough ingredients for ${product.name}."
-                else "${product.name} is sold out."
+        addToCart(product, withAddOn = false)
+    }
+
+    fun addToCart(product: ProductEntity, withAddOn: Boolean): Boolean {
+        if (_busy.value || (withAddOn && !addOnsEnabled.value)) return false
+        val latest = products.value.firstOrNull {
+            it.id == product.id && it.isSellable && it.productType == "sellable" && it.deletedAt == null
         }
+        if (latest == null || latest.priceCents != product.priceCents || latest.receiptName != product.receiptName) {
+            _error.value = "This product option changed. Choose it again to see its current details."
+            return false
+        }
+        val current = cart.value[latest.id]
+        if (additionalAvailable(latest) > 0) {
+            val next = CartSelection(
+                quantity = (current?.quantity ?: 0) + 1,
+                addOnQuantity = (current?.addOnQuantity ?: 0) + if (withAddOn) 1 else 0,
+            )
+            cart.value = cart.value + (latest.id to next)
+            _error.value = null
+            return true
+        }
+        _error.value = if (hasRecipe(latest)) "Not enough ingredients for ${latest.receiptName}."
+            else "${latest.receiptName} is sold out."
+        return false
     }
 
     fun hasRecipe(product: ProductEntity): Boolean = recipes.value.any { it.parentProductId == product.id }
 
     fun additionalAvailable(product: ProductEntity): Int =
-        additionalMenuPortions(product, products.value, recipes.value, cart.value)
+        additionalMenuPortions(product, products.value, recipes.value, cart.value.mapValues { it.value.quantity })
 
     fun removeFromCart(productId: String) {
-        val currentQuantity = cart.value[productId] ?: return
-        cart.value = if (currentQuantity <= 1) cart.value - productId
-        else cart.value + (productId to currentQuantity - 1)
+        val current = cart.value[productId] ?: return
+        val remaining = current.quantity - 1
+        cart.value = if (remaining == 0) cart.value - productId
+        else cart.value + (productId to CartSelection(remaining, current.addOnQuantity.coerceAtMost(remaining)))
+        if (cart.value.isEmpty()) checkoutId = null
     }
 
-    fun clearCart() { cart.value = emptyMap() }
+    fun setAddOnQuantity(productId: String, quantity: Int) {
+        val current = cart.value[productId] ?: return
+        if (_busy.value || quantity !in 0..current.quantity) return
+        if (!addOnsEnabled.value && quantity >= current.addOnQuantity) return
+        cart.value = cart.value + (productId to current.copy(addOnQuantity = quantity))
+    }
 
-    fun openDay(notes: String = "") { runAction { businessDayRepository.openDay(notes) } }
+    fun clearCart() {
+        cart.value = emptyMap()
+        checkoutId = null
+    }
+
+    fun openDay(stallCode: String, employeeId: String, password: String, onSuccess: () -> Unit) {
+        runAction(onSuccess) {
+            val signedIn = sessionRepository.signIn(stallCode, employeeId, password, requireActivation = true)
+            openDayFor(signedIn)
+        }
+    }
+
+    fun openDayWithFingerprint(cipher: Cipher, onSuccess: () -> Unit) {
+        if (!canUseFingerprint()) return
+        val generation = backgroundGeneration
+        runAction(onSuccess) {
+            val signedIn = authenticateFingerprint(cipher)
+            check(isCurrentPrompt(generation)) { "Verify your identity again to open the stall." }
+            openDayFor(signedIn)
+        }
+    }
+
+    private suspend fun openDayFor(signedIn: AppSessionEntity) {
+        check(signedIn.isActivated) { "Activate the POS before opening the stall." }
+        finishSignIn(signedIn)
+        businessDayRepository.openDay()
+        syncToIms()
+    }
+
     fun closeDay(
-        notes: String = "",
-        collectedCashCents: Long? = null,
+        businessDayId: String,
+        notes: String,
+        collectedCashCents: Long,
+        stockCounts: Map<String, ClosingStockCount>,
         onSuccess: () -> Unit = {},
     ) {
         runAction(onSuccess) {
-            businessDayRepository.closeDay(notes, collectedCashCents)
+            businessDayRepository.closeDay(notes, collectedCashCents, businessDayId, stockCounts)
         }
     }
 
@@ -237,25 +336,63 @@ class PosViewModel @Inject constructor(
     fun signIn(stallCode: String, employeeId: String, password: String) {
         runAction {
             val signedIn = sessionRepository.signIn(stallCode, employeeId, password)
-            if (_fingerprintEnabled.value && (fingerprintAccountId == null || fingerprintAccountId != signedIn.userId)) {
-                clearFingerprintEnrollment()
-            }
-            _fingerprintUnlockRequired.value = false
-            _offerFingerprintSetup.value = !_fingerprintEnabled.value && !signedIn.userId.isNullOrBlank()
-            unlockedCredentialRef.value = signedIn.credentialRef
-            if (!appInForeground) lockPos()
-            cart.value = emptyMap()
-            syncRepository.resetStatus()
-            if (signedIn.isActivated) {
-                syncRepository.sync()
-            }
+            finishSignIn(signedIn)
+            if (signedIn.isActivated) syncToIms()
         }
+    }
+
+    fun reconnectCloud(stallCode: String, employeeId: String, password: String, onSuccess: () -> Unit) {
+        runAction(onSuccess) {
+            val signedIn = sessionRepository.reconnectCloud(stallCode, employeeId, password)
+            finishSignIn(signedIn)
+            syncToIms()
+        }
+    }
+
+    fun signInWithFingerprint(cipher: Cipher) {
+        if (!canUseFingerprint()) return
+        val generation = backgroundGeneration
+        runAction {
+            val signedIn = authenticateFingerprint(cipher)
+            check(isCurrentPrompt(generation)) { "Verify your identity again to sign in." }
+            finishSignIn(signedIn)
+            syncToIms()
+        }
+    }
+
+    private fun canUseFingerprint() = _fingerprintEnabled.value && appInForeground
+    private fun isCurrentPrompt(generation: Long) = appInForeground && generation == backgroundGeneration
+
+    private suspend fun authenticateFingerprint(cipher: Cipher): AppSessionEntity {
+        val credential = fingerprintLoginStore.readCredential(cipher)
+        return try {
+            sessionRepository.signInWithFingerprint(credential.userId, credential.secret)
+        } catch (error: FingerprintSignInRejectedException) {
+            fingerprintAccountId = null
+            throw error
+        }
+    }
+
+    private suspend fun finishSignIn(signedIn: AppSessionEntity) {
+        val previousReference = unlockedCredentialRef.value
+        val preserveCart = previousReference == signedIn.credentialRef ||
+            (_posLocked.value && lockedCredentialRef == signedIn.credentialRef)
+        sessionRepository.unlock(signedIn)
+        if (_fingerprintEnabled.value && fingerprintAccountId != signedIn.userId) clearFingerprintEnrollment()
+        _offerFingerprintSetup.value = !preserveCart &&
+            !_fingerprintSignInAvailable.value && !signedIn.userId.isNullOrBlank()
+        _offlineSignInDetails.value = sessionRepository.offlineSignInDetails()
+        unlockedCredentialRef.value = signedIn.credentialRef
+        lockedCredentialRef = null
+        _posLocked.value = false
+        if (!preserveCart) clearCart()
     }
 
     fun activate(deviceCode: String, onSuccess: () -> Unit) {
         runAction(onSuccess) {
             sessionRepository.activate(deviceCode)
-            syncRepository.sync()
+            _offlineSignInDetails.value = sessionRepository.offlineSignInDetails()
+            syncToIms()
         }
     }
 
@@ -282,10 +419,10 @@ class PosViewModel @Inject constructor(
             selectedServing.value = null
             dismissReceipt()
             dismissHistoricalReceipt()
-            clearFingerprintEnrollment()
-            _fingerprintUnlockRequired.value = false
+            if (_fingerprintEnabled.value && !_fingerprintSignInAvailable.value) clearFingerprintEnrollment()
+            _posLocked.value = false
             unlockedCredentialRef.value = null
-            cart.value = emptyMap()
+            lockedCredentialRef = null
             if (!serverConfirmed) _error.value = "Signed out on this POS. The server could not confirm sign-out."
         }
     }
@@ -304,55 +441,51 @@ class PosViewModel @Inject constructor(
     fun enableFingerprintLogin(cipher: Cipher) {
         runAction {
             val userId = requireNotNull(session.value?.userId) { "Sign in before enabling fingerprint login." }
-            fingerprintLoginStore.enable(userId, cipher)
+            fingerprintLoginStore.enable(userId, cipher) { secret ->
+                sessionRepository.setFingerprintCredential(userId, secret)
+            }
             fingerprintAccountId = userId
             _fingerprintEnabled.value = true
+            _fingerprintSignInAvailable.value = true
             dismissFingerprintSetup()
-            if (!appInForeground) lockPos()
         }
     }
 
     fun disableFingerprintLogin() {
-        runAction { clearFingerprintEnrollment() }
+        runAction {
+            val userId = session.value?.userId
+            val registered = _fingerprintSignInAvailable.value
+            clearFingerprintEnrollment()
+            if (registered && userId != null) {
+                try {
+                    withTimeoutOrNull(5_000) { sessionRepository.setFingerprintCredential(userId, null) }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    // The local credential and its key are already gone.
+                }
+            }
+        }
     }
 
     private fun clearFingerprintEnrollment() {
         fingerprintLoginStore.disable()
         _fingerprintEnabled.value = false
+        _fingerprintSignInAvailable.value = false
         fingerprintAccountId = null
     }
 
     fun unlockWithFingerprint(cipher: Cipher) {
-        if (!_fingerprintUnlockRequired.value || !appInForeground) return
+        if (!_posLocked.value || !appInForeground) return
         val generation = backgroundGeneration
         runAction {
-            if (!appInForeground || generation != backgroundGeneration) return@runAction
-            val saved = sessionRepository.restoreStoredSession(activateToken = false)
-            if (saved == null) {
-                _fingerprintUnlockRequired.value = false
-                error("Your session has expired. Sign in with your password.")
-            }
-            try {
-                fingerprintLoginStore.verifyAccount(saved.userId, cipher)
-            } catch (error: Exception) {
-                fingerprintAccountId = null
-                throw error
-            }
-            if (!appInForeground || generation != backgroundGeneration) return@runAction
-            val restored = sessionRepository.restoreStoredSession()
-            if (restored == null) {
-                _fingerprintUnlockRequired.value = false
-                error("Your session has expired. Sign in with your password.")
-            }
-            if (!appInForeground || generation != backgroundGeneration ||
-                restored.userId != saved.userId || restored.credentialRef != saved.credentialRef) {
-                sessionRepository.restoreStoredSession(activateToken = false)
-                return@runAction
-            }
-            fingerprintAccountId = restored.userId
-            unlockedCredentialRef.value = restored.credentialRef
-            _fingerprintUnlockRequired.value = false
-            if (restored.isActivated) syncToIms()
+            val restored = sessionRepository.restoreStoredSession(allowExpiredForOfflineWork = true, activateToken = false)
+                ?: error("Sign in with your password to unlock this POS.")
+            fingerprintLoginStore.verifyAccount(restored.userId, cipher)
+            sessionRepository.checkFingerprintUnlock(restored)
+            if (!isCurrentPrompt(generation)) return@runAction
+            finishSignIn(restored)
+            syncToIms()
         }
     }
 
@@ -360,21 +493,27 @@ class PosViewModel @Inject constructor(
     fun onAppBackgrounded() {
         appInForeground = false
         backgroundGeneration++
-        lockPos()
     }
 
     fun lockPos() {
-        if (_fingerprintEnabled.value && unlockedCredentialRef.value != null) {
+        val reference = unlockedCredentialRef.value ?: return
+        runAction {
+            sessionRepository.lock()
+            lockedCredentialRef = reference
             unlockedCredentialRef.value = null
-            _fingerprintUnlockRequired.value = true
-            _error.value = null
+            _posLocked.value = true
         }
     }
 
     fun checkout(cashReceivedCents: Long, onSuccess: () -> Unit) {
+        val quantities = cart.value
+        if (quantities.isEmpty()) return
         runAction(onSuccess) {
-            _receipt.value = checkoutRepository.checkout(cartLines.value, cashReceivedCents)
-            cart.value = emptyMap()
+            val lines = cartLinesFor(products.value, quantities)
+            check(lines.size == quantities.size) { "A cart product is no longer available. Update the cart before checkout." }
+            val id = checkoutId ?: UUID.randomUUID().also { checkoutId = it }
+            _receipt.value = checkoutRepository.checkout(lines, cashReceivedCents, id)
+            clearCart()
             // This presentation read must not turn an already committed sale into a failed checkout.
             _completedReceiptDetails.value = runCatching {
                 checkoutRepository.getHistoricalReceipt(requireNotNull(_receipt.value).transactionId)
@@ -408,7 +547,7 @@ class PosViewModel @Inject constructor(
     fun toggleAmountsVisible() { _amountsVisible.value = !_amountsVisible.value }
 
     fun syncToIms() {
-        if (_syncBusy.value || syncState.value?.status == "running") return
+        if (_syncBusy.value) return
         _syncBusy.value = true
         viewModelScope.launch {
             try {
@@ -427,6 +566,8 @@ class PosViewModel @Inject constructor(
                 } else {
                     "${report.pushed} sales uploaded; ${report.permanentFailures} queued records need attention. ${report.failureMessage.orEmpty()} Catalog and inventory updated."
                 }
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Exception) {
                 _syncMessage.value = error.message ?: "Sync failed. Saved sales remain on this device."
             } finally {
@@ -443,6 +584,8 @@ class PosViewModel @Inject constructor(
             try {
                 action()
                 onSuccess()
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Exception) {
                 _error.value = error.message ?: "Something went wrong."
             } finally {

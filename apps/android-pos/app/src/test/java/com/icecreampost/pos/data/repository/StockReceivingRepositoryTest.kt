@@ -133,9 +133,11 @@ class StockReceivingRepositoryTest {
             if (firstArg<com.icecreampost.pos.data.remote.dto.CatalogPageRequest>().afterId == null) remote.toList()
             else emptyList()
         }
-        val sync = SyncRepository(mockk<TransactionDao>(relaxed = true), mockk<BusinessDayDao>(relaxed = true), ledger,
+        val syncedDays = mockk<BusinessDayDao>(relaxed = true)
+        coEvery { syncedDays.findSyncedClosedDay(any()) } returns null
+        val sync = SyncRepository(mockk<TransactionDao>(relaxed = true), syncedDays, ledger,
             mockk<DailyStoreClosingDao>(relaxed = true), mockk<RevenueDeductionDao>(relaxed = true), mockk<SaleReversalDao>(relaxed = true),
-            states, api, catalog, mockk<AppLogger>(relaxed = true))
+            states, api, catalog, mockk<AppLogger>(relaxed = true), mockk<SessionRepository>(relaxed = true))
         assertEquals(2, sync.sync().ledgerEntriesSynced)
         assertEquals(0, sync.sync().ledgerEntriesSynced)
         catalog.refreshFromCloud()

@@ -28,6 +28,9 @@ export type Product = {
   stall_id: string
   category_id: string | null
   sell_category: string | null
+  menu_group?: string | null
+  serving_type?: 'cup' | 'cone' | 'other' | null
+  serving_size?: string | null
   sku: string
   name: string
   unit: string
@@ -38,6 +41,7 @@ export type Product = {
   pack_size: number
   conversion_rate: number
   tracks_powder_packs?: boolean
+  count_at_closing?: boolean
   is_sellable: boolean
   product_type: 'raw' | 'packaging' | 'sellable'
   base_unit: 'g' | 'ml' | 'piece'
@@ -80,7 +84,9 @@ export type InventoryEntry = {
   unit_cost?: number | null
   quantity_delta: number
   sealed_packs_delta?: number
-  movement_type: 'receive' | 'sale' | 'void_restock' | 'void_waste' | 'adjustment' | 'opening_balance' | 'pack_unsealed' | 'pack_reclassified'
+  movement_type: 'receive' | 'sale' | 'void_restock' | 'void_waste' | 'adjustment' | 'opening_balance' | 'pack_unsealed' | 'pack_reclassified' | 'closing_count'
+  counted_quantity?: number | null
+  counted_unit?: Product['base_unit'] | 'pack' | null
   reason: string | null
   reference_id: string | null
   occurred_at: string

@@ -23,4 +23,5 @@ data class DailyStoreClosingEntity(
     val deductionReason: String? = null,
     val isSynced: Boolean = false,
     val syncError: String? = null,
+    val stockCountRevisionId: String? = null,
 )
